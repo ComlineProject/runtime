@@ -1,0 +1,18 @@
+[workspace]
+resolver = "2"
+members = [
+    "runtime/core",
+    "runtime/core_no-std",
+    "runtime/tests/provider_consumer",
+    "runtime-std-extra",
+
+
+    "runtime-langs/c",
+    "runtime-langs/lua",
+    "runtime-langs/lua-test",
+    #"runtime-langs/luau",
+    #"runtime-langs/python",
+]
+
+[profile.release]
+opt-level = 2

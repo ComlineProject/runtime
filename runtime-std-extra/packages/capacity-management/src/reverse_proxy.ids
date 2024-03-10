@@ -1,0 +1,21 @@
+// Reverse Proxy-Side Management
+use std::network::IPAddress;
+use package::server::Server;
+
+
+enum LoadShedMode {
+    Queue,
+    Drop
+}
+
+@provider=Multiple
+protocol ReverseProxy {
+    function set_quota_for_server(server: Server);
+
+    function set_load_shed_mode_for_server(server: Server, mode: LoadShedMode);
+}
+
+@provider=Multiple
+protocol ServerSpawner {
+    function spawn_server(address: IPAddress);
+}

@@ -1,0 +1,10 @@
+// Endpoint-side management
+
+struct Server {
+    address: IpA
+}
+
+protocol Capacity {
+
+}
+
