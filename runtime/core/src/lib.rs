@@ -8,6 +8,10 @@ extern crate alloc;
 // The `core ↔ target` contract — `no_std`, allocation-free.
 pub mod contract;
 
+// `WireFormat` implementations (`std`-gated for now — see the module).
+#[cfg(feature = "std")]
+pub mod format;
+
 // The `std` layer: transport, async, the setup builders, the dylib ABI.
 #[cfg(feature = "std")]
 pub mod package_abi;
