@@ -19,7 +19,7 @@ use core::time::Duration;
 
 use serde::Serialize;
 
-use crate::contract::{Envelope, RuntimeError, WireFormat};
+use crate::contract::{Envelope, Handshake, RuntimeError, WireFormat};
 use crate::transport::Transport;
 use crate::wire;
 
@@ -33,6 +33,11 @@ pub struct Client<T, W> {
 }
 
 impl<T: Transport, W: WireFormat> Client<T, W> {
+    /// Bind a client to a transport **without a handshake** — "misaligned
+    /// mode". Use when the peer can't take part (a legacy server); a
+    /// wire-format or schema mismatch then surfaces later as a decode / framing
+    /// error instead of up front. [`connect`](Self::connect) is the checked
+    /// path.
     pub fn new(transport: T, format: W) -> Self {
         Self {
             transport,
@@ -41,6 +46,26 @@ impl<T: Transport, W: WireFormat> Client<T, W> {
             request: Vec::new(),
             response: Vec::new(),
         }
+    }
+
+    /// Bind a client and run the connection [`Handshake`]: send `local`, read
+    /// the peer's, and refuse (`RuntimeError::Handshake`) if they disagree on
+    /// schema hash, wire format, or framing.
+    pub fn connect(transport: T, format: W, local: Handshake) -> Result<Self, RuntimeError> {
+        let mut client = Self::new(transport, format);
+        client.exchange_handshake(local)?;
+        Ok(client)
+    }
+
+    fn exchange_handshake(&mut self, local: Handshake) -> Result<(), RuntimeError> {
+        self.request.clear();
+        local.encode(&mut self.request);
+        self.transport.send(&self.request)?;
+
+        self.response.clear();
+        self.transport.recv(&mut self.response)?;
+        let peer = Handshake::decode(&self.response).ok_or(RuntimeError::Handshake)?;
+        local.check(&peer)
     }
 
     /// Make call `call_id` with `params`, block for the response, and return

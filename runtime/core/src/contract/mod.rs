@@ -11,6 +11,7 @@ mod call;
 mod dispatch;
 mod envelope;
 mod error;
+mod handshake;
 mod wire;
 
 pub use buf::{BufMut, SliceBuf};
@@ -18,4 +19,5 @@ pub use call::CallError;
 pub use dispatch::{Dispatch, Kind};
 pub use envelope::Envelope;
 pub use error::RuntimeError;
+pub use handshake::{name_hash, Handshake, FRAMING_DATAGRAM};
 pub use wire::WireFormat;

@@ -3,7 +3,7 @@
 
 use alloc::vec::Vec;
 
-use crate::contract::{Dispatch, Kind, RuntimeError, WireFormat};
+use crate::contract::{Dispatch, Handshake, Kind, RuntimeError, WireFormat};
 use crate::transport::Transport;
 use crate::wire;
 
@@ -56,9 +56,30 @@ impl<D: Dispatch, W: WireFormat> Server<D, W> {
         Ok(true)
     }
 
-    /// Serve calls until the transport closes.
+    /// Serve calls until the transport closes. **No handshake** — pair with a
+    /// `Client::new` peer, or an aligned setup where a mismatch can't happen.
     pub fn serve<T: Transport>(&mut self, transport: &mut T) -> Result<(), RuntimeError> {
         while self.serve_one(transport)? {}
         Ok(())
+    }
+
+    /// Run the connection [`Handshake`] against the connecting peer — send
+    /// `local`, read theirs, refuse (`RuntimeError::Handshake`) on a schema /
+    /// wire-format / framing mismatch — then [`serve`](Self::serve).
+    pub fn serve_handshaked<T: Transport>(
+        &mut self,
+        transport: &mut T,
+        local: Handshake,
+    ) -> Result<(), RuntimeError> {
+        self.response.clear();
+        local.encode(&mut self.response);
+        transport.send(&self.response)?;
+
+        self.recv.clear();
+        transport.recv(&mut self.recv)?;
+        let peer = Handshake::decode(&self.recv).ok_or(RuntimeError::Handshake)?;
+        local.check(&peer)?;
+
+        self.serve(transport)
     }
 }

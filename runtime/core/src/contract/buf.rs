@@ -13,6 +13,9 @@ pub trait BufMut {
     fn put_u16_le(&mut self, value: u16) {
         self.put_slice(&value.to_le_bytes());
     }
+    fn put_u32_le(&mut self, value: u32) {
+        self.put_slice(&value.to_le_bytes());
+    }
     fn put_u64_le(&mut self, value: u64) {
         self.put_slice(&value.to_le_bytes());
     }
