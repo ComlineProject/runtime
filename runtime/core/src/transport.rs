@@ -41,6 +41,24 @@ mod in_memory {
         (InMemory { tx: a_tx, rx: b_rx }, InMemory { tx: b_tx, rx: a_rx })
     }
 
+    impl InMemory {
+        /// Non-blocking receive: `Ok(true)` if a frame was read into `buf`,
+        /// `Ok(false)` if the peer has sent nothing (yet). For single-threaded
+        /// pumping, and for asserting a one-way call drew no reply.
+        pub fn try_recv(&mut self, buf: &mut Vec<u8>) -> Result<bool, RuntimeError> {
+            use std::sync::mpsc::TryRecvError;
+            match self.rx.try_recv() {
+                Ok(frame) => {
+                    buf.clear();
+                    buf.extend_from_slice(&frame);
+                    Ok(true)
+                }
+                Err(TryRecvError::Empty) => Ok(false),
+                Err(TryRecvError::Disconnected) => Err(RuntimeError::Transport),
+            }
+        }
+    }
+
     impl Transport for InMemory {
         fn send(&mut self, frame: &[u8]) -> Result<(), RuntimeError> {
             self.tx

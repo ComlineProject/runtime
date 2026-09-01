@@ -42,6 +42,14 @@ impl<D: Dispatch, W: WireFormat> Server<D, W> {
         self.dispatch
             .dispatch(Kind::Id(call_id), params, &self.format, &mut self.envelope)?;
 
+        // A one-way call (`_return: None`): the generated dispatcher ran the
+        // handler and wrote no [`Envelope`] — there is nothing to reply.
+        // Any real envelope is at least one tag byte, so "empty" is
+        // unambiguous.
+        if self.envelope.is_empty() {
+            return Ok(true);
+        }
+
         self.response.clear();
         wire::encode_response(request_id, &self.envelope, &mut self.response);
         transport.send(&self.response)?;

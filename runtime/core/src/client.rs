@@ -79,6 +79,26 @@ impl<T: Transport, W: WireFormat> Client<T, W> {
         Ok((envelope, &self.format))
     }
 
+    /// Fire a **one-way** call: frame `call_id` + `params`, send, return. No
+    /// response is awaited — for `_return: None` schema functions, whose
+    /// generated dispatcher writes no [`Envelope`] and whose peer [`Server`]
+    /// therefore sends nothing back. `Ok(())` means the frame left the
+    /// transport, never a remote outcome.
+    pub fn notify<P>(&mut self, call_id: u16, params: &P) -> Result<(), RuntimeError>
+    where
+        P: Serialize + ?Sized,
+    {
+        // Keep request ids monotonic across mixed call / notify use, even
+        // though nothing reads this one back.
+        let request_id = self.next_id;
+        self.next_id = self.next_id.wrapping_add(1);
+
+        self.request.clear();
+        wire::encode_request_header(call_id, request_id, &mut self.request);
+        self.format.encode(params, &mut self.request)?;
+        self.transport.send(&self.request)
+    }
+
     /// The underlying transport, e.g. to close it or read its peer address.
     pub fn transport_mut(&mut self) -> &mut T {
         &mut self.transport
