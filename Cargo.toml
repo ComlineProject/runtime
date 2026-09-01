@@ -2,14 +2,16 @@
 resolver = "2"
 members = [
     "runtime/core",
-    "runtime/tests/provider_consumer",
     "runtime-std-extra",
-
     "runtime-langs/c",
-    "runtime-langs/lua",
-    "runtime-langs/lua-test",
-    #"runtime-langs/luau",
-    #"runtime-langs/python",
+
+    # Broken on current rustc, independent of the `no_std` rework — re-enable
+    # once addressed:
+    #   "runtime-langs/lua"       — `mlua` 0.9 vs the never type (`!`)
+    #   "runtime-langs/lua-test"  — same
+    #   "runtime/tests/provider_consumer" — `downcast_mut` on a bare trait object
+    #"runtime-langs/luau"
+    #"runtime-langs/python"
 ]
 # `runtime/core_no-std` removed — `comline-runtime` is now `no_std`-first with a
 # `std` feature, not a parallel fork. See ComlineProject/docs → Design.
