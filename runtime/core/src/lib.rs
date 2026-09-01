@@ -1,19 +1,15 @@
-// Nightly Configuration (to be disabled whenever not necessary,
-// and mandatory to be removed at Comline Runtime 1.0 release and above)
-#![feature(trait_upcasting)]
-#![feature(slice_ptr_get)]
+// `no_std`-first: the crate is `#![no_std]` unless the `std` feature is on
+// (it is, by default). `--no-default-features` builds just `contract`.
+#![cfg_attr(not(feature = "std"), no_std)]
 
-// Crate configuration
-//#![no_std]
+#[cfg(feature = "alloc")]
+extern crate alloc;
 
+// The `core ↔ target` contract — `no_std`, allocation-free.
+pub mod contract;
 
-extern crate core;
-
-// Relative Modules
-/*
-pub mod prelude {
-    pub use crate::setup::APIResult;
-}
-*/
+// The `std` layer: transport, async, the setup builders, the dylib ABI.
+#[cfg(feature = "std")]
 pub mod package_abi;
+#[cfg(feature = "std")]
 pub mod setup;
