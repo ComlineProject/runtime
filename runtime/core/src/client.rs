@@ -15,6 +15,8 @@
 
 use alloc::vec::Vec;
 
+use core::time::Duration;
+
 use serde::Serialize;
 
 use crate::contract::{Envelope, RuntimeError, WireFormat};
@@ -57,6 +59,34 @@ impl<T: Transport, W: WireFormat> Client<T, W> {
     where
         P: Serialize + ?Sized,
     {
+        self.request_response(call_id, params, None)
+    }
+
+    /// [`call`](Self::call), but give up after `timeout` waiting for the
+    /// response — `Err(RuntimeError::Timeout)`. What a generated stub emits for
+    /// a `@timeout_ms` function annotation. Honoured only by transports that
+    /// override [`Transport::recv_timeout`] (the `std` ones do); others block.
+    pub fn call_with_timeout<P>(
+        &mut self,
+        call_id: u16,
+        params: &P,
+        timeout: Duration,
+    ) -> Result<(Envelope<'_>, &W), RuntimeError>
+    where
+        P: Serialize + ?Sized,
+    {
+        self.request_response(call_id, params, Some(timeout))
+    }
+
+    fn request_response<P>(
+        &mut self,
+        call_id: u16,
+        params: &P,
+        timeout: Option<Duration>,
+    ) -> Result<(Envelope<'_>, &W), RuntimeError>
+    where
+        P: Serialize + ?Sized,
+    {
         let request_id = self.next_id;
         self.next_id = self.next_id.wrapping_add(1);
 
@@ -66,7 +96,14 @@ impl<T: Transport, W: WireFormat> Client<T, W> {
         self.transport.send(&self.request)?;
 
         self.response.clear();
-        self.transport.recv(&mut self.response)?;
+        match timeout {
+            None => self.transport.recv(&mut self.response)?,
+            Some(d) => {
+                if !self.transport.recv_timeout(&mut self.response, d)? {
+                    return Err(RuntimeError::Timeout);
+                }
+            }
+        }
 
         let (echoed, envelope) =
             wire::decode_response(&self.response).ok_or(RuntimeError::Framing)?;

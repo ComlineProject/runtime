@@ -6,6 +6,8 @@
 //! natively. A byte stream ([`Tcp`]) has no message boundaries, so it adds a
 //! `u32` length prefix per frame.
 
+use core::time::Duration;
+
 use alloc::vec::Vec;
 
 use crate::contract::RuntimeError;
@@ -18,6 +20,19 @@ pub trait Transport {
     /// Receive the next frame into `buf` (the caller clears and reuses it).
     /// `Err(RuntimeError::Transport)` once the peer is gone.
     fn recv(&mut self, buf: &mut Vec<u8>) -> Result<(), RuntimeError>;
+
+    /// Receive the next frame, waiting at most `timeout`. `Ok(true)` — a
+    /// frame was read into `buf`; `Ok(false)` — the timeout elapsed first.
+    ///
+    /// The default **blocks**, ignoring `timeout` — a transport with no clock
+    /// still works, it just can't honour a per-call deadline. `std` transports
+    /// override this. [`Client::call_with_timeout`](crate::client::Client::call_with_timeout)
+    /// is the caller.
+    fn recv_timeout(&mut self, buf: &mut Vec<u8>, timeout: Duration) -> Result<bool, RuntimeError> {
+        let _ = timeout;
+        self.recv(buf)?;
+        Ok(true)
+    }
 }
 
 #[cfg(feature = "std")]
@@ -72,6 +87,23 @@ mod in_memory {
             buf.extend_from_slice(&frame);
             Ok(())
         }
+
+        fn recv_timeout(
+            &mut self,
+            buf: &mut Vec<u8>,
+            timeout: super::Duration,
+        ) -> Result<bool, RuntimeError> {
+            use std::sync::mpsc::RecvTimeoutError;
+            match self.rx.recv_timeout(timeout) {
+                Ok(frame) => {
+                    buf.clear();
+                    buf.extend_from_slice(&frame);
+                    Ok(true)
+                }
+                Err(RecvTimeoutError::Timeout) => Ok(false),
+                Err(RecvTimeoutError::Disconnected) => Err(RuntimeError::Transport),
+            }
+        }
     }
 }
 
@@ -80,10 +112,10 @@ pub use in_memory::{duplex, InMemory};
 
 #[cfg(feature = "std")]
 mod tcp {
-    use std::io::{Read, Write};
+    use std::io::{ErrorKind, Read, Write};
     use std::net::{TcpStream, ToSocketAddrs};
 
-    use super::{Transport, Vec};
+    use super::{Duration, Transport, Vec};
     use crate::contract::RuntimeError;
 
     /// Reject a length prefix larger than this before allocating for it — a
@@ -143,6 +175,49 @@ mod tcp {
             self.stream
                 .read_exact(buf)
                 .map_err(|_| RuntimeError::Transport)
+        }
+
+        /// Best-effort: sets a read timeout for the length-prefix and body
+        /// reads, then clears it. A timeout part-way through a frame leaves the
+        /// stream desynced — treat a timed-out call as fatal to the connection
+        /// and drop the [`Tcp`].
+        fn recv_timeout(
+            &mut self,
+            buf: &mut Vec<u8>,
+            timeout: Duration,
+        ) -> Result<bool, RuntimeError> {
+            self.stream
+                .set_read_timeout(Some(timeout))
+                .map_err(|_| RuntimeError::Transport)?;
+            let outcome = self.recv_within(buf);
+            let _ = self.stream.set_read_timeout(None);
+            outcome
+        }
+    }
+
+    impl Tcp {
+        fn recv_within(&mut self, buf: &mut Vec<u8>) -> Result<bool, RuntimeError> {
+            let timed_out = |e: &std::io::Error| {
+                matches!(e.kind(), ErrorKind::WouldBlock | ErrorKind::TimedOut)
+            };
+            if let Err(e) = self.stream.read_exact(&mut self.len) {
+                return if timed_out(&e) {
+                    Ok(false)
+                } else {
+                    Err(RuntimeError::Transport)
+                };
+            }
+            let len = u32::from_le_bytes(self.len) as usize;
+            if len > MAX_FRAME {
+                return Err(RuntimeError::Framing);
+            }
+            buf.clear();
+            buf.resize(len, 0);
+            match self.stream.read_exact(buf) {
+                Ok(()) => Ok(true),
+                Err(e) if timed_out(&e) => Ok(false),
+                Err(_) => Err(RuntimeError::Transport),
+            }
         }
     }
 }
