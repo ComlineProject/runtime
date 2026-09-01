@@ -8,7 +8,7 @@ use std::cell::RefCell;
 use std::rc::Rc;
 
 use comline_runtime::client::Client;
-use comline_runtime::contract::{BufMut, Dispatch, Kind, RuntimeError, WireFormat};
+use comline_runtime::contract::{Dispatch, Kind, Reply, RuntimeError, WireFormat};
 use comline_runtime::format::MsgPack;
 use comline_runtime::serve::Server;
 use comline_runtime::transport::duplex;
@@ -31,12 +31,16 @@ trait Log {
 struct LogDispatcher<T>(T);
 
 impl<T: Log> Dispatch for LogDispatcher<T> {
+    fn calls(&self) -> &'static [&'static str] {
+        CALLS
+    }
+
     fn dispatch<W: WireFormat>(
         &self,
         call: Kind,
         params: &[u8],
         fmt: &W,
-        _out: &mut dyn BufMut, // one-way: nothing is written here
+        _reply: &mut Reply, // one-way: nothing is recorded
     ) -> Result<(), RuntimeError> {
         match call.resolve(CALLS).ok_or(RuntimeError::UnknownCall)? {
             0 => {

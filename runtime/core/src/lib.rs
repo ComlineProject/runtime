@@ -9,15 +9,18 @@
 #[cfg(feature = "alloc")]
 extern crate alloc;
 
-// The `core ↔ target` contract — `no_std`, allocation-free.
+// The `core ↔ target` contract — `no_std`, allocation-free. The Comline
+// datagram `Framing` lives here (`contract::DatagramFraming`).
 pub mod contract;
-
-// Request / response framing — `no_std`, allocation-free.
-pub mod wire;
 
 // `WireFormat` implementations (`std`-gated for now — see the module).
 #[cfg(feature = "std")]
 pub mod format;
+
+// Alternative `Framing` implementations that need `std` / extra deps
+// (JSON-RPC). The datagram framing is in `contract`.
+#[cfg(feature = "std")]
+pub mod framing;
 
 // The frame transport, the provider serve loop, and the consumer call side.
 #[cfg(feature = "alloc")]

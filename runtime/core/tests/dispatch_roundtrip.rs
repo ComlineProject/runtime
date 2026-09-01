@@ -1,12 +1,11 @@
-//! End to end, no network: a hand-written stand-in for what `comline-rust` will
-//! generate — a client stub and a `Dispatch` impl — driven directly with
-//! `MsgPack`. Proves the `contract` surface (`Kind`, `WireFormat`, `Dispatch`,
-//! `Envelope`, `BufMut`, `CallError`) fits together before any codegen or
-//! `setup/` rework.
+//! End to end, no network: a hand-written stand-in for what `comline-rust`
+//! generates — a client stub and a `Dispatch` impl — driven directly with
+//! `MsgPack`, no framing. Proves the `contract` surface (`Kind`, `WireFormat`,
+//! `Dispatch`, `Reply`, `Outcome`, `CallError`) fits together.
 #![cfg(feature = "std")]
 
 use comline_runtime::contract::{
-    BufMut, CallError, Dispatch, Envelope, Kind, RuntimeError, WireFormat,
+    CallError, Dispatch, Kind, Outcome, Reply, RuntimeError, WireFormat,
 };
 use comline_runtime::format::MsgPack;
 use serde::{Deserialize, Serialize};
@@ -52,38 +51,40 @@ trait Echo {
 struct EchoDispatcher<T>(T);
 
 impl<T: Echo> Dispatch for EchoDispatcher<T> {
+    fn calls(&self) -> &'static [&'static str] {
+        CALLS
+    }
+
     fn dispatch<W: WireFormat>(
         &self,
         call: Kind,
         params: &[u8],
         fmt: &W,
-        out: &mut dyn BufMut,
+        reply: &mut Reply,
     ) -> Result<(), RuntimeError> {
-        // A real dispatcher reuses one scratch buffer; a fresh `Vec` per arm
-        // keeps the shape readable here.
         match call.resolve(CALLS).ok_or(RuntimeError::UnknownCall)? {
             0 => {
                 let p: SayParams = fmt.decode(params)?;
                 match self.0.say(p.msg) {
-                    Ok(reply) => {
+                    Ok(r) => {
                         let mut body = Vec::new();
-                        fmt.encode(&reply, &mut body)?;
-                        Envelope::encode_ok(&body, out);
+                        fmt.encode(&r, &mut body)?;
+                        reply.ok(&body);
                     }
                     Err(SayError::TooLong(e)) => {
                         let mut body = Vec::new();
                         fmt.encode(&e, &mut body)?;
-                        Envelope::encode_err(ERR_TOO_LONG, &body, out);
+                        reply.err(ERR_TOO_LONG, &body);
                     }
                 }
                 Ok(())
             }
             1 => {
                 let p: BumpParams = fmt.decode(params)?;
-                let reply = self.0.bump(p.n).unwrap();
+                let r = self.0.bump(p.n).unwrap();
                 let mut body = Vec::new();
-                fmt.encode(&reply, &mut body)?;
-                Envelope::encode_ok(&body, out);
+                fmt.encode(&r, &mut body)?;
+                reply.ok(&body);
                 Ok(())
             }
             _ => Err(RuntimeError::UnknownCall),
@@ -91,10 +92,10 @@ impl<T: Echo> Dispatch for EchoDispatcher<T> {
     }
 }
 
-// ── consumer: the generated client stub ────────────────────────────────────
+// ── consumer: the generated client stub (no framing — talks to the dispatcher) ─
 
 struct EchoClient<'d, D> {
-    dispatcher: &'d D, // stands in for a call system + transport
+    dispatcher: &'d D,
     fmt: MsgPack,
 }
 
@@ -103,20 +104,19 @@ impl<D: Dispatch> EchoClient<'_, D> {
         let mut params = Vec::new();
         self.fmt.encode(&SayParams { msg }, &mut params)?;
 
-        let mut frame = Vec::new();
+        let mut body = Vec::new();
+        let mut reply = Reply::new(&mut body);
         self.dispatcher
-            .dispatch(Kind::Id(0), &params, &self.fmt, &mut frame)?;
+            .dispatch(Kind::Id(0), &params, &self.fmt, &mut reply)?;
 
-        match Envelope::decode(&frame).ok_or(RuntimeError::Framing)? {
-            Envelope::Ok(payload) => self.fmt.decode(payload).map_err(CallError::Runtime),
-            Envelope::Err {
-                id: ERR_TOO_LONG,
-                body,
-            } => {
-                let e: TooLong = self.fmt.decode(body)?;
+        match reply.outcome() {
+            Outcome::Ok => self.fmt.decode(&body).map_err(CallError::Runtime),
+            Outcome::Err(ERR_TOO_LONG) => {
+                let e: TooLong = self.fmt.decode(&body)?;
                 Err(CallError::App(SayError::TooLong(e)))
             }
-            Envelope::Err { id, .. } => Err(CallError::Runtime(RuntimeError::Remote { id })),
+            Outcome::Err(id) => Err(CallError::Runtime(RuntimeError::Remote { id })),
+            Outcome::None => Err(CallError::Runtime(RuntimeError::Framing)),
         }
     }
 
@@ -124,22 +124,24 @@ impl<D: Dispatch> EchoClient<'_, D> {
         let mut params = Vec::new();
         self.fmt.encode(&BumpParams { n }, &mut params)?;
 
-        let mut frame = Vec::new();
+        let mut body = Vec::new();
+        let mut reply = Reply::new(&mut body);
         self.dispatcher
-            .dispatch(Kind::Id(1), &params, &self.fmt, &mut frame)?;
+            .dispatch(Kind::Id(1), &params, &self.fmt, &mut reply)?;
 
-        match Envelope::decode(&frame).ok_or(RuntimeError::Framing)? {
-            Envelope::Ok(payload) => self.fmt.decode(payload).map_err(CallError::Runtime),
-            Envelope::Err { id, .. } => Err(CallError::Runtime(RuntimeError::Remote { id })),
+        match reply.outcome() {
+            Outcome::Ok => self.fmt.decode(&body).map_err(CallError::Runtime),
+            Outcome::Err(id) => Err(CallError::Runtime(RuntimeError::Remote { id })),
+            Outcome::None => Err(CallError::Runtime(RuntimeError::Framing)),
         }
     }
 }
 
 // ── the service and the assertions ────────────────────────────────────────
 
-struct Server;
+struct Service;
 
-impl Echo for Server {
+impl Echo for Service {
     fn say(&self, msg: &str) -> Result<String, SayError> {
         if msg.len() > 8 {
             return Err(SayError::TooLong(TooLong { limit: 8 }));
@@ -152,17 +154,14 @@ impl Echo for Server {
     }
 }
 
-fn client() -> (EchoDispatcher<Server>, MsgPack) {
-    (EchoDispatcher(Server), MsgPack)
+fn client() -> (EchoDispatcher<Service>, MsgPack) {
+    (EchoDispatcher(Service), MsgPack)
 }
 
 #[test]
 fn ok_path_round_trips() {
     let (d, fmt) = client();
-    let c = EchoClient {
-        dispatcher: &d,
-        fmt,
-    };
+    let c = EchoClient { dispatcher: &d, fmt };
     assert_eq!(c.say("hi").unwrap(), "echo: hi");
     assert_eq!(c.bump(41).unwrap(), 42);
 }
@@ -170,10 +169,7 @@ fn ok_path_round_trips() {
 #[test]
 fn a_raised_error_reaches_the_client_typed() {
     let (d, fmt) = client();
-    let c = EchoClient {
-        dispatcher: &d,
-        fmt,
-    };
+    let c = EchoClient { dispatcher: &d, fmt };
     let err = c.say("this is far too long").unwrap_err();
     assert_eq!(err, CallError::App(SayError::TooLong(TooLong { limit: 8 })));
 }
@@ -181,9 +177,10 @@ fn a_raised_error_reaches_the_client_typed() {
 #[test]
 fn an_unknown_call_ordinal_is_a_runtime_error() {
     let (d, _) = client();
-    let mut out = Vec::new();
+    let mut body = Vec::new();
+    let mut reply = Reply::new(&mut body);
     let err = d
-        .dispatch(Kind::Id(9), &[], &MsgPack, &mut out)
+        .dispatch(Kind::Id(9), &[], &MsgPack, &mut reply)
         .unwrap_err();
     assert_eq!(err, RuntimeError::UnknownCall);
 }

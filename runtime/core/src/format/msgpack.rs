@@ -1,7 +1,6 @@
-use std::io::Write;
-
 use serde::{Deserialize, Serialize};
 
+use super::BufWriter;
 use crate::contract::{BufMut, RuntimeError, WireFormat};
 
 /// [`WireFormat`] over MessagePack (`rmp-serde`): compact, `serde`-native,
@@ -9,21 +8,6 @@ use crate::contract::{BufMut, RuntimeError, WireFormat};
 /// append-only call/field discipline keeps both ends in step.
 #[derive(Debug, Default, Clone, Copy)]
 pub struct MsgPack;
-
-/// `std::io::Write` over a `BufMut`, so `encode` serialises straight into the
-/// caller's buffer with no intermediate `Vec`.
-struct BufWriter<'a>(&'a mut dyn BufMut);
-
-impl Write for BufWriter<'_> {
-    fn write(&mut self, bytes: &[u8]) -> std::io::Result<usize> {
-        self.0.put_slice(bytes);
-        Ok(bytes.len())
-    }
-
-    fn flush(&mut self) -> std::io::Result<()> {
-        Ok(())
-    }
-}
 
 impl WireFormat for MsgPack {
     fn name(&self) -> &'static str {
