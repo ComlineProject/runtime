@@ -12,11 +12,18 @@ use crate::contract::BufMut;
 const REQUEST_HEADER: usize = 2 + 8;
 const RESPONSE_HEADER: usize = 8;
 
-/// Write a request frame.
+/// Write a request frame around already-encoded params.
 pub fn encode_request(call_id: u16, request_id: u64, params: &[u8], out: &mut dyn BufMut) {
+    encode_request_header(call_id, request_id, out);
+    out.put_slice(params);
+}
+
+/// Write just the request header. A client follows it by serializing the params
+/// straight into the same buffer — no params scratch buffer, one contiguous
+/// frame.
+pub fn encode_request_header(call_id: u16, request_id: u64, out: &mut dyn BufMut) {
     out.put_u16_le(call_id);
     out.put_u64_le(request_id);
-    out.put_slice(params);
 }
 
 /// `(call_id, request_id, params)` — `params` borrows `frame`. `None` if the
@@ -65,5 +72,17 @@ mod tests {
     fn truncated_frames_are_rejected() {
         assert_eq!(decode_request(&[0, 0, 0]), None);
         assert_eq!(decode_response(&[0, 0, 0]), None);
+    }
+
+    #[test]
+    fn header_then_params_equals_whole_frame() {
+        let mut split = Vec::new();
+        encode_request_header(7, 99, &mut split);
+        split.put_slice(b"body");
+
+        let mut whole = Vec::new();
+        encode_request(7, 99, b"body", &mut whole);
+
+        assert_eq!(split, whole);
     }
 }
