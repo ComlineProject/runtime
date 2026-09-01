@@ -12,6 +12,22 @@ pub enum Kind {
     Named(&'static str),
 }
 
+impl Kind {
+    /// Resolve to a position in `calls` — a protocol's `calls_names()`, in
+    /// declaration order. `Id(n)` is that position directly; `Named(s)` is
+    /// looked up. `None` if out of range or not found — a generated dispatcher
+    /// maps that to [`RuntimeError::UnknownCall`].
+    pub fn resolve(&self, calls: &[&str]) -> Option<usize> {
+        match self {
+            Kind::Id(id) => {
+                let idx = *id as usize;
+                (idx < calls.len()).then_some(idx)
+            }
+            Kind::Named(name) => calls.iter().position(|c| c == name),
+        }
+    }
+}
+
 /// The provider side of a protocol: given an inbound call and its encoded
 /// params, run the user's handler and write the response [`Envelope`] into
 /// `out`.
@@ -30,4 +46,24 @@ pub trait Dispatch {
         format: &W,
         out: &mut dyn BufMut,
     ) -> Result<(), RuntimeError>;
+}
+
+#[cfg(test)]
+mod tests {
+    use super::Kind;
+
+    const CALLS: &[&str] = &["send", "history", "notify"];
+
+    #[test]
+    fn id_resolves_by_position() {
+        assert_eq!(Kind::Id(0).resolve(CALLS), Some(0));
+        assert_eq!(Kind::Id(2).resolve(CALLS), Some(2));
+        assert_eq!(Kind::Id(3).resolve(CALLS), None);
+    }
+
+    #[test]
+    fn named_resolves_by_lookup() {
+        assert_eq!(Kind::Named("history").resolve(CALLS), Some(1));
+        assert_eq!(Kind::Named("missing").resolve(CALLS), None);
+    }
 }
