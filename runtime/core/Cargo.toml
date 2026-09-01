@@ -8,7 +8,7 @@ license = "MPL-2.0"
 [features]
 default = ["std"]
 
-# `contract` + `wire` need only `serde`'s core traits and no allocation.
+# `contract` needs only `serde`'s core traits and no allocation.
 # `alloc` adds owned generated types, the frame `transport`, and the `serve`
 # loop. `std` adds the MessagePack `format` and the in-memory transport, plus
 # the dylib ABI.
@@ -20,11 +20,12 @@ std = [
     "dep:libloading",
     "dep:rmp",
     "dep:rmp-serde",
+    "dep:serde_json",
 ]
 
 
 [dependencies]
-# `contract` / `wire` — no_std, no alloc
+# `contract` — no_std, no alloc
 serde = { version = "1.0.190", default-features = false }
 bytemuck = { version = "1.14.0", features = ["derive"] }
 
@@ -33,6 +34,7 @@ abi_stable = { version = "0.11.2", optional = true }
 libloading = { version = "0.8.0", optional = true }
 rmp = { version = "0.8.12", optional = true }
 rmp-serde = { version = "1.1.2", optional = true }
+serde_json = { version = "1.0.108", optional = true, features = ["raw_value"] }
 
 
 [dev-dependencies]

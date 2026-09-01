@@ -7,7 +7,7 @@ use std::thread;
 
 use comline_runtime::client::Client;
 use comline_runtime::contract::{
-    BufMut, Dispatch, Envelope, Handshake, Kind, RuntimeError, WireFormat, FRAMING_DATAGRAM,
+    Dispatch, Envelope, Handshake, Kind, Reply, RuntimeError, WireFormat, FRAMING_DATAGRAM,
 };
 use comline_runtime::format::MsgPack;
 use comline_runtime::serve::Server;
@@ -30,19 +30,23 @@ trait Echo {
 struct EchoDispatcher<T>(T);
 
 impl<T: Echo> Dispatch for EchoDispatcher<T> {
+    fn calls(&self) -> &'static [&'static str] {
+        CALLS
+    }
+
     fn dispatch<W: WireFormat>(
         &self,
         call: Kind,
         params: &[u8],
         fmt: &W,
-        out: &mut dyn BufMut,
+        reply: &mut Reply,
     ) -> Result<(), RuntimeError> {
         match call.resolve(CALLS).ok_or(RuntimeError::UnknownCall)? {
             0 => {
                 let p: BumpParams = fmt.decode(params)?;
                 let mut body = Vec::new();
                 fmt.encode(&self.0.bump(p.n), &mut body)?;
-                Envelope::encode_ok(&body, out);
+                reply.ok(&body);
                 Ok(())
             }
             _ => Err(RuntimeError::UnknownCall),

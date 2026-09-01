@@ -9,7 +9,7 @@ use std::thread;
 
 use comline_runtime::client::Client;
 use comline_runtime::contract::{
-    BufMut, CallError, Dispatch, Envelope, Kind, RuntimeError, WireFormat,
+    CallError, Dispatch, Envelope, Kind, Reply, RuntimeError, WireFormat,
 };
 use comline_runtime::format::MsgPack;
 use comline_runtime::serve::Server;
@@ -49,26 +49,30 @@ trait Greet {
 struct GreetDispatcher<T>(T);
 
 impl<T: Greet> Dispatch for GreetDispatcher<T> {
+    fn calls(&self) -> &'static [&'static str] {
+        CALLS
+    }
+
     fn dispatch<W: WireFormat>(
         &self,
         call: Kind,
         params: &[u8],
         fmt: &W,
-        out: &mut dyn BufMut,
+        reply: &mut Reply,
     ) -> Result<(), RuntimeError> {
         match call.resolve(CALLS).ok_or(RuntimeError::UnknownCall)? {
             0 => {
                 let p: HelloParams = fmt.decode(params)?;
                 match self.0.hello(p.name) {
-                    Ok(reply) => {
+                    Ok(r) => {
                         let mut body = Vec::new();
-                        fmt.encode(&reply, &mut body)?;
-                        Envelope::encode_ok(&body, out);
+                        fmt.encode(&r, &mut body)?;
+                        reply.ok(&body);
                     }
                     Err(GreetHelloError::Rude(e)) => {
                         let mut body = Vec::new();
                         fmt.encode(&e, &mut body)?;
-                        Envelope::encode_err(ERR_RUDE, &body, out);
+                        reply.err(ERR_RUDE, &body);
                     }
                 }
                 Ok(())

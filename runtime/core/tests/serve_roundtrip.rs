@@ -1,15 +1,17 @@
-//! A call over a real (in-process) transport: client frames a request, the
-//! `Server` on another thread reads it, dispatches, and frames the response.
-//! Exercises `wire` + `transport::InMemory` + `serve::Server` together.
+//! A call over a real (in-process) transport: the client hand-frames a request
+//! with `DatagramFraming`, the `Server` on another thread reads it, dispatches,
+//! and frames the response. Exercises `Framing` + `transport::InMemory` +
+//! `serve::Server` together.
 #![cfg(feature = "std")]
 
 use std::thread;
 
-use comline_runtime::contract::{BufMut, Dispatch, Envelope, Kind, RuntimeError, WireFormat};
+use comline_runtime::contract::{
+    Call, DatagramFraming, Dispatch, Envelope, Framing, Kind, Reply, RuntimeError, WireFormat,
+};
 use comline_runtime::format::MsgPack;
 use comline_runtime::serve::Server;
 use comline_runtime::transport::{duplex, Transport};
-use comline_runtime::wire;
 use serde::{Deserialize, Serialize};
 
 // protocol Greet { function hello(name: str) -> str; }
@@ -29,20 +31,24 @@ trait Greet {
 struct GreetDispatcher<T>(T);
 
 impl<T: Greet> Dispatch for GreetDispatcher<T> {
+    fn calls(&self) -> &'static [&'static str] {
+        CALLS
+    }
+
     fn dispatch<W: WireFormat>(
         &self,
         call: Kind,
         params: &[u8],
         fmt: &W,
-        out: &mut dyn BufMut,
+        reply: &mut Reply,
     ) -> Result<(), RuntimeError> {
         match call.resolve(CALLS).ok_or(RuntimeError::UnknownCall)? {
             0 => {
                 let p: HelloParams = fmt.decode(params)?;
-                let reply = self.0.hello(p.name);
+                let r = self.0.hello(p.name);
                 let mut body = Vec::new();
-                fmt.encode(&reply, &mut body)?;
-                Envelope::encode_ok(&body, out);
+                fmt.encode(&r, &mut body)?;
+                reply.ok(&body);
                 Ok(())
             }
             _ => Err(RuntimeError::UnknownCall),
@@ -69,21 +75,25 @@ fn a_call_round_trips_over_the_transport() {
     });
 
     // client: frame `hello("world")` as request #1
-    let mut params = Vec::new();
-    MsgPack
-        .encode(&HelloParams { name: "world" }, &mut params)
-        .unwrap();
     let mut request = Vec::new();
-    wire::encode_request(0, 1, &params, &mut request);
+    DatagramFraming
+        .encode_request(
+            Call::from(0),
+            1,
+            &HelloParams { name: "world" },
+            &MsgPack,
+            &mut request,
+        )
+        .unwrap();
     client.send(&request).unwrap();
 
     // client: read the response
     let mut frame = Vec::new();
     client.recv(&mut frame).unwrap();
-    let (request_id, envelope) = wire::decode_response(&frame).unwrap();
+    let (request_id, envelope) = DatagramFraming.decode_response(&frame).unwrap();
     assert_eq!(request_id, 1);
 
-    let reply: String = match Envelope::decode(envelope).unwrap() {
+    let reply: String = match envelope {
         Envelope::Ok(payload) => MsgPack.decode(payload).unwrap(),
         Envelope::Err { .. } => panic!("unexpected error frame"),
     };

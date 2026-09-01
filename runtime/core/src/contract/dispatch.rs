@@ -28,23 +28,69 @@ impl Kind {
     }
 }
 
+/// What a dispatched call produced. Framing-agnostic: the dispatcher calls
+/// [`ok`](Reply::ok) or [`err`](Reply::err) exactly once, or neither for a
+/// one-way call. The framing then wraps the accumulated body.
+pub struct Reply<'a> {
+    body: &'a mut dyn BufMut,
+    outcome: Outcome,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Outcome {
+    /// One-way — nothing written, no response frame.
+    None,
+    /// A success payload was written.
+    Ok,
+    /// A schema error `body` was written, keyed by ordinal `id`.
+    Err(u16),
+}
+
+impl<'a> Reply<'a> {
+    pub fn new(body: &'a mut dyn BufMut) -> Self {
+        Self {
+            body,
+            outcome: Outcome::None,
+        }
+    }
+
+    /// Record a success: `payload` is the serialised return value.
+    pub fn ok(&mut self, payload: &[u8]) {
+        self.body.put_slice(payload);
+        self.outcome = Outcome::Ok;
+    }
+
+    /// Record a raised schema error: `body` is the serialised error struct,
+    /// `id` its schema-global ordinal.
+    pub fn err(&mut self, id: u16, body: &[u8]) {
+        self.body.put_slice(body);
+        self.outcome = Outcome::Err(id);
+    }
+
+    pub fn outcome(&self) -> Outcome {
+        self.outcome
+    }
+}
+
 /// The provider side of a protocol: given an inbound call and its encoded
-/// params, run the user's handler and write the response [`Envelope`] into
-/// `out`.
+/// params, run the user's handler and record the outcome on `reply`.
 ///
 /// Sync — no boxed futures on the `no_std` path. An async server layer wraps
 /// this behind the `std` feature. The generated `<Proto>Dispatcher` implements
-/// it; the call system holds one by value / `&D` (generic — no vtable, no
-/// `dyn`) and calls it with the format it was configured with.
-///
-/// [`Envelope`]: crate::contract::Envelope
+/// it; [`Server`](crate::serve::Server) holds one and routes inbound frames
+/// to it.
 pub trait Dispatch {
+    /// The protocol's function names, in declaration order — so a name-oriented
+    /// framing's method name can be resolved to an ordinal. The generated
+    /// dispatcher returns its `<PROTO>_CALLS` constant.
+    fn calls(&self) -> &'static [&'static str];
+
     fn dispatch<W: WireFormat>(
         &self,
         call: Kind,
         params: &[u8],
         format: &W,
-        out: &mut dyn BufMut,
+        reply: &mut Reply,
     ) -> Result<(), RuntimeError>;
 }
 

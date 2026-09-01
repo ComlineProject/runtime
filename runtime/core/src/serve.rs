@@ -3,27 +3,38 @@
 
 use alloc::vec::Vec;
 
-use crate::contract::{Dispatch, Handshake, Kind, RuntimeError, WireFormat};
+use crate::contract::{
+    DatagramFraming, Dispatch, Framing, Handshake, Kind, Outcome, Reply, RequestCall, RuntimeError,
+    WireFormat,
+};
 use crate::transport::Transport;
-use crate::wire;
 
 /// Serves one protocol implementation over a [`Transport`], reusing its buffers
-/// across calls (§4.6 — no per-call allocation on the frame path).
-pub struct Server<D, W> {
+/// across calls (§4.6 — no per-call allocation on the frame path). Generic over
+/// the [`Framing`]; defaults to the Comline datagram framing.
+pub struct Server<D, W, F = DatagramFraming> {
     dispatch: D,
     format: W,
+    framing: F,
     recv: Vec<u8>,
-    envelope: Vec<u8>,
+    body: Vec<u8>,
     response: Vec<u8>,
 }
 
-impl<D: Dispatch, W: WireFormat> Server<D, W> {
+impl<D: Dispatch, W: WireFormat> Server<D, W, DatagramFraming> {
     pub fn new(dispatch: D, format: W) -> Self {
+        Self::with_framing(dispatch, format, DatagramFraming)
+    }
+}
+
+impl<D: Dispatch, W: WireFormat, F: Framing> Server<D, W, F> {
+    pub fn with_framing(dispatch: D, format: W, framing: F) -> Self {
         Self {
             dispatch,
             format,
+            framing,
             recv: Vec::new(),
-            envelope: Vec::new(),
+            body: Vec::new(),
             response: Vec::new(),
         }
     }
@@ -35,23 +46,43 @@ impl<D: Dispatch, W: WireFormat> Server<D, W> {
             return Ok(false);
         }
 
-        let (call_id, request_id, params) =
-            wire::decode_request(&self.recv).ok_or(RuntimeError::Framing)?;
+        let req = self
+            .framing
+            .decode_request(&self.recv)
+            .ok_or(RuntimeError::Framing)?;
+        let request_id = req.request_id;
 
-        self.envelope.clear();
-        self.dispatch
-            .dispatch(Kind::Id(call_id), params, &self.format, &mut self.envelope)?;
+        // Whatever address the framing carried, resolve it to an ordinal.
+        let idx = match req.call {
+            RequestCall::Id(id) => id,
+            RequestCall::Name(name) => self
+                .dispatch
+                .calls()
+                .iter()
+                .position(|c| *c == name)
+                .ok_or(RuntimeError::UnknownCall)? as u16,
+        };
 
-        // A one-way call (`_return: None`): the generated dispatcher ran the
-        // handler and wrote no [`Envelope`] — there is nothing to reply.
-        // Any real envelope is at least one tag byte, so "empty" is
-        // unambiguous.
-        if self.envelope.is_empty() {
-            return Ok(true);
-        }
+        self.body.clear();
+        let outcome = {
+            let mut reply = Reply::new(&mut self.body);
+            self.dispatch
+                .dispatch(Kind::Id(idx), req.params, &self.format, &mut reply)?;
+            reply.outcome()
+        };
 
         self.response.clear();
-        wire::encode_response(request_id, &self.envelope, &mut self.response);
+        match outcome {
+            // A one-way call (`_return: None`): nothing to reply.
+            Outcome::None => return Ok(true),
+            Outcome::Ok => self
+                .framing
+                .encode_response_ok(request_id, &self.body, &mut self.response),
+            Outcome::Err(id) => {
+                self.framing
+                    .encode_response_err(request_id, id, &self.body, &mut self.response)
+            }
+        }
         transport.send(&self.response)?;
         Ok(true)
     }
