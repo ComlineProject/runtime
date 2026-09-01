@@ -2,10 +2,8 @@
 resolver = "2"
 members = [
     "runtime/core",
-    "runtime/core_no-std",
     "runtime/tests/provider_consumer",
     "runtime-std-extra",
-
 
     "runtime-langs/c",
     "runtime-langs/lua",
@@ -13,6 +11,8 @@ members = [
     #"runtime-langs/luau",
     #"runtime-langs/python",
 ]
+# `runtime/core_no-std` removed — `comline-runtime` is now `no_std`-first with a
+# `std` feature, not a parallel fork. See ComlineProject/docs → Design.
 
 [profile.release]
 opt-level = 2
