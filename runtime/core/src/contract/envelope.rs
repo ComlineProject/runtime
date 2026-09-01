@@ -44,3 +44,36 @@ impl<'a> Envelope<'a> {
         out.put_slice(body);
     }
 }
+
+#[cfg(all(test, feature = "alloc"))]
+mod tests {
+    use super::*;
+    use alloc::vec::Vec;
+
+    #[test]
+    fn ok_round_trips() {
+        let mut frame = Vec::new();
+        Envelope::encode_ok(b"payload", &mut frame);
+        assert_eq!(Envelope::decode(&frame), Some(Envelope::Ok(b"payload")));
+    }
+
+    #[test]
+    fn err_round_trips() {
+        let mut frame = Vec::new();
+        Envelope::encode_err(0x0102, b"fields", &mut frame);
+        assert_eq!(
+            Envelope::decode(&frame),
+            Some(Envelope::Err {
+                id: 0x0102,
+                body: b"fields",
+            }),
+        );
+    }
+
+    #[test]
+    fn rejects_empty_unknown_tag_and_truncated_err() {
+        assert_eq!(Envelope::decode(&[]), None);
+        assert_eq!(Envelope::decode(&[9]), None); // unknown tag
+        assert_eq!(Envelope::decode(&[TAG_ERR, 0]), None); // id truncated
+    }
+}

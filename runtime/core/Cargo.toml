@@ -51,3 +51,4 @@ serde_json = { version = "1.0.104", optional = true }
 
 [dev-dependencies]
 tokio = { version = "1.33.0", features = ["full"] }
+serde = { version = "1.0.190", features = ["derive"] }
