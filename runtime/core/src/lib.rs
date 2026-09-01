@@ -15,7 +15,9 @@ pub mod wire;
 #[cfg(feature = "std")]
 pub mod format;
 
-// The frame transport and the provider serve loop.
+// The frame transport, the provider serve loop, and the consumer call side.
+#[cfg(feature = "alloc")]
+pub mod client;
 #[cfg(feature = "alloc")]
 pub mod serve;
 #[cfg(feature = "alloc")]
