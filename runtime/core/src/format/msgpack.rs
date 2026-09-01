@@ -26,6 +26,10 @@ impl Write for BufWriter<'_> {
 }
 
 impl WireFormat for MsgPack {
+    fn name(&self) -> &'static str {
+        "msgpack"
+    }
+
     fn encode<T: Serialize + ?Sized>(
         &self,
         value: &T,

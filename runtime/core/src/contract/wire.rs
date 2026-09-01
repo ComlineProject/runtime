@@ -9,6 +9,13 @@ use crate::contract::{BufMut, RuntimeError};
 /// `decode` borrows from the input, so a generated `Msg<'de>` points straight
 /// into the receive buffer.
 pub trait WireFormat {
+    /// A stable name for this format — the connection
+    /// [`Handshake`](crate::contract::Handshake) folds it in (hashed) so the
+    /// two ends can catch "one speaks MessagePack, one speaks JSON". Built-ins
+    /// are bare (`"msgpack"`); a third-party format should namespace it
+    /// (`"com.acme.myformat"`) to avoid a clash.
+    fn name(&self) -> &'static str;
+
     fn encode<T: Serialize + ?Sized>(
         &self,
         value: &T,

@@ -26,6 +26,10 @@ pub enum RuntimeError {
     /// knows — a newer schema. `id` is the schema-global error ordinal; the
     /// still-encoded body is not retained.
     Remote { id: u16 },
+    /// The connection handshake disagreed on schema hash, wire format, or
+    /// framing — or none arrived. Never raised when the handshake is skipped
+    /// (`Client::new` / `Server::serve` — "misaligned mode").
+    Handshake,
 }
 
 impl fmt::Display for RuntimeError {
@@ -37,6 +41,7 @@ impl fmt::Display for RuntimeError {
             RuntimeError::Timeout => f.write_str("call timed out"),
             RuntimeError::UnknownCall => f.write_str("unknown call"),
             RuntimeError::Remote { id } => write!(f, "unrecognised remote error (ordinal {id})"),
+            RuntimeError::Handshake => f.write_str("connection handshake mismatch"),
         }
     }
 }
