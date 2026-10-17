@@ -16,7 +16,7 @@ mod handshake;
 mod wire;
 
 pub use buf::{BufMut, SliceBuf};
-pub use call::CallError;
+pub use call::{CallError, Fault};
 pub use dispatch::{Dispatch, Kind, Outcome, Reply};
 pub use envelope::Envelope;
 pub use error::RuntimeError;

@@ -93,6 +93,7 @@ fn a_call_answered_before_the_deadline_succeeds() {
     let n: u32 = match reply {
         Envelope::Ok(payload) => fmt.decode(payload).unwrap(),
         Envelope::Err { .. } => panic!("unexpected error frame"),
+        Envelope::Fault => panic!("unexpected fault frame"),
     };
     assert_eq!(n, 42);
 

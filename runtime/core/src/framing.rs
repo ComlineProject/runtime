@@ -19,7 +19,10 @@ use crate::contract::{
 ///           `{"jsonrpc":"2.0","error":{"code":<ordinal>,"message":...,"data":<body>},"id":<n>}`
 ///
 /// A raised schema error maps to a JSON-RPC `error` object whose `code` is the
-/// schema-global ordinal and whose `data` is the serialised error struct.
+/// schema-global ordinal and whose `data` is the serialised error struct. A
+/// provider fault maps to JSON-RPC's own reserved `-32603 Internal error`,
+/// which is what a non-Comline JSON-RPC peer already expects to see — the
+/// ordinal space stays entirely non-negative, so the two can never collide.
 #[derive(Debug, Default, Clone, Copy)]
 pub struct JsonRpcFraming;
 
@@ -92,6 +95,14 @@ impl Framing for JsonRpcFraming {
         out.put_slice(b"}");
     }
 
+    fn encode_response_fault(&self, request_id: u64, out: &mut dyn BufMut) {
+        out.put_slice(
+            br#"{"jsonrpc":"2.0","error":{"code":-32603,"message":"Internal error"},"id":"#,
+        );
+        out.put_slice(u64_bytes(request_id).as_ref());
+        out.put_slice(b"}");
+    }
+
     fn decode_response<'f>(&self, frame: &'f [u8]) -> Option<(u64, Envelope<'f>)> {
         #[derive(Deserialize)]
         struct ErrIn<'a> {
@@ -109,10 +120,17 @@ impl Framing for JsonRpcFraming {
         }
         let r: RespIn = serde_json::from_slice(frame).ok()?;
         if let Some(e) = r.error {
+            // An ordinal is a `u16`, so it is always in `0..=65535`. Anything
+            // outside that — JSON-RPC's reserved negatives, `-32603` among
+            // them, or a code too wide to be an ordinal — is not a schema
+            // error this wire can name, so it is a fault.
+            let Ok(id) = u16::try_from(e.code) else {
+                return Some((r.id, Envelope::Fault));
+            };
             Some((
                 r.id,
                 Envelope::Err {
-                    id: e.code as u16,
+                    id,
                     body: e.data.map(|d| d.get().as_bytes()).unwrap_or(b"null"),
                 },
             ))
@@ -159,13 +177,43 @@ mod tests {
     }
 
     #[test]
+    fn fault_response_uses_the_jsonrpc_internal_error_code() {
+        let f = JsonRpcFraming;
+        let mut frame = Vec::new();
+        f.encode_response_fault(9, &mut frame);
+        assert_eq!(
+            std::str::from_utf8(&frame).unwrap(),
+            r#"{"jsonrpc":"2.0","error":{"code":-32603,"message":"Internal error"},"id":9}"#
+        );
+        assert_eq!(f.decode_response(&frame), Some((9, Envelope::Fault)));
+    }
+
+    #[test]
+    fn a_code_that_cannot_be_an_ordinal_decodes_as_a_fault() {
+        let f = JsonRpcFraming;
+        // Any other reserved JSON-RPC code, and a code too wide for a `u16`.
+        for frame in [
+            br#"{"jsonrpc":"2.0","error":{"code":-32700},"id":1}"#.to_vec(),
+            br#"{"jsonrpc":"2.0","error":{"code":70000},"id":1}"#.to_vec(),
+        ] {
+            assert_eq!(f.decode_response(&frame), Some((1, Envelope::Fault)));
+        }
+    }
+
+    #[test]
     fn err_response_carries_the_ordinal() {
         let f = JsonRpcFraming;
         let mut frame = Vec::new();
         f.encode_response_err(9, 3, br#"{"why":"no"}"#, &mut frame);
         assert_eq!(
             f.decode_response(&frame),
-            Some((9, Envelope::Err { id: 3, body: br#"{"why":"no"}"# }))
+            Some((
+                9,
+                Envelope::Err {
+                    id: 3,
+                    body: br#"{"why":"no"}"#
+                }
+            ))
         );
     }
 }

@@ -84,6 +84,7 @@ fn matching_handshakes_connect_and_a_call_round_trips() {
     let n: u32 = match reply {
         Envelope::Ok(payload) => fmt.decode(payload).unwrap(),
         Envelope::Err { .. } => panic!("unexpected error frame"),
+        Envelope::Fault => panic!("unexpected fault frame"),
     };
     assert_eq!(n, 42);
 
@@ -130,6 +131,7 @@ fn misaligned_mode_skips_the_handshake_entirely() {
     let n: u32 = match reply {
         Envelope::Ok(payload) => fmt.decode(payload).unwrap(),
         Envelope::Err { .. } => panic!("unexpected error frame"),
+        Envelope::Fault => panic!("unexpected fault frame"),
     };
     assert_eq!(n, 8);
 

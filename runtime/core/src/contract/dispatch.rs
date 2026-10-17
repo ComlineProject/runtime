@@ -29,8 +29,9 @@ impl Kind {
 }
 
 /// What a dispatched call produced. Framing-agnostic: the dispatcher calls
-/// [`ok`](Reply::ok) or [`err`](Reply::err) exactly once, or neither for a
-/// one-way call. The framing then wraps the accumulated body.
+/// [`ok`](Reply::ok), [`err`](Reply::err) or [`fault`](Reply::fault) exactly
+/// once, or none of them for a one-way call. The framing then wraps the
+/// accumulated body.
 pub struct Reply<'a> {
     body: &'a mut dyn BufMut,
     outcome: Outcome,
@@ -44,6 +45,9 @@ pub enum Outcome {
     Ok,
     /// A schema error `body` was written, keyed by ordinal `id`.
     Err(u16),
+    /// The provider failed outside the schema. Nothing was written — a fault
+    /// carries no body.
+    Fault,
 }
 
 impl<'a> Reply<'a> {
@@ -65,6 +69,13 @@ impl<'a> Reply<'a> {
     pub fn err(&mut self, id: u16, body: &[u8]) {
         self.body.put_slice(body);
         self.outcome = Outcome::Err(id);
+    }
+
+    /// Record a failure the schema does not describe — the provider returned
+    /// [`Fault::Internal`](crate::contract::Fault::Internal), or the dispatcher
+    /// itself could not complete the call. Writes no body.
+    pub fn fault(&mut self) {
+        self.outcome = Outcome::Fault;
     }
 
     pub fn outcome(&self) -> Outcome {

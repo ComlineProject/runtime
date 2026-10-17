@@ -26,6 +26,11 @@ pub enum RuntimeError {
     /// knows — a newer schema. `id` is the schema-global error ordinal; the
     /// still-encoded body is not retained.
     Remote { id: u16 },
+    /// The peer's provider failed in a way its schema does not describe — it
+    /// returned [`Fault::Internal`](crate::contract::Fault::Internal), or its
+    /// dispatcher could not complete the call. No detail crosses the wire; it
+    /// stays on the provider's side to be logged.
+    Provider,
     /// The connection handshake disagreed on schema hash, wire format, or
     /// framing — or none arrived. Never raised when the handshake is skipped
     /// (`Client::new` / `Server::serve` — "misaligned mode").
@@ -41,6 +46,7 @@ impl fmt::Display for RuntimeError {
             RuntimeError::Timeout => f.write_str("call timed out"),
             RuntimeError::UnknownCall => f.write_str("unknown call"),
             RuntimeError::Remote { id } => write!(f, "unrecognised remote error (ordinal {id})"),
+            RuntimeError::Provider => f.write_str("provider failure"),
             RuntimeError::Handshake => f.write_str("connection handshake mismatch"),
         }
     }

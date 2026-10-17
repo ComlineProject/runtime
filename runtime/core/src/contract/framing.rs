@@ -39,6 +39,21 @@ pub trait Framing: Default {
     /// keyed by its schema-global ordinal.
     fn encode_response_err(&self, request_id: u64, id: u16, body: &[u8], out: &mut dyn BufMut);
 
+    /// Frame a `fault` response — the provider failed outside the schema
+    /// ([`Envelope::Fault`]). There is no body and no ordinal.
+    ///
+    /// Deliberately **required**, with no default. A default would have to pick
+    /// some wire shape — a reserved ordinal, say — and every framing written
+    /// afterwards would silently inherit it, including ones whose wire has a
+    /// perfectly good native way to say "internal error". Each framing decides
+    /// for itself; the datagram framing spends a tag byte,
+    /// [`JsonRpcFraming`](crate::framing::JsonRpcFraming) uses JSON-RPC's own
+    /// `-32603`.
+    ///
+    /// Whatever it writes, [`decode_response`](Self::decode_response) must read
+    /// back as [`Envelope::Fault`].
+    fn encode_response_fault(&self, request_id: u64, out: &mut dyn BufMut);
+
     /// Parse a response frame into `(request_id, envelope)`; the envelope
     /// borrows `frame`.
     fn decode_response<'f>(&self, frame: &'f [u8]) -> Option<(u64, Envelope<'f>)>;
@@ -133,6 +148,11 @@ impl Framing for DatagramFraming {
         Envelope::encode_err(id, body, out);
     }
 
+    fn encode_response_fault(&self, request_id: u64, out: &mut dyn BufMut) {
+        out.put_u64_le(request_id);
+        Envelope::encode_fault(out);
+    }
+
     fn decode_response<'f>(&self, frame: &'f [u8]) -> Option<(u64, Envelope<'f>)> {
         let (head, rest) = frame.split_at_checked(8)?;
         let request_id = u64::from_le_bytes(head.try_into().ok()?);
@@ -172,7 +192,17 @@ mod tests {
         f.encode_response_err(7, 2, b"fields", &mut err);
         assert_eq!(
             f.decode_response(&err),
-            Some((7, Envelope::Err { id: 2, body: b"fields" }))
+            Some((
+                7,
+                Envelope::Err {
+                    id: 2,
+                    body: b"fields"
+                }
+            ))
         );
+
+        let mut fault = Vec::new();
+        f.encode_response_fault(7, &mut fault);
+        assert_eq!(f.decode_response(&fault), Some((7, Envelope::Fault)));
     }
 }

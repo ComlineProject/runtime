@@ -9,7 +9,7 @@ use std::thread;
 
 use comline_runtime::client::Client;
 use comline_runtime::contract::{
-    CallError, Dispatch, Envelope, Kind, Reply, RuntimeError, WireFormat,
+    CallError, Dispatch, Envelope, Fault, Kind, Reply, RuntimeError, WireFormat,
 };
 use comline_runtime::format::MsgPack;
 use comline_runtime::serve::Server;
@@ -43,7 +43,7 @@ enum GreetHelloError {
 // ── provider ──────────────────────────────────────────────────────────────
 
 trait Greet {
-    fn hello(&self, name: &str) -> Result<String, GreetHelloError>;
+    fn hello(&self, name: &str) -> Result<String, Fault<GreetHelloError>>;
 }
 
 struct GreetDispatcher<T>(T);
@@ -69,11 +69,12 @@ impl<T: Greet> Dispatch for GreetDispatcher<T> {
                         fmt.encode(&r, &mut body)?;
                         reply.ok(&body);
                     }
-                    Err(GreetHelloError::Rude(e)) => {
+                    Err(Fault::App(GreetHelloError::Rude(e))) => {
                         let mut body = Vec::new();
                         fmt.encode(&e, &mut body)?;
                         reply.err(ERR_RUDE, &body);
                     }
+                    Err(Fault::Internal) => reply.fault(),
                 }
                 Ok(())
             }
@@ -85,13 +86,23 @@ impl<T: Greet> Dispatch for GreetDispatcher<T> {
 struct Polite;
 
 impl Greet for Polite {
-    fn hello(&self, name: &str) -> Result<String, GreetHelloError> {
+    fn hello(&self, name: &str) -> Result<String, Fault<GreetHelloError>> {
         if name.is_empty() {
-            return Err(GreetHelloError::Rude(Rude {
+            return Err(Fault::App(GreetHelloError::Rude(Rude {
                 reason: "no name given".into(),
-            }));
+            })));
         }
         Ok(format!("hi, {name}"))
+    }
+}
+
+/// A provider whose own innards have failed — a dead database, a poisoned
+/// lock. Nothing in the schema describes it.
+struct Broken;
+
+impl Greet for Broken {
+    fn hello(&self, _name: &str) -> Result<String, Fault<GreetHelloError>> {
+        Err(Fault::Internal)
     }
 }
 
@@ -109,6 +120,7 @@ impl<T: Transport, W: WireFormat> GreetClient<T, W> {
                 Err(CallError::App(GreetHelloError::Rude(e)))
             }
             Envelope::Err { id, .. } => Err(CallError::Runtime(RuntimeError::Remote { id })),
+            Envelope::Fault => Err(CallError::Runtime(RuntimeError::Provider)),
         }
     }
 }
@@ -183,4 +195,31 @@ fn tcp_framing_keeps_frame_boundaries() {
     assert_eq!(buf, b"first");
     b.recv(&mut buf).unwrap();
     assert_eq!(buf, b"second and longer");
+}
+
+#[test]
+fn a_provider_fault_round_trips_and_leaves_the_connection_usable() {
+    let (client_side, provider_side) = duplex();
+
+    let provider = thread::spawn(move || {
+        let mut provider_side = provider_side;
+        Server::new(GreetDispatcher(Broken), MsgPack)
+            .serve(&mut provider_side)
+            .unwrap();
+    });
+
+    let mut client = GreetClient(Client::new(client_side, MsgPack));
+
+    assert_eq!(
+        client.hello("world").unwrap_err(),
+        CallError::Runtime(RuntimeError::Provider),
+    );
+    // A fault answers one call; it does not end the connection.
+    assert_eq!(
+        client.hello("again").unwrap_err(),
+        CallError::Runtime(RuntimeError::Provider),
+    );
+
+    drop(client);
+    provider.join().unwrap();
 }
