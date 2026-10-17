@@ -1,18 +1,37 @@
 use crate::contract::BufMut;
 
-/// A response frame body: the success payload, or a raised schema error keyed
-/// by its **schema-global ordinal**. Both variants borrow the receive buffer —
-/// the client decodes `Ok` as `R` or looks `id` up in its generated table.
+/// A response frame body: the success payload, a raised schema error keyed by
+/// its **schema-global ordinal**, or a [`Fault`] — the provider failed in a way
+/// the schema does not describe. `Ok` and `Err` borrow the receive buffer — the
+/// client decodes `Ok` as `R` or looks `id` up in its generated table.
 ///
-/// Wire layout: `[tag] payload` for `Ok`, `[tag] id_le:u16 body` for `Err`.
+/// Wire layout: `[tag] payload` for `Ok`, `[tag] id_le:u16 body` for `Err`,
+/// a bare `[tag]` for `Fault`.
+///
+/// This is the framing-neutral shape. A [`Framing`] is free to render the three
+/// cases however its wire does — `DatagramFraming` writes the tag byte,
+/// `JsonRpcFraming` writes a JSON-RPC `error` object — but every framing has to
+/// carry all three.
+///
+/// [`Fault`]: crate::contract::Fault
+/// [`Framing`]: crate::contract::Framing
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Envelope<'a> {
     Ok(&'a [u8]),
-    Err { id: u16, body: &'a [u8] },
+    Err {
+        id: u16,
+        body: &'a [u8],
+    },
+    /// The provider failed outside the schema — see [`Fault::Internal`]. No
+    /// body: the detail stays on the provider's side, where it can be logged.
+    ///
+    /// [`Fault::Internal`]: crate::contract::Fault::Internal
+    Fault,
 }
 
 const TAG_OK: u8 = 0;
 const TAG_ERR: u8 = 1;
+const TAG_FAULT: u8 = 2;
 
 impl<'a> Envelope<'a> {
     /// Parse a response frame. `None` if the tag is unknown or the frame is
@@ -27,6 +46,7 @@ impl<'a> Envelope<'a> {
                     body,
                 })
             }
+            (&TAG_FAULT, _) => Some(Envelope::Fault),
             _ => None,
         }
     }
@@ -42,6 +62,11 @@ impl<'a> Envelope<'a> {
         out.put_u8(TAG_ERR);
         out.put_u16_le(id);
         out.put_slice(body);
+    }
+
+    /// Write a `Fault` frame — the tag alone.
+    pub fn encode_fault(out: &mut dyn BufMut) {
+        out.put_u8(TAG_FAULT);
     }
 }
 
@@ -68,6 +93,14 @@ mod tests {
                 body: b"fields",
             }),
         );
+    }
+
+    #[test]
+    fn fault_round_trips() {
+        let mut frame = Vec::new();
+        Envelope::encode_fault(&mut frame);
+        assert_eq!(frame, [TAG_FAULT]);
+        assert_eq!(Envelope::decode(&frame), Some(Envelope::Fault));
     }
 
     #[test]

@@ -7,7 +7,7 @@ use std::thread;
 
 use comline_runtime::client::Client;
 use comline_runtime::contract::{
-    Call, CallError, Dispatch, Envelope, Kind, Reply, RuntimeError, WireFormat,
+    Call, CallError, Dispatch, Envelope, Fault, Framing, Kind, Reply, RuntimeError, WireFormat,
 };
 use comline_runtime::format::Json;
 use comline_runtime::framing::JsonRpcFraming;
@@ -37,7 +37,7 @@ enum GreetHelloError {
 }
 
 trait Greet {
-    fn hello(&self, name: &str) -> Result<String, GreetHelloError>;
+    fn hello(&self, name: &str) -> Result<String, Fault<GreetHelloError>>;
 }
 
 struct GreetDispatcher<T>(T);
@@ -63,11 +63,12 @@ impl<T: Greet> Dispatch for GreetDispatcher<T> {
                         fmt.encode(&r, &mut body)?;
                         reply.ok(&body);
                     }
-                    Err(GreetHelloError::Rude(e)) => {
+                    Err(Fault::App(GreetHelloError::Rude(e))) => {
                         let mut body = Vec::new();
                         fmt.encode(&e, &mut body)?;
                         reply.err(ERR_RUDE, &body);
                     }
+                    Err(Fault::Internal) => reply.fault(),
                 }
                 Ok(())
             }
@@ -78,13 +79,20 @@ impl<T: Greet> Dispatch for GreetDispatcher<T> {
 
 struct Polite;
 impl Greet for Polite {
-    fn hello(&self, name: &str) -> Result<String, GreetHelloError> {
+    fn hello(&self, name: &str) -> Result<String, Fault<GreetHelloError>> {
         if name.is_empty() {
-            return Err(GreetHelloError::Rude(Rude {
+            return Err(Fault::App(GreetHelloError::Rude(Rude {
                 reason: "no name".into(),
-            }));
+            })));
         }
         Ok(format!("hi, {name}"))
+    }
+}
+
+struct Broken;
+impl Greet for Broken {
+    fn hello(&self, _name: &str) -> Result<String, Fault<GreetHelloError>> {
+        Err(Fault::Internal)
     }
 }
 
@@ -107,6 +115,7 @@ where
                 Err(CallError::App(GreetHelloError::Rude(e)))
             }
             Envelope::Err { id, .. } => Err(CallError::Runtime(RuntimeError::Remote { id })),
+            Envelope::Fault => Err(CallError::Runtime(RuntimeError::Provider)),
         }
     }
 }
@@ -152,4 +161,62 @@ fn the_bytes_on_the_wire_are_json_rpc() {
         std::str::from_utf8(&frame).unwrap(),
         r#"{"jsonrpc":"2.0","method":"hello","params":{"name":"x"},"id":0}"#
     );
+}
+
+#[test]
+fn a_fault_crosses_json_rpc_as_its_own_internal_error_code() {
+    let (client_side, provider_side) = duplex();
+
+    let provider = thread::spawn(move || {
+        let mut provider_side = provider_side;
+        Server::with_framing(GreetDispatcher(Broken), Json, JsonRpcFraming)
+            .serve(&mut provider_side)
+            .unwrap();
+    });
+
+    let mut client = GreetClient(Client::with_framing(client_side, Json, JsonRpcFraming));
+    assert_eq!(
+        client.hello("world").unwrap_err(),
+        CallError::Runtime(RuntimeError::Provider),
+    );
+
+    drop(client);
+    provider.join().unwrap();
+}
+
+/// The fault is not a Comline-shaped frame a JSON-RPC peer has to learn: it is
+/// JSON-RPC's own reserved `-32603`. An ordinal is a `u16`, so the schema's
+/// error codes are all non-negative and can never collide with it.
+#[test]
+fn the_fault_bytes_on_the_wire_are_standard_json_rpc() {
+    let (mut caller, provider_side) = duplex();
+
+    let provider = thread::spawn(move || {
+        let mut provider_side = provider_side;
+        Server::with_framing(GreetDispatcher(Broken), Json, JsonRpcFraming)
+            .serve_one(&mut provider_side)
+            .unwrap();
+    });
+
+    // Hand-frame a request so the response can be read as raw bytes.
+    let mut request = Vec::new();
+    JsonRpcFraming
+        .encode_request(
+            Call::new(0, "hello"),
+            7,
+            &HelloParams { name: "x" },
+            &Json,
+            &mut request,
+        )
+        .unwrap();
+    caller.send(&request).unwrap();
+
+    let mut frame = Vec::new();
+    caller.recv(&mut frame).unwrap();
+    assert_eq!(
+        std::str::from_utf8(&frame).unwrap(),
+        r#"{"jsonrpc":"2.0","error":{"code":-32603,"message":"Internal error"},"id":7}"#
+    );
+
+    provider.join().unwrap();
 }
