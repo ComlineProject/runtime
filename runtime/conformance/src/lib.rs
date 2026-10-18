@@ -842,6 +842,16 @@ fn format_cases(format: &str) -> Vec<(String, Op, serde_json::Value)> {
             },
         ),
         (
+            "struct-optional-none",
+            Value::Struct {
+                name: "Tagged".into(),
+                fields: vec![
+                    ("id".into(), Value::U32(1)),
+                    ("label".into(), Value::Option(None)),
+                ],
+            },
+        ),
+        (
             "enum-unit-variant",
             Value::UnitVariant {
                 enum_name: "Color".into(),

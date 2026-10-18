@@ -338,6 +338,33 @@
       "bytes": "7b2266726f6d223a7b2278223a302c2279223a307d2c22746f223a7b2278223a332c2279223a347d2c226c6162656c223a2264696167222c2274616773223a5b2261225d7d"
     },
     {
+      "id": "format-json/struct-optional-none",
+      "op": "encode",
+      "input": {
+        "format": "json",
+        "value": {
+          "struct": {
+            "fields": [
+              [
+                "id",
+                {
+                  "u32": 1
+                }
+              ],
+              [
+                "label",
+                {
+                  "option": null
+                }
+              ]
+            ],
+            "name": "Tagged"
+          }
+        }
+      },
+      "bytes": "7b226964223a312c226c6162656c223a6e756c6c7d"
+    },
+    {
       "id": "format-json/enum-unit-variant",
       "op": "encode",
       "input": {

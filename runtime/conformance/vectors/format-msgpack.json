@@ -338,6 +338,33 @@
       "bytes": "94920000920304a46469616791a161"
     },
     {
+      "id": "format-msgpack/struct-optional-none",
+      "op": "encode",
+      "input": {
+        "format": "msgpack",
+        "value": {
+          "struct": {
+            "fields": [
+              [
+                "id",
+                {
+                  "u32": 1
+                }
+              ],
+              [
+                "label",
+                {
+                  "option": null
+                }
+              ]
+            ],
+            "name": "Tagged"
+          }
+        }
+      },
+      "bytes": "9201c0"
+    },
+    {
       "id": "format-msgpack/enum-unit-variant",
       "op": "encode",
       "input": {

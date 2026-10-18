@@ -39,6 +39,7 @@
         "format-json/option-some",
         "format-json/struct",
         "format-json/struct-nested",
+        "format-json/struct-optional-none",
         "format-json/enum-unit-variant"
       ]
     },
@@ -67,6 +68,7 @@
         "format-msgpack/option-some",
         "format-msgpack/struct",
         "format-msgpack/struct-nested",
+        "format-msgpack/struct-optional-none",
         "format-msgpack/enum-unit-variant"
       ]
     },
