@@ -1,0 +1,16 @@
+[package]
+name = "comline-runtime-conformance"
+version = "0.1.0"
+edition = "2021"
+license = "MPL-2.0"
+publish = false
+
+# The runtime wire conformance corpus: byte-exact examples of the handshake,
+# the envelopes, each framing and each wire format, which every runtime -
+# whatever its language - must reproduce. The vectors are blessed from this
+# repository's own `comline-runtime`; see README.md.
+
+[dependencies]
+comline-runtime = { path = "../core" }
+serde = "1.0.190"
+serde_json = "1.0.108"

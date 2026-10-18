@@ -1,0 +1,12 @@
+{
+  "runtime": "rust",
+  "support": {
+    "name-hash": { "state": "supported" },
+    "handshake": { "state": "supported" },
+    "envelope": { "state": "supported" },
+    "framing-datagram": { "state": "supported" },
+    "framing-jsonrpc": { "state": "supported" },
+    "format-json": { "state": "supported" },
+    "format-msgpack": { "state": "supported" }
+  }
+}
