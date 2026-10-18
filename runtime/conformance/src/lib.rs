@@ -167,6 +167,8 @@ pub struct Case {
     pub bytes: Hex,
     #[serde(default, skip_serializing_if = "Expect::is_exact")]
     pub expect: Expect,
+    #[serde(default, skip_serializing_if = "Compare::is_bytes")]
+    pub compare: Compare,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -201,6 +203,28 @@ pub enum Expect {
 impl Expect {
     fn is_exact(&self) -> bool {
         *self == Expect::Exact
+    }
+}
+
+/// How a runtime's output must match a case's bytes.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum Compare {
+    /// Byte for byte.
+    #[default]
+    Bytes,
+    /// As JSON values (RFC 8259), for bytes that are JSON text: whitespace
+    /// and object member order don't matter, and numbers compare as exact
+    /// decimals, so `1` equals `1.0` but `9007199254740992` doesn't equal
+    /// `9007199254740993`. The same holds for JSON carried inside the frame:
+    /// JSON-RPC params, results and error data. `comline-runtime`, the
+    /// reference, reproduces the bytes exactly.
+    Json,
+}
+
+impl Compare {
+    fn is_bytes(&self) -> bool {
+        *self == Compare::Bytes
     }
 }
 
@@ -283,6 +307,8 @@ pub struct Vectors {
 #[serde(rename_all = "snake_case")]
 pub enum State {
     Supported,
+    /// Every case passes but those listed in `failing`, which must fail.
+    Partial,
     Unsupported,
 }
 
@@ -293,6 +319,9 @@ pub struct Claim {
     pub note: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub tracking: Option<String>,
+    /// For a partial claim: the cases known to fail.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub failing: Vec<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -690,6 +719,13 @@ pub fn reference_cases() -> Vec<Vectors> {
                     &Value::Array(vec![]),
                 ),
                 response(p("response-ok"), framing, 7, ok(br#"{"body":"hi"}"#)),
+                // Payloads pass through as written, digits and all.
+                response(
+                    p("response-ok-exact-numbers"),
+                    framing,
+                    8,
+                    ok(br#"{"n":9007199254740993,"f":1.0}"#),
+                ),
                 response(p("response-err"), framing, 7, err(2, br#"{"why":"no"}"#)),
                 response(p("response-fault"), framing, 9, Reply::Fault),
             ],
@@ -710,12 +746,22 @@ fn exact(id: String, op: Op, input: serde_json::Value) -> Case {
         Ok(bytes) => bytes,
         Err(outcome) => panic!("reference case `{id}` doesn't encode: {outcome:?}"),
     };
+    let json_text = match op {
+        Op::Encode => input["format"] == "json",
+        Op::Request | Op::Response => input["framing"] == "jsonrpc-2.0",
+        _ => false,
+    };
     Case {
         id,
         op,
         input,
         bytes: Hex(bytes),
         expect: Expect::Exact,
+        compare: if json_text {
+            Compare::Json
+        } else {
+            Compare::Bytes
+        },
     }
 }
 
@@ -726,6 +772,7 @@ fn reject(id: &str, op: Op, input: serde_json::Value, bytes: &[u8]) -> Case {
         input,
         bytes: Hex(bytes.to_vec()),
         expect: Expect::Reject,
+        compare: Compare::Bytes,
     }
 }
 

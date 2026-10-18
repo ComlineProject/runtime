@@ -133,11 +133,40 @@ fn rust_support_is_proven() {
                     "{}: `{}` is claimed supported, but {what} isn't implemented",
                     case.id, feature.id
                 )),
+                (State::Partial, outcome) => {
+                    let known = claim.failing.contains(&case.id);
+                    match outcome {
+                        Outcome::Pass if known => problems.push(format!(
+                            "{}: listed as failing in `{}`'s partial claim, but passes - drop it from `failing`",
+                            case.id, feature.id
+                        )),
+                        Outcome::Pass => proven_by.push(case.id.clone()),
+                        _ if known => {}
+                        Outcome::Fail(why) | Outcome::NotImplemented(why) => {
+                            problems.push(format!("{}: {why}", case.id))
+                        }
+                    }
+                }
                 (State::Unsupported, Outcome::NotImplemented(_)) => {}
                 (State::Unsupported, _) => problems.push(format!(
                     "{}: `{}` is claimed unsupported, but the runtime implements it - claim it",
                     case.id, feature.id
                 )),
+            }
+        }
+        for id in &claim.failing {
+            if claim.state != State::Partial {
+                problems.push(format!(
+                    "`{}` lists failing cases but isn't partial",
+                    feature.id
+                ));
+                break;
+            }
+            if !vectors.cases.iter().any(|c| &c.id == id) {
+                problems.push(format!(
+                    "`{}` lists `{id}` as failing, but has no such case",
+                    feature.id
+                ));
             }
         }
         proven.insert(

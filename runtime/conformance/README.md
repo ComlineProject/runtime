@@ -37,6 +37,14 @@ The ops, and what their `input` holds:
   - A datagram request carries the call id but not the method name; JSON-RPC
     carries the name but not the id. Decoding takes the other from the input.
   - Decoded request params must be exactly `params` encoded in `format`.
+- **`"compare": "json"`:** for bytes that are JSON text (JSON values and
+  JSON-RPC frames), the output must equal `bytes` as JSON (RFC 8259) rather
+  than byte for byte.
+  - Whitespace and member order don't matter.
+  - Numbers compare as exact decimals: `1` equals `1.0`, but
+    `9007199254740992` doesn't equal `9007199254740993`.
+  - The same holds for JSON inside a frame: JSON-RPC params, results and
+    error data.
 - **`"expect": "reject"`:** decoding `bytes` must fail. The input then names
   only the framing, where there is one.
 - **Bytes** are lowercase hex.
@@ -65,10 +73,14 @@ CONFORMANCE_BLESS=1 cargo test -p comline-runtime-conformance
 
 ## Support, and its proof
 
-Each runtime declares, per feature, `supported` or `unsupported`, with an
-optional `note` and `tracking` issue. A claim must hold against the vectors:
+Each runtime declares, per feature, `supported`, `partial` or `unsupported`,
+with an optional `note` and `tracking` issue. A claim must hold against the
+vectors:
 
 - **supported:** every case of the feature passes;
+- **partial:** every case passes except those listed in `failing`, which must
+  fail. A listed case that starts passing fails the check, so the claim is
+  upgraded as soon as it can be;
 - **unsupported:** the runtime reports every case as not implemented. A
   runtime that passes them should claim the feature.
 
