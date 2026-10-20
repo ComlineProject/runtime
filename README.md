@@ -6,6 +6,13 @@ call path, and `Connection`, which carries calls in both directions and several
 protocols over `datagram@2`. `no_std`-first; `alloc` and `std` are additive
 features.
 
+| Feature | Adds |
+|---|---|
+| `alloc` | owned generated types, the frame transport, `Client`, `Server`, `Connection` |
+| `std` (default) | the MessagePack and JSON formats, the in-memory and TCP transports, the dylib ABI |
+| `async` | `AsyncConnection`: the async driver for connections, on any executor (only the `futures` crates) |
+| `tokio` | tokio's TCP as an async transport, and its clock for call timeouts |
+
 Generated protocol code (`comline-codegen-<lang>` output) links this crate.
 
 ## License
