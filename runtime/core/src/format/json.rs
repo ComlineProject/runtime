@@ -11,7 +11,7 @@ pub struct Json;
 
 impl WireFormat for Json {
     fn name(&self) -> &'static str {
-        "json"
+        crate::contract::FORMAT_JSON
     }
 
     fn encode<T: Serialize + ?Sized>(

@@ -34,7 +34,7 @@ fn u64_bytes(n: u64) -> impl AsRef<[u8]> {
 
 impl Framing for JsonRpcFraming {
     fn name(&self) -> &'static str {
-        "jsonrpc-2.0"
+        crate::contract::FRAMING_JSONRPC
     }
 
     fn encode_request<W, P>(

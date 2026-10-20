@@ -11,7 +11,7 @@ pub struct MsgPack;
 
 impl WireFormat for MsgPack {
     fn name(&self) -> &'static str {
-        "msgpack"
+        crate::contract::FORMAT_MSGPACK
     }
 
     fn encode<T: Serialize + ?Sized>(

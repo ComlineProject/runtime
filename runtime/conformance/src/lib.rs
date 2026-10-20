@@ -19,7 +19,7 @@ use serde::{Deserialize, Deserializer, Serialize, Serializer};
 
 use comline_runtime::contract::{
     name_hash, Call, DatagramFraming, Envelope, Framing, Handshake, RequestCall, WireFormat,
-    FRAMING_DATAGRAM,
+    FORMAT_JSON, FORMAT_MSGPACK, FRAMING_DATAGRAM, FRAMING_JSONRPC,
 };
 use comline_runtime::format::{Json, MsgPack};
 use comline_runtime::framing::JsonRpcFraming;
@@ -359,8 +359,8 @@ pub enum Outcome {
 fn encode_with(format: &str, value: &Value) -> Option<Vec<u8>> {
     let mut out = Vec::new();
     match format {
-        "json" => Json.encode(&Wire(value), &mut out),
-        "msgpack" => MsgPack.encode(&Wire(value), &mut out),
+        FORMAT_JSON => Json.encode(&Wire(value), &mut out),
+        FORMAT_MSGPACK => MsgPack.encode(&Wire(value), &mut out),
         _ => return None,
     }
     .ok()?;
@@ -370,7 +370,7 @@ fn encode_with(format: &str, value: &Value) -> Option<Vec<u8>> {
 fn framing_of(name: &str) -> Option<AnyFraming> {
     match name {
         FRAMING_DATAGRAM => Some(AnyFraming::Datagram(DatagramFraming)),
-        "jsonrpc-2.0" => Some(AnyFraming::JsonRpc(JsonRpcFraming)),
+        FRAMING_JSONRPC => Some(AnyFraming::JsonRpc(JsonRpcFraming)),
         _ => None,
     }
 }
@@ -429,14 +429,14 @@ fn encode(op: Op, input: &serde_json::Value) -> Result<Vec<u8>, Outcome> {
                 .ok_or_else(|| Outcome::NotImplemented(format!("framing `{}`", i.framing)))?;
             let call = Call::new(i.call_id, leak(&i.method));
             let encoded = match i.format.as_str() {
-                "json" => with_framing!(framing, |f| f.encode_request(
+                FORMAT_JSON => with_framing!(framing, |f| f.encode_request(
                     call,
                     i.request_id,
                     &Wire(&i.params),
                     &Json,
                     &mut out
                 )),
-                "msgpack" => with_framing!(framing, |f| f.encode_request(
+                FORMAT_MSGPACK => with_framing!(framing, |f| f.encode_request(
                     call,
                     i.request_id,
                     &Wire(&i.params),
@@ -632,10 +632,10 @@ pub fn reference_cases() -> Vec<Vectors> {
         "name-hash",
         [
             "",
-            "json",
-            "msgpack",
+            FORMAT_JSON,
+            FORMAT_MSGPACK,
             FRAMING_DATAGRAM,
-            "jsonrpc-2.0",
+            FRAMING_JSONRPC,
             "com.acme.custom-format",
         ]
         .iter()
@@ -656,22 +656,22 @@ pub fn reference_cases() -> Vec<Vectors> {
             handshake(
                 "handshake/json-datagram",
                 0x0102_0304_0506_0708,
-                "json",
+                FORMAT_JSON,
                 FRAMING_DATAGRAM,
                 0,
             ),
             handshake(
                 "handshake/msgpack-datagram",
                 0xdead_beef_0102_0304,
-                "msgpack",
+                FORMAT_MSGPACK,
                 FRAMING_DATAGRAM,
                 0b101,
             ),
             handshake(
                 "handshake/json-jsonrpc",
                 u64::MAX,
-                "json",
-                "jsonrpc-2.0",
+                FORMAT_JSON,
+                FRAMING_JSONRPC,
                 u32::MAX,
             ),
         ],
@@ -703,7 +703,7 @@ pub fn reference_cases() -> Vec<Vectors> {
     let params = Value::Array(vec![Value::U32(7), Value::String("x".into())]);
     for (feature_id, framing) in [
         ("framing-datagram", FRAMING_DATAGRAM),
-        ("framing-jsonrpc", "jsonrpc-2.0"),
+        ("framing-jsonrpc", FRAMING_JSONRPC),
     ] {
         let p = |id: &str| format!("{feature_id}/{id}");
         feature(
@@ -732,8 +732,8 @@ pub fn reference_cases() -> Vec<Vectors> {
         );
     }
 
-    feature("format-json", format_cases("json"));
-    feature("format-msgpack", format_cases("msgpack"));
+    feature("format-json", format_cases("format-json", FORMAT_JSON));
+    feature("format-msgpack", format_cases("format-msgpack", FORMAT_MSGPACK));
 
     for v in &mut vectors {
         v.cases.extend(rejections(&v.feature));
@@ -747,8 +747,8 @@ fn exact(id: String, op: Op, input: serde_json::Value) -> Case {
         Err(outcome) => panic!("reference case `{id}` doesn't encode: {outcome:?}"),
     };
     let json_text = match op {
-        Op::Encode => input["format"] == "json",
-        Op::Request | Op::Response => input["framing"] == "jsonrpc-2.0",
+        Op::Encode => input["format"] == FORMAT_JSON,
+        Op::Request | Op::Response => input["framing"] == FRAMING_JSONRPC,
         _ => false,
     };
     Case {
@@ -818,7 +818,7 @@ fn request(
         call_id,
         method: method.into(),
         request_id,
-        format: "json".into(),
+        format: FORMAT_JSON.into(),
         params: params.clone(),
     };
     (id, Op::Request, to_json(&input))
@@ -840,7 +840,7 @@ fn response(
 
 /// Sample values for a wire format: each scalar at its edges, then the
 /// shapes generated types take.
-fn format_cases(format: &str) -> Vec<(String, Op, serde_json::Value)> {
+fn format_cases(feature_id: &str, format: &str) -> Vec<(String, Op, serde_json::Value)> {
     let point = |x: i32, y: i32| Value::Struct {
         name: "Point".into(),
         fields: vec![("x".into(), Value::I32(x)), ("y".into(), Value::I32(y))],
@@ -914,7 +914,7 @@ fn format_cases(format: &str) -> Vec<(String, Op, serde_json::Value)> {
                 format: format.into(),
                 value,
             };
-            (format!("format-{format}/{id}"), Op::Encode, to_json(&input))
+            (format!("{feature_id}/{id}"), Op::Encode, to_json(&input))
         })
         .collect()
 }
@@ -923,7 +923,7 @@ fn format_cases(format: &str) -> Vec<(String, Op, serde_json::Value)> {
 fn rejections(feature: &str) -> Vec<Case> {
     let none = serde_json::Value::Null;
     let mut handshake = Vec::new();
-    Handshake::new(1, "json", FRAMING_DATAGRAM, 0).encode(&mut handshake);
+    Handshake::new(1, FORMAT_JSON, FRAMING_DATAGRAM, 0).encode(&mut handshake);
     let framing = |name: &str| serde_json::json!({ "framing": name });
     match feature {
         "handshake" => {
@@ -987,19 +987,19 @@ fn rejections(feature: &str) -> Vec<Case> {
             reject(
                 "framing-jsonrpc/reject-request-not-json",
                 Op::Request,
-                framing("jsonrpc-2.0"),
+                framing(FRAMING_JSONRPC),
                 b"{\"jsonrpc\":\"2.0\",",
             ),
             reject(
                 "framing-jsonrpc/reject-request-without-method",
                 Op::Request,
-                framing("jsonrpc-2.0"),
+                framing(FRAMING_JSONRPC),
                 br#"{"jsonrpc":"2.0","params":[],"id":1}"#,
             ),
             reject(
                 "framing-jsonrpc/reject-response-without-id",
                 Op::Response,
-                framing("jsonrpc-2.0"),
+                framing(FRAMING_JSONRPC),
                 br#"{"jsonrpc":"2.0","result":1}"#,
             ),
         ],

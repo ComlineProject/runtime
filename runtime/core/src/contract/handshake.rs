@@ -5,13 +5,23 @@ const VERSION: u8 = 1;
 /// `[MAGIC:2][VERSION:1][ir_hash:u64 LE][wire_format:u64 LE][framing:u64 LE][capabilities:u32 LE]`
 const LEN: usize = 2 + 1 + 8 + 8 + 8 + 4;
 
+// Encoding names are versioned, `name@major`: a later `msgpack@2` must never
+// be mistaken for today's positional `msgpack@1`. The handshake hashes them,
+// so peers on different versions of an encoding refuse each other.
+
 /// Name of the Comline datagram framing (`wire::encode_request` /
 /// `encode_response`). Pass it to [`Handshake::new`].
-pub const FRAMING_DATAGRAM: &str = "comline.datagram";
+pub const FRAMING_DATAGRAM: &str = "datagram@1";
+/// Name of the JSON-RPC 2.0 framing (`framing::JsonRpcFraming`).
+pub const FRAMING_JSONRPC: &str = "jsonrpc@1";
+/// Name of the JSON wire format (`format::Json`).
+pub const FORMAT_JSON: &str = "json@1";
+/// Name of the MessagePack wire format (`format::MsgPack`).
+pub const FORMAT_MSGPACK: &str = "msgpack@1";
 
 /// 64-bit FNV-1a. Folds a wire-format / framing **name** into the fixed-size
 /// handshake without a central id registry — a user's add-on format picks a
-/// namespaced name (`"com.acme.myformat"`) and its hash won't collide with a
+/// namespaced name (`"com.acme.myformat@1"`) and its hash won't collide with a
 /// built-in. Stable across platforms.
 pub fn name_hash(name: &str) -> u64 {
     let mut h: u64 = 0xcbf2_9ce4_8422_2325;
@@ -106,7 +116,7 @@ mod tests {
     use alloc::vec::Vec;
 
     fn sample() -> Handshake {
-        Handshake::new(0xdead_beef_0102_0304, "msgpack", FRAMING_DATAGRAM, 0b101)
+        Handshake::new(0xdead_beef_0102_0304, FORMAT_MSGPACK, FRAMING_DATAGRAM, 0b101)
     }
 
     #[test]
@@ -144,7 +154,7 @@ mod tests {
         assert!(ours.check(&caps_differ).is_ok(), "capability bits may differ");
 
         let fmt_differ =
-            Handshake::new(ours.ir_hash, "json", FRAMING_DATAGRAM, ours.capabilities);
+            Handshake::new(ours.ir_hash, FORMAT_JSON, FRAMING_DATAGRAM, ours.capabilities);
         assert_eq!(ours.check(&fmt_differ), Err(RuntimeError::Handshake));
 
         let mut schema_differ = sample();
