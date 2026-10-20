@@ -13,7 +13,9 @@ use std::collections::BTreeMap;
 use std::fs;
 use std::path::{Path, PathBuf};
 
-use comline_runtime::contract::{FORMAT_JSON, FORMAT_MSGPACK, FRAMING_DATAGRAM, FRAMING_JSONRPC};
+use comline_runtime::contract::{
+    FORMAT_JSON, FORMAT_MSGPACK, FRAMING_DATAGRAM, FRAMING_DATAGRAM2, FRAMING_JSONRPC,
+};
 use comline_runtime_conformance::{
     fact_shown, reference_cases, render, run, Case, Features, Outcome, Profile, ProvenClaim,
     Report, State, Support, Vectors,
@@ -212,6 +214,7 @@ fn profiles_are_proven() {
         FORMAT_JSON,
         FORMAT_MSGPACK,
         FRAMING_DATAGRAM,
+        FRAMING_DATAGRAM2,
         FRAMING_JSONRPC,
     ];
     for name in names {
