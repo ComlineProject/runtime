@@ -127,11 +127,15 @@ fn a_call_and_an_error_round_trip_over_json_rpc() {
     let provider = thread::spawn(move || {
         let mut provider_side = provider_side;
         Server::with_framing(GreetDispatcher(Polite), Json, JsonRpcFraming)
-            .serve(&mut provider_side)
+            .serve_unverified(&mut provider_side)
             .unwrap();
     });
 
-    let mut client = GreetClient(Client::with_framing(client_side, Json, JsonRpcFraming));
+    let mut client = GreetClient(Client::with_framing_unverified(
+        client_side,
+        Json,
+        JsonRpcFraming,
+    ));
 
     assert_eq!(client.hello("world").unwrap(), "hi, world");
     assert_eq!(
@@ -148,7 +152,7 @@ fn a_call_and_an_error_round_trip_over_json_rpc() {
 #[test]
 fn the_bytes_on_the_wire_are_json_rpc() {
     let (a, mut b) = duplex();
-    let mut client = Client::with_framing(a, Json, JsonRpcFraming);
+    let mut client = Client::with_framing_unverified(a, Json, JsonRpcFraming);
 
     // fire a request; don't wait for a reply (nobody serving `b` yet)
     client
@@ -170,11 +174,15 @@ fn a_fault_crosses_json_rpc_as_its_own_internal_error_code() {
     let provider = thread::spawn(move || {
         let mut provider_side = provider_side;
         Server::with_framing(GreetDispatcher(Broken), Json, JsonRpcFraming)
-            .serve(&mut provider_side)
+            .serve_unverified(&mut provider_side)
             .unwrap();
     });
 
-    let mut client = GreetClient(Client::with_framing(client_side, Json, JsonRpcFraming));
+    let mut client = GreetClient(Client::with_framing_unverified(
+        client_side,
+        Json,
+        JsonRpcFraming,
+    ));
     assert_eq!(
         client.hello("world").unwrap_err(),
         CallError::Runtime(RuntimeError::Provider),

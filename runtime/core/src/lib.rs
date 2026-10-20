@@ -22,9 +22,12 @@ pub mod format;
 #[cfg(feature = "std")]
 pub mod framing;
 
-// The frame transport, the provider serve loop, and the consumer call side.
+// The frame transport, the connection handshake, the provider serve loop, and
+// the consumer call side.
 #[cfg(feature = "alloc")]
 pub mod client;
+#[cfg(feature = "alloc")]
+pub mod handshake;
 #[cfg(feature = "alloc")]
 pub mod serve;
 #[cfg(feature = "alloc")]

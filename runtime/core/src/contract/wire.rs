@@ -10,7 +10,7 @@ use crate::contract::{BufMut, RuntimeError};
 /// into the receive buffer.
 pub trait WireFormat {
     /// A stable name for this format — the connection
-    /// [`Handshake`](crate::contract::Handshake) folds it in (hashed) so the
+    /// [`HandshakeFrame`](crate::contract::HandshakeFrame) folds it in (hashed) so the
     /// two ends can catch "one speaks MessagePack, one speaks JSON". Names are
     /// versioned, `name@major` (`"msgpack@1"`); a third-party format should
     /// namespace it (`"com.acme.myformat@1"`) to avoid a clash.

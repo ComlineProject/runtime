@@ -134,11 +134,11 @@ fn a_call_and_a_raised_error_round_trip_over_in_memory() {
     let provider = thread::spawn(move || {
         let mut provider_side = provider_side;
         Server::new(GreetDispatcher(Polite), MsgPack)
-            .serve(&mut provider_side)
+            .serve_unverified(&mut provider_side)
             .unwrap();
     });
 
-    let mut client = GreetClient(Client::new(client_side, MsgPack));
+    let mut client = GreetClient(Client::new_unverified(client_side, MsgPack));
 
     assert_eq!(client.hello("world").unwrap(), "hi, world");
     assert_eq!(
@@ -161,11 +161,11 @@ fn a_call_round_trips_over_loopback_tcp() {
         let (stream, _) = listener.accept().unwrap();
         let mut transport = Tcp::new(stream);
         Server::new(GreetDispatcher(Polite), MsgPack)
-            .serve(&mut transport)
+            .serve_unverified(&mut transport)
             .unwrap();
     });
 
-    let mut client = GreetClient(Client::new(Tcp::connect(addr).unwrap(), MsgPack));
+    let mut client = GreetClient(Client::new_unverified(Tcp::connect(addr).unwrap(), MsgPack));
 
     assert_eq!(client.hello("over tcp").unwrap(), "hi, over tcp");
     assert_eq!(client.hello("again").unwrap(), "hi, again"); // second call, same framing
@@ -204,11 +204,11 @@ fn a_provider_fault_round_trips_and_leaves_the_connection_usable() {
     let provider = thread::spawn(move || {
         let mut provider_side = provider_side;
         Server::new(GreetDispatcher(Broken), MsgPack)
-            .serve(&mut provider_side)
+            .serve_unverified(&mut provider_side)
             .unwrap();
     });
 
-    let mut client = GreetClient(Client::new(client_side, MsgPack));
+    let mut client = GreetClient(Client::new_unverified(client_side, MsgPack));
 
     assert_eq!(
         client.hello("world").unwrap_err(),

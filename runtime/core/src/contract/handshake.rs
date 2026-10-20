@@ -10,7 +10,7 @@ const LEN: usize = 2 + 1 + 8 + 8 + 8 + 4;
 // so peers on different versions of an encoding refuse each other.
 
 /// Name of the Comline datagram framing (`wire::encode_request` /
-/// `encode_response`). Pass it to [`Handshake::new`].
+/// `encode_response`). Pass it to [`HandshakeFrame::new`].
 pub const FRAMING_DATAGRAM: &str = "datagram@1";
 /// Name of the JSON-RPC 2.0 framing (`framing::JsonRpcFraming`).
 pub const FRAMING_JSONRPC: &str = "jsonrpc@1";
@@ -18,6 +18,13 @@ pub const FRAMING_JSONRPC: &str = "jsonrpc@1";
 pub const FORMAT_JSON: &str = "json@1";
 /// Name of the MessagePack wire format (`format::MsgPack`).
 pub const FORMAT_MSGPACK: &str = "msgpack@1";
+
+/// Name of Comline's own handshake, the fixed [`HandshakeFrame`] each end sends
+/// (`handshake::ComlineHandshake`).
+pub const HANDSHAKE_COMLINE: &str = "comline@1";
+/// Name of the official "no handshake" choice (`handshake::NoHandshake`): no
+/// frame, nothing checked. Unversioned, since there is nothing to evolve.
+pub const HANDSHAKE_NONE: &str = "none";
 
 /// 64-bit FNV-1a. Folds a wire-format / framing **name** into the fixed-size
 /// handshake without a central id registry — a user's add-on format picks a
@@ -32,21 +39,20 @@ pub fn name_hash(name: &str) -> u64 {
     h
 }
 
-/// What each end declares when a connection opens: the schema fingerprint the
-/// generated code was built from, the serialization + framing it speaks, and
-/// its transport capability bits.
+/// The frame of the `comline@1` handshake ([`HANDSHAKE_COMLINE`]): what each
+/// end declares when a connection opens — the schema fingerprint the generated
+/// code was built from, the serialization + framing it speaks, and its
+/// transport capability bits.
 ///
-/// [`Client::connect`](crate::client::Client::connect) /
-/// [`Server::serve_handshaked`](crate::serve::Server::serve_handshaked) exchange
-/// these and refuse on a mismatch — catching "one end MessagePack, one end
-/// JSON" or two ends built from different schema versions. `Client::new` /
-/// `Server::serve` skip it ("misaligned mode" — for legacy peers that can't
-/// take part).
+/// `handshake::ComlineHandshake` exchanges these and refuses on a mismatch —
+/// catching "one end MessagePack, one end JSON" or two ends built from
+/// different schema versions. Other handshakes (`none`, a custom one) send
+/// something else, or nothing.
 ///
 /// Lifetime-free and `Copy`: the format / framing are carried as
 /// [`name_hash`]es of their names, not the strings.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub struct Handshake {
+pub struct HandshakeFrame {
     /// Fingerprint of the frozen IR the two ends generated from. A generator
     /// emits this as a constant.
     pub ir_hash: u64,
@@ -59,7 +65,7 @@ pub struct Handshake {
     pub capabilities: u32,
 }
 
-impl Handshake {
+impl HandshakeFrame {
     /// Build one from the format / framing **names** (hashed in).
     pub fn new(ir_hash: u64, wire_format: &str, framing: &str, capabilities: u32) -> Self {
         Self {
@@ -98,7 +104,7 @@ impl Handshake {
     /// Check a peer's declaration against ours. `Err(RuntimeError::Handshake)`
     /// if `ir_hash`, `wire_format`, or `framing` disagree; capability bits are
     /// allowed to differ.
-    pub fn check(&self, peer: &Handshake) -> Result<(), RuntimeError> {
+    pub fn check(&self, peer: &HandshakeFrame) -> Result<(), RuntimeError> {
         let agree = self.ir_hash == peer.ir_hash
             && self.wire_format == peer.wire_format
             && self.framing == peer.framing;
@@ -115,8 +121,13 @@ mod tests {
     use super::*;
     use alloc::vec::Vec;
 
-    fn sample() -> Handshake {
-        Handshake::new(0xdead_beef_0102_0304, FORMAT_MSGPACK, FRAMING_DATAGRAM, 0b101)
+    fn sample() -> HandshakeFrame {
+        HandshakeFrame::new(
+            0xdead_beef_0102_0304,
+            FORMAT_MSGPACK,
+            FRAMING_DATAGRAM,
+            0b101,
+        )
     }
 
     #[test]
@@ -124,7 +135,7 @@ mod tests {
         let mut frame = Vec::new();
         sample().encode(&mut frame);
         assert_eq!(frame.len(), LEN);
-        assert_eq!(Handshake::decode(&frame), Some(sample()));
+        assert_eq!(HandshakeFrame::decode(&frame), Some(sample()));
     }
 
     #[test]
@@ -136,12 +147,12 @@ mod tests {
 
     #[test]
     fn rejects_truncated_or_foreign() {
-        assert_eq!(Handshake::decode(&[]), None);
-        assert_eq!(Handshake::decode(&[0u8; LEN]), None); // bad magic
+        assert_eq!(HandshakeFrame::decode(&[]), None);
+        assert_eq!(HandshakeFrame::decode(&[0u8; LEN]), None); // bad magic
         let mut frame = Vec::new();
         sample().encode(&mut frame);
         frame.truncate(LEN - 1);
-        assert_eq!(Handshake::decode(&frame), None);
+        assert_eq!(HandshakeFrame::decode(&frame), None);
     }
 
     #[test]
@@ -151,10 +162,17 @@ mod tests {
 
         let mut caps_differ = sample();
         caps_differ.capabilities = 0;
-        assert!(ours.check(&caps_differ).is_ok(), "capability bits may differ");
+        assert!(
+            ours.check(&caps_differ).is_ok(),
+            "capability bits may differ"
+        );
 
-        let fmt_differ =
-            Handshake::new(ours.ir_hash, FORMAT_JSON, FRAMING_DATAGRAM, ours.capabilities);
+        let fmt_differ = HandshakeFrame::new(
+            ours.ir_hash,
+            FORMAT_JSON,
+            FRAMING_DATAGRAM,
+            ours.capabilities,
+        );
         assert_eq!(ours.check(&fmt_differ), Err(RuntimeError::Handshake));
 
         let mut schema_differ = sample();

@@ -22,6 +22,7 @@ pub use envelope::Envelope;
 pub use error::RuntimeError;
 pub use framing::{Call, DatagramFraming, Framing, Request, RequestCall};
 pub use handshake::{
-    name_hash, Handshake, FORMAT_JSON, FORMAT_MSGPACK, FRAMING_DATAGRAM, FRAMING_JSONRPC,
+    name_hash, HandshakeFrame, FORMAT_JSON, FORMAT_MSGPACK, FRAMING_DATAGRAM, FRAMING_JSONRPC,
+    HANDSHAKE_COMLINE, HANDSHAKE_NONE,
 };
 pub use wire::WireFormat;
