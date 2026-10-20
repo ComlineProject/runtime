@@ -18,7 +18,7 @@ use serde::ser::{SerializeSeq, SerializeStruct};
 use serde::{Deserialize, Deserializer, Serialize, Serializer};
 
 use comline_runtime::contract::{
-    name_hash, Call, DatagramFraming, Envelope, Framing, Handshake, RequestCall, WireFormat,
+    name_hash, Call, DatagramFraming, Envelope, Framing, HandshakeFrame, RequestCall, WireFormat,
     FORMAT_JSON, FORMAT_MSGPACK, FRAMING_DATAGRAM, FRAMING_JSONRPC,
 };
 use comline_runtime::format::{Json, MsgPack};
@@ -540,7 +540,8 @@ fn encode(op: Op, input: &serde_json::Value) -> Result<Vec<u8>, Outcome> {
         }
         Op::Handshake => {
             let i: HandshakeIn = parse(input)?;
-            Handshake::new(i.ir_hash, &i.wire_format, &i.framing, i.capabilities).encode(&mut out);
+            HandshakeFrame::new(i.ir_hash, &i.wire_format, &i.framing, i.capabilities)
+                .encode(&mut out);
         }
         Op::Envelope => encode_reply(&parse(input)?, &mut out),
         Op::Request => {
@@ -610,7 +611,7 @@ fn decode(
             }))
         }
         Op::Handshake => {
-            let Some(h) = Handshake::decode(bytes) else {
+            let Some(h) = HandshakeFrame::decode(bytes) else {
                 return Ok(None);
             };
             // The frame carries hashes; compare them against the input's names.
@@ -1275,7 +1276,7 @@ fn decode_cases(feature_id: &str, format: &str) -> Vec<Case> {
 fn rejections(feature: &str) -> Vec<Case> {
     let none = serde_json::Value::Null;
     let mut handshake = Vec::new();
-    Handshake::new(1, FORMAT_JSON, FRAMING_DATAGRAM, 0).encode(&mut handshake);
+    HandshakeFrame::new(1, FORMAT_JSON, FRAMING_DATAGRAM, 0).encode(&mut handshake);
     let framing = |name: &str| serde_json::json!({ "framing": name });
     match feature {
         "handshake" => {

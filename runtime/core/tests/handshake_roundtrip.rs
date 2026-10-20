@@ -1,17 +1,21 @@
-//! The connection handshake: `Client::connect` ⇆ `Server::serve_handshaked`
+//! The connection handshake: `Client::connect` ⇆ `Server::serve` (`comline@1`)
 //! agree and a call goes through; a schema-hash mismatch is refused before any
-//! call; `Client::new` / `Server::serve` skip it ("misaligned mode").
+//! call; `Client::new_unverified` / `Server::serve_unverified` skip it, as does
+//! the declared `none`; and a custom handshake plugs in through
+//! `connect_with` / `serve_with`.
 #![cfg(feature = "std")]
 
 use std::thread;
 
 use comline_runtime::client::Client;
 use comline_runtime::contract::{
-    Dispatch, Envelope, Handshake, Kind, Reply, RuntimeError, WireFormat, FRAMING_DATAGRAM,
+    DatagramFraming, Dispatch, Envelope, Kind, Reply, RuntimeError, WireFormat, HANDSHAKE_COMLINE,
+    HANDSHAKE_NONE,
 };
 use comline_runtime::format::MsgPack;
+use comline_runtime::handshake::{ComlineHandshake, Facts, Handshake, NoHandshake};
 use comline_runtime::serve::Server;
-use comline_runtime::transport::duplex;
+use comline_runtime::transport::{duplex, Transport};
 use serde::{Deserialize, Serialize};
 
 // protocol Echo { function bump(n: u32) -> u32; }
@@ -61,10 +65,6 @@ impl Echo for Inc {
     }
 }
 
-fn hs(ir_hash: u64) -> Handshake {
-    Handshake::new(ir_hash, MsgPack.name(), FRAMING_DATAGRAM, 0)
-}
-
 const SCHEMA: u64 = 0x0011_2233_4455_6677;
 
 #[test]
@@ -74,11 +74,11 @@ fn matching_handshakes_connect_and_a_call_round_trips() {
     let provider = thread::spawn(move || {
         let mut provider_side = provider_side;
         Server::new(EchoDispatcher(Inc), MsgPack)
-            .serve_handshaked(&mut provider_side, hs(SCHEMA))
+            .serve(&mut provider_side, SCHEMA)
             .unwrap();
     });
 
-    let mut client = Client::connect(client_side, MsgPack, hs(SCHEMA)).expect("handshake");
+    let mut client = Client::connect(client_side, MsgPack, SCHEMA).expect("handshake");
 
     let (reply, fmt) = client.call(0, &BumpParams { n: 41 }).unwrap();
     let n: u32 = match reply {
@@ -100,11 +100,11 @@ fn a_schema_hash_mismatch_is_refused_before_any_call() {
     let provider = thread::spawn(move || {
         let mut provider_side = provider_side;
         Server::new(EchoDispatcher(Inc), MsgPack)
-            .serve_handshaked(&mut provider_side, hs(0xdead))
+            .serve(&mut provider_side, 0xdead)
             .unwrap_err()
     });
 
-    let err = match Client::connect(client_side, MsgPack, hs(SCHEMA)) {
+    let err = match Client::connect(client_side, MsgPack, SCHEMA) {
         Err(e) => e,
         Ok(_) => panic!("connect should have refused the mismatched schema"),
     };
@@ -114,19 +114,20 @@ fn a_schema_hash_mismatch_is_refused_before_any_call() {
 }
 
 #[test]
-fn misaligned_mode_skips_the_handshake_entirely() {
-    // `Client::new` + `Server::serve` — no handshake frame at all, the call
+fn the_unverified_paths_skip_the_handshake_entirely() {
+    // `Client::new_unverified` + `Server::serve_unverified` — no handshake
+    // frame at all, the call
     // is the first thing on the wire.
     let (client_side, provider_side) = duplex();
 
     let provider = thread::spawn(move || {
         let mut provider_side = provider_side;
         Server::new(EchoDispatcher(Inc), MsgPack)
-            .serve(&mut provider_side)
+            .serve_unverified(&mut provider_side)
             .unwrap();
     });
 
-    let mut client = Client::new(client_side, MsgPack);
+    let mut client = Client::new_unverified(client_side, MsgPack);
     let (reply, fmt) = client.call(0, &BumpParams { n: 7 }).unwrap();
     let n: u32 = match reply {
         Envelope::Ok(payload) => fmt.decode(payload).unwrap(),
@@ -137,4 +138,104 @@ fn misaligned_mode_skips_the_handshake_entirely() {
 
     drop(client);
     provider.join().unwrap();
+}
+
+fn bump_once<T: Transport>(client: &mut Client<T, MsgPack>, n: u32) -> u32 {
+    match client.call(0, &BumpParams { n }).unwrap() {
+        (Envelope::Ok(payload), fmt) => fmt.decode(payload).unwrap(),
+        _ => panic!("unexpected reply"),
+    }
+}
+
+#[test]
+fn the_declared_none_sends_nothing_and_checks_nothing() {
+    let (client_side, provider_side) = duplex();
+
+    // Different schema hashes: `none` doesn't look.
+    let provider = thread::spawn(move || {
+        let mut provider_side = provider_side;
+        Server::new(EchoDispatcher(Inc), MsgPack)
+            .serve_with(&mut provider_side, &mut NoHandshake, 0xdead)
+            .unwrap();
+    });
+
+    let mut client = Client::connect_with(
+        client_side,
+        MsgPack,
+        DatagramFraming,
+        &mut NoHandshake,
+        SCHEMA,
+    )
+    .expect("none never refuses");
+    assert_eq!(bump_once(&mut client, 1), 2);
+
+    drop(client);
+    provider.join().unwrap();
+}
+
+/// A legacy peer's own hello: the consumer sends `HELLO <framing>`, the
+/// provider answers `OK` if it speaks that framing. Checks no schema at all.
+struct Hello;
+
+impl Handshake for Hello {
+    fn name(&self) -> &str {
+        "com.example.hello@1"
+    }
+
+    fn initiate<T: Transport>(
+        &mut self,
+        transport: &mut T,
+        local: &Facts<'_>,
+    ) -> Result<(), RuntimeError> {
+        transport.send(format!("HELLO {}", local.framing).as_bytes())?;
+        let mut answer = Vec::new();
+        transport.recv(&mut answer)?;
+        if answer == b"OK" {
+            Ok(())
+        } else {
+            Err(RuntimeError::Handshake)
+        }
+    }
+
+    fn respond<T: Transport>(
+        &mut self,
+        transport: &mut T,
+        local: &Facts<'_>,
+    ) -> Result<(), RuntimeError> {
+        let mut hello = Vec::new();
+        transport.recv(&mut hello)?;
+        if hello != format!("HELLO {}", local.framing).as_bytes() {
+            transport.send(b"NO")?;
+            return Err(RuntimeError::Handshake);
+        }
+        transport.send(b"OK")
+    }
+}
+
+#[test]
+fn a_custom_handshake_runs_in_place_of_comlines() {
+    let (client_side, provider_side) = duplex();
+
+    let provider = thread::spawn(move || {
+        let mut provider_side = provider_side;
+        Server::new(EchoDispatcher(Inc), MsgPack)
+            .serve_with(&mut provider_side, &mut Hello, SCHEMA)
+            .unwrap();
+    });
+
+    let mut client =
+        Client::connect_with(client_side, MsgPack, DatagramFraming, &mut Hello, SCHEMA)
+            .expect("hello");
+    assert_eq!(bump_once(&mut client, 9), 10);
+
+    drop(client);
+    provider.join().unwrap();
+}
+
+#[test]
+fn handshakes_carry_their_versioned_names() {
+    assert_eq!(ComlineHandshake.name(), HANDSHAKE_COMLINE);
+    assert_eq!(HANDSHAKE_COMLINE, "comline@1");
+    assert_eq!(NoHandshake.name(), HANDSHAKE_NONE);
+    assert_eq!(Hello.name(), "com.example.hello@1");
 }

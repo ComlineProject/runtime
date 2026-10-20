@@ -31,9 +31,10 @@ pub enum RuntimeError {
     /// dispatcher could not complete the call. No detail crosses the wire; it
     /// stays on the provider's side to be logged.
     Provider,
-    /// The connection handshake disagreed on schema hash, wire format, or
-    /// framing — or none arrived. Never raised when the handshake is skipped
-    /// (`Client::new` / `Server::serve` — "misaligned mode").
+    /// The connection handshake refused the peer: under `comline@1`, the two
+    /// disagreed on schema hash, wire format or framing, or no frame arrived.
+    /// Never raised when there is none (`none`, `Client::new_unverified` /
+    /// `Server::serve_unverified`).
     Handshake,
 }
 

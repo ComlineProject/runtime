@@ -17,9 +17,8 @@ use core::time::Duration;
 
 use serde::Serialize;
 
-use crate::contract::{
-    Call, DatagramFraming, Envelope, Framing, Handshake, RuntimeError, WireFormat,
-};
+use crate::contract::{Call, DatagramFraming, Envelope, Framing, RuntimeError, WireFormat};
+use crate::handshake::{ComlineHandshake, Facts, Handshake};
 use crate::transport::Transport;
 
 /// A calling endpoint bound to one transport. Generic over the [`Framing`];
@@ -34,23 +33,24 @@ pub struct Client<T, W, F = DatagramFraming> {
 }
 
 impl<T: Transport, W: WireFormat> Client<T, W, DatagramFraming> {
-    /// Bind a client to a transport **without a handshake** — "misaligned
-    /// mode". Use when the peer can't take part (a legacy server); a
-    /// wire-format or schema mismatch then surfaces later as a decode / framing
-    /// error instead of up front. [`connect`](Self::connect) is the checked
-    /// path.
-    pub fn new(transport: T, format: W) -> Self {
-        Self::with_framing(transport, format, DatagramFraming)
+    /// Bind a client to a transport **without a handshake**, with the
+    /// datagram framing. Use when the peer can't take part (a legacy server);
+    /// a wire-format or schema mismatch then surfaces later as a decode /
+    /// framing error instead of up front. [`connect`](Self::connect) is the
+    /// checked path.
+    pub fn new_unverified(transport: T, format: W) -> Self {
+        Self::with_framing_unverified(transport, format, DatagramFraming)
     }
 
-    /// Bind + run the connection [`Handshake`] with the datagram framing.
-    pub fn connect(transport: T, format: W, local: Handshake) -> Result<Self, RuntimeError> {
-        Self::connect_with_framing(transport, format, DatagramFraming, local)
+    /// Bind + run the `comline@1` handshake with the datagram framing.
+    pub fn connect(transport: T, format: W, ir_hash: u64) -> Result<Self, RuntimeError> {
+        Self::connect_with_framing(transport, format, DatagramFraming, ir_hash)
     }
 }
 
 impl<T: Transport, W: WireFormat, F: Framing> Client<T, W, F> {
-    pub fn with_framing(transport: T, format: W, framing: F) -> Self {
+    /// [`new_unverified`](Client::new_unverified) with another framing.
+    pub fn with_framing_unverified(transport: T, format: W, framing: F) -> Self {
         Self {
             transport,
             format,
@@ -61,24 +61,31 @@ impl<T: Transport, W: WireFormat, F: Framing> Client<T, W, F> {
         }
     }
 
-    /// [`with_framing`](Self::with_framing) + run the connection [`Handshake`]:
-    /// send `local`, read the peer's, refuse (`RuntimeError::Handshake`) on a
-    /// schema / wire-format / framing mismatch.
+    /// Bind + run the `comline@1` handshake ([`ComlineHandshake`]) with
+    /// `framing`: refuse (`RuntimeError::Handshake`) on a schema / wire-format
+    /// / framing mismatch.
     pub fn connect_with_framing(
         transport: T,
         format: W,
         framing: F,
-        local: Handshake,
+        ir_hash: u64,
     ) -> Result<Self, RuntimeError> {
-        let mut client = Self::with_framing(transport, format, framing);
-        client.request.clear();
-        local.encode(&mut client.request);
-        client.transport.send(&client.request)?;
-        client.response.clear();
-        client.transport.recv(&mut client.response)?;
-        let peer = Handshake::decode(&client.response).ok_or(RuntimeError::Handshake)?;
-        local.check(&peer)?;
-        Ok(client)
+        Self::connect_with(transport, format, framing, &mut ComlineHandshake, ir_hash)
+    }
+
+    /// Bind + run `handshake`'s consumer side
+    /// ([`Handshake::initiate`]) before the first call. What generated code
+    /// emits for a protocol that declares its handshake.
+    pub fn connect_with<H: Handshake>(
+        mut transport: T,
+        format: W,
+        framing: F,
+        handshake: &mut H,
+        ir_hash: u64,
+    ) -> Result<Self, RuntimeError> {
+        let local = Facts::new(ir_hash, format.name(), framing.name());
+        handshake.initiate(&mut transport, &local)?;
+        Ok(Self::with_framing_unverified(transport, format, framing))
     }
 
     /// Make `call` with `params`, block for the response, and return its

@@ -4,9 +4,9 @@
 use alloc::vec::Vec;
 
 use crate::contract::{
-    DatagramFraming, Dispatch, Framing, Handshake, Kind, Outcome, Reply, RequestCall, RuntimeError,
-    WireFormat,
+    DatagramFraming, Dispatch, Framing, Kind, Outcome, Reply, RequestCall, RuntimeError, WireFormat,
 };
+use crate::handshake::{ComlineHandshake, Facts, Handshake};
 use crate::transport::Transport;
 
 /// Serves one protocol implementation over a [`Transport`], reusing its buffers
@@ -115,30 +115,41 @@ impl<D: Dispatch, W: WireFormat, F: Framing> Server<D, W, F> {
         Ok(true)
     }
 
-    /// Serve calls until the transport closes. **No handshake** — pair with a
-    /// `Client::new` peer, or an aligned setup where a mismatch can't happen.
-    pub fn serve<T: Transport>(&mut self, transport: &mut T) -> Result<(), RuntimeError> {
+    /// Serve calls until the transport closes, **without a handshake**: pair
+    /// with a [`Client::new_unverified`](crate::client::Client::new_unverified)
+    /// peer, or a setup where a mismatch can't happen. [`serve`](Self::serve)
+    /// is the checked path.
+    pub fn serve_unverified<T: Transport>(
+        &mut self,
+        transport: &mut T,
+    ) -> Result<(), RuntimeError> {
         while self.serve_one(transport)? {}
         Ok(())
     }
 
-    /// Run the connection [`Handshake`] against the connecting peer — send
-    /// `local`, read theirs, refuse (`RuntimeError::Handshake`) on a schema /
-    /// wire-format / framing mismatch — then [`serve`](Self::serve).
-    pub fn serve_handshaked<T: Transport>(
+    /// Run the `comline@1` handshake ([`ComlineHandshake`]) against the
+    /// connecting peer — refuse (`RuntimeError::Handshake`) on a schema /
+    /// wire-format / framing mismatch — then serve calls until the transport
+    /// closes.
+    pub fn serve<T: Transport>(
         &mut self,
         transport: &mut T,
-        local: Handshake,
+        ir_hash: u64,
     ) -> Result<(), RuntimeError> {
-        self.response.clear();
-        local.encode(&mut self.response);
-        transport.send(&self.response)?;
+        self.serve_with(transport, &mut ComlineHandshake, ir_hash)
+    }
 
-        self.recv.clear();
-        transport.recv(&mut self.recv)?;
-        let peer = Handshake::decode(&self.recv).ok_or(RuntimeError::Handshake)?;
-        local.check(&peer)?;
-
-        self.serve(transport)
+    /// Run `handshake`'s provider side ([`Handshake::respond`]), then serve
+    /// calls until the transport closes. What generated code emits for a
+    /// protocol that declares its handshake.
+    pub fn serve_with<T: Transport, H: Handshake>(
+        &mut self,
+        transport: &mut T,
+        handshake: &mut H,
+        ir_hash: u64,
+    ) -> Result<(), RuntimeError> {
+        let local = Facts::new(ir_hash, self.format.name(), self.framing.name());
+        handshake.respond(transport, &local)?;
+        self.serve_unverified(transport)
     }
 }

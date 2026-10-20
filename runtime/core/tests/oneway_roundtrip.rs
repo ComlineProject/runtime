@@ -65,14 +65,10 @@ fn a_one_way_call_reaches_the_handler_and_draws_no_reply() {
     let (client_side, mut provider_side) = duplex();
     let log = Rc::new(RefCell::new(Vec::new()));
     let mut server = Server::new(LogDispatcher(Recorder(log.clone())), MsgPack);
-    let mut client = Client::new(client_side, MsgPack);
+    let mut client = Client::new_unverified(client_side, MsgPack);
 
-    client
-        .notify(0, &RecordParams { line: "first" })
-        .unwrap();
-    client
-        .notify(0, &RecordParams { line: "second" })
-        .unwrap();
+    client.notify(0, &RecordParams { line: "first" }).unwrap();
+    client.notify(0, &RecordParams { line: "second" }).unwrap();
 
     // Two frames queued; the server pumps both, replying to neither.
     assert!(server.serve_one(&mut provider_side).unwrap());

@@ -9,7 +9,7 @@ use crate::contract::{BufMut, Envelope, RuntimeError, WireFormat};
 ///
 /// [`Client`](crate::client::Client) and [`Server`](crate::serve::Server) are
 /// generic over one, chosen at setup; the pair must agree (the connection
-/// [`Handshake`](crate::contract::Handshake) carries `name()`, hashed).
+/// [`HandshakeFrame`](crate::contract::HandshakeFrame) carries `name()`, hashed).
 pub trait Framing: Default {
     /// A stable name, folded into the handshake.
     fn name(&self) -> &'static str;

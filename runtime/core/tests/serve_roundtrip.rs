@@ -70,7 +70,7 @@ fn a_call_round_trips_over_the_transport() {
     let server = thread::spawn(move || {
         let mut provider = provider;
         Server::new(GreetDispatcher(Impl), MsgPack)
-            .serve(&mut provider)
+            .serve_unverified(&mut provider)
             .unwrap();
     });
 
@@ -115,7 +115,7 @@ fn an_unknown_call_is_answered_with_a_fault_and_the_loop_survives() {
     let server = thread::spawn(move || {
         let mut provider = provider;
         Server::new(GreetDispatcher(Impl), MsgPack)
-            .serve(&mut provider)
+            .serve_unverified(&mut provider)
             .unwrap();
     });
 
@@ -167,7 +167,7 @@ fn undecodable_params_are_answered_with_a_fault() {
     let server = thread::spawn(move || {
         let mut provider = provider;
         Server::new(GreetDispatcher(Impl), MsgPack)
-            .serve(&mut provider)
+            .serve_unverified(&mut provider)
             .unwrap();
     });
 

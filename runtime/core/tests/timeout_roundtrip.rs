@@ -66,7 +66,7 @@ fn a_call_that_gets_no_reply_times_out() {
     // `_provider` end stays bound (so the channel isn't disconnected) but
     // nothing serves it.
     let (client_side, _provider) = duplex();
-    let mut client = Client::new(client_side, MsgPack);
+    let mut client = Client::new_unverified(client_side, MsgPack);
 
     let err = client
         .call_with_timeout(0, &PingParams { n: 1 }, Duration::from_millis(50))
@@ -81,11 +81,11 @@ fn a_call_answered_before_the_deadline_succeeds() {
     let provider = thread::spawn(move || {
         let mut provider_side = provider_side;
         Server::new(EchoDispatcher(Inc), MsgPack)
-            .serve(&mut provider_side)
+            .serve_unverified(&mut provider_side)
             .unwrap();
     });
 
-    let mut client = Client::new(client_side, MsgPack);
+    let mut client = Client::new_unverified(client_side, MsgPack);
 
     let (reply, fmt) = client
         .call_with_timeout(0, &PingParams { n: 41 }, Duration::from_secs(5))
