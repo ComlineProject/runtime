@@ -31,6 +31,7 @@ The ops, and what their `input` holds:
 | `request` | `framing`, `call_id`, `method`, `request_id`, `format`, `params` | encode and decode |
 | `response` | `framing`, `request_id`, and an envelope's fields | encode and decode |
 | `encode` | `format`, `value` | encode |
+| `decode` | `format`, `type`, `value` | decode: `bytes` read as `type` give `value` |
 
 - **Encode and decode:** encoding the input gives exactly `bytes`, and decoding
   `bytes` gives the input back.
@@ -51,6 +52,18 @@ The ops, and what their `input` holds:
 - **64-bit integers** (`ir_hash`, `request_id`, `u64` and `i64` values) are
   decimal strings, so a reader that holds JSON numbers as doubles keeps them
   exact.
+
+A `decode` case's bytes were written by a *different* type from the one it
+reads into: a struct with a field more or one fewer, fields in another order,
+an enum whose variants are ordered differently or that has one more, a wider
+integer. They show what a reader generated from today's schema does with what
+another version wrote, which is what [profiles](#encoding-profiles) are about.
+`type` describes the reader so any runtime can build one: `"u32"`, `"i32"`,
+`"string"`, `{"option": T}`, `{"struct": {"name": "Point", "fields": [["x",
+"i32"], ["y", "i32"]]}}` and `{"enum": {"name": "Color", "variants": ["Red",
+"Green", "Blue"]}}`. The reference decodes through plain `serde` derives, as
+generated Rust declares its types, so the cases prove generated code, not a
+hand-written decoder.
 
 A value is typed, so a runtime knows which width and shape to encode:
 `{"u8": 255}`, `{"u64": "18446744073709551615"}`, `{"string": "x"}`,
@@ -90,6 +103,27 @@ Rust's claims are in [`support/rust.json`](support/rust.json). The runner
 `rust_support_is_proven` writes [`reports/rust.json`](reports/rust.json): the
 claims, with the cases that prove each. The report is drift-checked like the
 vectors, and the docs' language reference is rendered from it.
+
+## Encoding profiles
+
+[`profiles/`](profiles) holds one profile per official encoding name
+(`json@1.json`, `msgpack@1.json`, `datagram@1.json`, `jsonrpc@1.json`): facts
+about how it encodes, which the version comparison turns into bumps. A format
+states `struct_fields`, `unknown_field`, `missing_optional`, `enum_variants`,
+`unknown_variant` and `integer_width`; a framing states `calls` and `errors`.
+
+```json
+"unknown_field": { "value": "rejected", "proven_by": ["format-msgpack/decode-unknown-field"] }
+```
+
+Every fact names the cases that prove it, and `profiles_are_proven` checks
+that each named case exists, passes against `comline-runtime`, and shows the
+stated value: a rejection where the fact says `rejected`, the decoded value
+where it says `by_name` or `by_position`. A profile is fixed for its version:
+changing a fact means a new `@N`.
+
+Whether a one-way call gets a reply frame is behaviour, not bytes, so no
+profile states it until live cross-runtime calls can prove it (see below).
 
 ## Another runtime
 
