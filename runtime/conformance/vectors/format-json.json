@@ -2,10 +2,10 @@
   "feature": "format-json",
   "cases": [
     {
-      "id": "format-json/bool-true",
+      "id": "format-json@1/bool-true",
       "op": "encode",
       "input": {
-        "format": "json",
+        "format": "json@1",
         "value": {
           "bool": true
         }
@@ -14,10 +14,10 @@
       "compare": "json"
     },
     {
-      "id": "format-json/bool-false",
+      "id": "format-json@1/bool-false",
       "op": "encode",
       "input": {
-        "format": "json",
+        "format": "json@1",
         "value": {
           "bool": false
         }
@@ -26,10 +26,10 @@
       "compare": "json"
     },
     {
-      "id": "format-json/u8-max",
+      "id": "format-json@1/u8-max",
       "op": "encode",
       "input": {
-        "format": "json",
+        "format": "json@1",
         "value": {
           "u8": 255
         }
@@ -38,10 +38,10 @@
       "compare": "json"
     },
     {
-      "id": "format-json/u16-max",
+      "id": "format-json@1/u16-max",
       "op": "encode",
       "input": {
-        "format": "json",
+        "format": "json@1",
         "value": {
           "u16": 65535
         }
@@ -50,10 +50,10 @@
       "compare": "json"
     },
     {
-      "id": "format-json/u32-max",
+      "id": "format-json@1/u32-max",
       "op": "encode",
       "input": {
-        "format": "json",
+        "format": "json@1",
         "value": {
           "u32": 4294967295
         }
@@ -62,10 +62,10 @@
       "compare": "json"
     },
     {
-      "id": "format-json/u64-small",
+      "id": "format-json@1/u64-small",
       "op": "encode",
       "input": {
-        "format": "json",
+        "format": "json@1",
         "value": {
           "u64": "7"
         }
@@ -74,10 +74,10 @@
       "compare": "json"
     },
     {
-      "id": "format-json/u64-above-2-53",
+      "id": "format-json@1/u64-above-2-53",
       "op": "encode",
       "input": {
-        "format": "json",
+        "format": "json@1",
         "value": {
           "u64": "9007199254740993"
         }
@@ -86,10 +86,10 @@
       "compare": "json"
     },
     {
-      "id": "format-json/u64-max",
+      "id": "format-json@1/u64-max",
       "op": "encode",
       "input": {
-        "format": "json",
+        "format": "json@1",
         "value": {
           "u64": "18446744073709551615"
         }
@@ -98,10 +98,10 @@
       "compare": "json"
     },
     {
-      "id": "format-json/i8-min",
+      "id": "format-json@1/i8-min",
       "op": "encode",
       "input": {
-        "format": "json",
+        "format": "json@1",
         "value": {
           "i8": -128
         }
@@ -110,10 +110,10 @@
       "compare": "json"
     },
     {
-      "id": "format-json/i16-min",
+      "id": "format-json@1/i16-min",
       "op": "encode",
       "input": {
-        "format": "json",
+        "format": "json@1",
         "value": {
           "i16": -32768
         }
@@ -122,10 +122,10 @@
       "compare": "json"
     },
     {
-      "id": "format-json/i32-min",
+      "id": "format-json@1/i32-min",
       "op": "encode",
       "input": {
-        "format": "json",
+        "format": "json@1",
         "value": {
           "i32": -2147483648
         }
@@ -134,10 +134,10 @@
       "compare": "json"
     },
     {
-      "id": "format-json/i64-min",
+      "id": "format-json@1/i64-min",
       "op": "encode",
       "input": {
-        "format": "json",
+        "format": "json@1",
         "value": {
           "i64": "-9223372036854775808"
         }
@@ -146,10 +146,10 @@
       "compare": "json"
     },
     {
-      "id": "format-json/f64-fraction",
+      "id": "format-json@1/f64-fraction",
       "op": "encode",
       "input": {
-        "format": "json",
+        "format": "json@1",
         "value": {
           "f64": -0.25
         }
@@ -158,10 +158,10 @@
       "compare": "json"
     },
     {
-      "id": "format-json/f64-integral",
+      "id": "format-json@1/f64-integral",
       "op": "encode",
       "input": {
-        "format": "json",
+        "format": "json@1",
         "value": {
           "f64": 1.0
         }
@@ -170,10 +170,10 @@
       "compare": "json"
     },
     {
-      "id": "format-json/string-empty",
+      "id": "format-json@1/string-empty",
       "op": "encode",
       "input": {
-        "format": "json",
+        "format": "json@1",
         "value": {
           "string": ""
         }
@@ -182,10 +182,10 @@
       "compare": "json"
     },
     {
-      "id": "format-json/string-unicode",
+      "id": "format-json@1/string-unicode",
       "op": "encode",
       "input": {
-        "format": "json",
+        "format": "json@1",
         "value": {
           "string": "héllo \"wörld\" ✓\n"
         }
@@ -194,10 +194,10 @@
       "compare": "json"
     },
     {
-      "id": "format-json/array-empty",
+      "id": "format-json@1/array-empty",
       "op": "encode",
       "input": {
-        "format": "json",
+        "format": "json@1",
         "value": {
           "array": []
         }
@@ -206,10 +206,10 @@
       "compare": "json"
     },
     {
-      "id": "format-json/array-u8",
+      "id": "format-json@1/array-u8",
       "op": "encode",
       "input": {
-        "format": "json",
+        "format": "json@1",
         "value": {
           "array": [
             {
@@ -228,10 +228,10 @@
       "compare": "json"
     },
     {
-      "id": "format-json/option-none",
+      "id": "format-json@1/option-none",
       "op": "encode",
       "input": {
-        "format": "json",
+        "format": "json@1",
         "value": {
           "option": null
         }
@@ -240,10 +240,10 @@
       "compare": "json"
     },
     {
-      "id": "format-json/option-some",
+      "id": "format-json@1/option-some",
       "op": "encode",
       "input": {
-        "format": "json",
+        "format": "json@1",
         "value": {
           "option": {
             "u32": 5
@@ -254,10 +254,10 @@
       "compare": "json"
     },
     {
-      "id": "format-json/struct",
+      "id": "format-json@1/struct",
       "op": "encode",
       "input": {
-        "format": "json",
+        "format": "json@1",
         "value": {
           "struct": {
             "fields": [
@@ -282,10 +282,10 @@
       "compare": "json"
     },
     {
-      "id": "format-json/struct-nested",
+      "id": "format-json@1/struct-nested",
       "op": "encode",
       "input": {
-        "format": "json",
+        "format": "json@1",
         "value": {
           "struct": {
             "fields": [
@@ -360,10 +360,10 @@
       "compare": "json"
     },
     {
-      "id": "format-json/struct-optional-none",
+      "id": "format-json@1/struct-optional-none",
       "op": "encode",
       "input": {
-        "format": "json",
+        "format": "json@1",
         "value": {
           "struct": {
             "fields": [
@@ -388,10 +388,10 @@
       "compare": "json"
     },
     {
-      "id": "format-json/enum-unit-variant",
+      "id": "format-json@1/enum-unit-variant",
       "op": "encode",
       "input": {
-        "format": "json",
+        "format": "json@1",
         "value": {
           "unit_variant": {
             "enum": "Color",

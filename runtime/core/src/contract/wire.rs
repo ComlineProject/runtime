@@ -11,9 +11,9 @@ use crate::contract::{BufMut, RuntimeError};
 pub trait WireFormat {
     /// A stable name for this format — the connection
     /// [`Handshake`](crate::contract::Handshake) folds it in (hashed) so the
-    /// two ends can catch "one speaks MessagePack, one speaks JSON". Built-ins
-    /// are bare (`"msgpack"`); a third-party format should namespace it
-    /// (`"com.acme.myformat"`) to avoid a clash.
+    /// two ends can catch "one speaks MessagePack, one speaks JSON". Names are
+    /// versioned, `name@major` (`"msgpack@1"`); a third-party format should
+    /// namespace it (`"com.acme.myformat@1"`) to avoid a clash.
     fn name(&self) -> &'static str;
 
     fn encode<T: Serialize + ?Sized>(
