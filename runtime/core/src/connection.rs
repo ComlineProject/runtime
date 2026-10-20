@@ -61,16 +61,27 @@ pub enum Event<'f> {
 /// The calls one side of a connection has made and is waiting on, and the
 /// request ids it hands out. No I/O: bytes in, [`Event`]s out.
 ///
-/// Calls nest, so the waiting calls form a stack, and a reply has to answer
-/// the innermost one: the peer can't answer an outer call while it is still
-/// waiting on its own nested call to this side.
+/// For the blocking driver (`State::default()`) calls nest, so the waiting
+/// calls form a stack, and a reply has to answer the innermost one: the peer
+/// can't answer an outer call while it is still waiting on its own nested
+/// call to this side. The async driver has several calls in flight at once,
+/// answered in any order ([`unordered`](Self::unordered)).
 #[derive(Debug, Default)]
 pub struct State {
     next_id: u64,
     waiting: Vec<u64>,
+    unordered: bool,
 }
 
 impl State {
+    /// A state whose waiting calls may be answered in any order.
+    pub fn unordered() -> Self {
+        Self {
+            unordered: true,
+            ..Self::default()
+        }
+    }
+
     /// Frame a call into `out` and return its request id. A call that
     /// `expects_reply` is waited on until [`receive`](Self::receive) sees its
     /// reply or [`abandon`](Self::abandon) gives up on it.
@@ -113,8 +124,9 @@ impl State {
         framing.encode_reply(protocol, request_id, reply, out);
     }
 
-    /// What `frame` means. A malformed frame, or a reply that skips the
-    /// innermost waiting call, is [`RuntimeError::Framing`].
+    /// What `frame` means. A malformed frame, or (unless
+    /// [`unordered`](Self::unordered)) a reply that skips the innermost
+    /// waiting call, is [`RuntimeError::Framing`].
     pub fn receive<'f, F: ConnectionFraming>(
         &mut self,
         framing: &F,
@@ -123,6 +135,15 @@ impl State {
         match framing.decode(frame).ok_or(RuntimeError::Framing)? {
             Frame::Request { protocol, request } => Ok(Event::Request { protocol, request }),
             Frame::Reply { request_id, envelope, .. } => {
+                if self.unordered {
+                    return Ok(match self.waiting.iter().position(|&id| id == request_id) {
+                        Some(at) => {
+                            self.waiting.swap_remove(at);
+                            Event::Reply { request_id, envelope }
+                        }
+                        None => Event::Stale,
+                    });
+                }
                 if self.waiting.last() == Some(&request_id) {
                     self.waiting.pop();
                     Ok(Event::Reply { request_id, envelope })
@@ -151,15 +172,16 @@ impl State {
 
 /// Typed data kept on a connection, one value per type, like
 /// `http::Extensions`: what the application knows about the peer (a session,
-/// a user id) or keeps for it (a rate-limit bucket).
+/// a user id) or keeps for it (a rate-limit bucket). Values are `Send`, so
+/// an async connection's handlers on any thread can reach them.
 #[derive(Default)]
 pub struct Extensions {
-    values: BTreeMap<TypeId, Box<dyn Any>>,
+    values: BTreeMap<TypeId, Box<dyn Any + Send>>,
 }
 
 impl Extensions {
     /// Store `value`, returning the one of its type stored before.
-    pub fn insert<T: 'static>(&mut self, value: T) -> Option<T> {
+    pub fn insert<T: Send + 'static>(&mut self, value: T) -> Option<T> {
         self.values
             .insert(TypeId::of::<T>(), Box::new(value))
             .and_then(|old| old.downcast().ok().map(|old| *old))
@@ -186,7 +208,7 @@ impl core::fmt::Debug for Extensions {
     }
 }
 
-fn next_connection_id() -> ConnectionId {
+pub(crate) fn next_connection_id() -> ConnectionId {
     static NEXT: AtomicUsize = AtomicUsize::new(0);
     ConnectionId(NEXT.fetch_add(1, Ordering::Relaxed) as u64)
 }
@@ -203,8 +225,9 @@ fn next_connection_id() -> ConnectionId {
 ///
 /// One side does one thing at a time: a request is handled to the end before
 /// the next frame is read, and a call made while serving finishes before the
-/// request that made it. Calling the peer from another thread while this one
-/// serves needs the async driver, which isn't written yet.
+/// request that made it. To call the peer from another thread or task while
+/// this one serves, use the async driver
+/// ([`AsyncConnection`](crate::async_connection::AsyncConnection)).
 pub struct Connection<T, W, F = Datagram2Framing> {
     link: Link<T, W, F>,
     providers: Providers<T, W, F>,
@@ -660,6 +683,28 @@ mod tests {
         assert!(matches!(state.receive(&framing, &reply(outer)), Ok(Event::Reply { .. })));
         assert!(!state.is_waiting());
         assert_eq!(state.receive(&framing, &reply(99)), Ok(Event::Stale));
+    }
+
+    #[test]
+    fn an_unordered_state_takes_replies_in_any_order() {
+        let framing = Datagram2Framing;
+        let mut state = State::unordered();
+        let mut out = Vec::new();
+        let first = state
+            .encode_request(&framing, 0, Call::from(0), &(), &Unit, true, &mut out)
+            .unwrap();
+        let second = state
+            .encode_request(&framing, 0, Call::from(0), &(), &Unit, true, &mut out)
+            .unwrap();
+        let reply = |id| {
+            let mut frame = Vec::new();
+            framing.encode_reply(0, id, &Envelope::Ok(b""), &mut frame);
+            frame
+        };
+        assert!(matches!(state.receive(&framing, &reply(first)), Ok(Event::Reply { request_id, .. }) if request_id == first));
+        assert!(matches!(state.receive(&framing, &reply(second)), Ok(Event::Reply { .. })));
+        assert_eq!(state.receive(&framing, &reply(first)), Ok(Event::Stale));
+        assert!(!state.is_waiting());
     }
 
     #[test]
