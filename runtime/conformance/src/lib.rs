@@ -732,8 +732,8 @@ pub fn reference_cases() -> Vec<Vectors> {
         );
     }
 
-    feature("format-json", format_cases(FORMAT_JSON));
-    feature("format-msgpack", format_cases(FORMAT_MSGPACK));
+    feature("format-json", format_cases("format-json", FORMAT_JSON));
+    feature("format-msgpack", format_cases("format-msgpack", FORMAT_MSGPACK));
 
     for v in &mut vectors {
         v.cases.extend(rejections(&v.feature));
@@ -840,7 +840,7 @@ fn response(
 
 /// Sample values for a wire format: each scalar at its edges, then the
 /// shapes generated types take.
-fn format_cases(format: &str) -> Vec<(String, Op, serde_json::Value)> {
+fn format_cases(feature_id: &str, format: &str) -> Vec<(String, Op, serde_json::Value)> {
     let point = |x: i32, y: i32| Value::Struct {
         name: "Point".into(),
         fields: vec![("x".into(), Value::I32(x)), ("y".into(), Value::I32(y))],
@@ -914,7 +914,7 @@ fn format_cases(format: &str) -> Vec<(String, Op, serde_json::Value)> {
                 format: format.into(),
                 value,
             };
-            (format!("format-{format}/{id}"), Op::Encode, to_json(&input))
+            (format!("{feature_id}/{id}"), Op::Encode, to_json(&input))
         })
         .collect()
 }

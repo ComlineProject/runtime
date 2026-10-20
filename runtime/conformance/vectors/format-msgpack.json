@@ -2,7 +2,7 @@
   "feature": "format-msgpack",
   "cases": [
     {
-      "id": "format-msgpack@1/bool-true",
+      "id": "format-msgpack/bool-true",
       "op": "encode",
       "input": {
         "format": "msgpack@1",
@@ -13,7 +13,7 @@
       "bytes": "c3"
     },
     {
-      "id": "format-msgpack@1/bool-false",
+      "id": "format-msgpack/bool-false",
       "op": "encode",
       "input": {
         "format": "msgpack@1",
@@ -24,7 +24,7 @@
       "bytes": "c2"
     },
     {
-      "id": "format-msgpack@1/u8-max",
+      "id": "format-msgpack/u8-max",
       "op": "encode",
       "input": {
         "format": "msgpack@1",
@@ -35,7 +35,7 @@
       "bytes": "ccff"
     },
     {
-      "id": "format-msgpack@1/u16-max",
+      "id": "format-msgpack/u16-max",
       "op": "encode",
       "input": {
         "format": "msgpack@1",
@@ -46,7 +46,7 @@
       "bytes": "cdffff"
     },
     {
-      "id": "format-msgpack@1/u32-max",
+      "id": "format-msgpack/u32-max",
       "op": "encode",
       "input": {
         "format": "msgpack@1",
@@ -57,7 +57,7 @@
       "bytes": "ceffffffff"
     },
     {
-      "id": "format-msgpack@1/u64-small",
+      "id": "format-msgpack/u64-small",
       "op": "encode",
       "input": {
         "format": "msgpack@1",
@@ -68,7 +68,7 @@
       "bytes": "07"
     },
     {
-      "id": "format-msgpack@1/u64-above-2-53",
+      "id": "format-msgpack/u64-above-2-53",
       "op": "encode",
       "input": {
         "format": "msgpack@1",
@@ -79,7 +79,7 @@
       "bytes": "cf0020000000000001"
     },
     {
-      "id": "format-msgpack@1/u64-max",
+      "id": "format-msgpack/u64-max",
       "op": "encode",
       "input": {
         "format": "msgpack@1",
@@ -90,7 +90,7 @@
       "bytes": "cfffffffffffffffff"
     },
     {
-      "id": "format-msgpack@1/i8-min",
+      "id": "format-msgpack/i8-min",
       "op": "encode",
       "input": {
         "format": "msgpack@1",
@@ -101,7 +101,7 @@
       "bytes": "d080"
     },
     {
-      "id": "format-msgpack@1/i16-min",
+      "id": "format-msgpack/i16-min",
       "op": "encode",
       "input": {
         "format": "msgpack@1",
@@ -112,7 +112,7 @@
       "bytes": "d18000"
     },
     {
-      "id": "format-msgpack@1/i32-min",
+      "id": "format-msgpack/i32-min",
       "op": "encode",
       "input": {
         "format": "msgpack@1",
@@ -123,7 +123,7 @@
       "bytes": "d280000000"
     },
     {
-      "id": "format-msgpack@1/i64-min",
+      "id": "format-msgpack/i64-min",
       "op": "encode",
       "input": {
         "format": "msgpack@1",
@@ -134,7 +134,7 @@
       "bytes": "d38000000000000000"
     },
     {
-      "id": "format-msgpack@1/f64-fraction",
+      "id": "format-msgpack/f64-fraction",
       "op": "encode",
       "input": {
         "format": "msgpack@1",
@@ -145,7 +145,7 @@
       "bytes": "cbbfd0000000000000"
     },
     {
-      "id": "format-msgpack@1/f64-integral",
+      "id": "format-msgpack/f64-integral",
       "op": "encode",
       "input": {
         "format": "msgpack@1",
@@ -156,7 +156,7 @@
       "bytes": "cb3ff0000000000000"
     },
     {
-      "id": "format-msgpack@1/string-empty",
+      "id": "format-msgpack/string-empty",
       "op": "encode",
       "input": {
         "format": "msgpack@1",
@@ -167,7 +167,7 @@
       "bytes": "a0"
     },
     {
-      "id": "format-msgpack@1/string-unicode",
+      "id": "format-msgpack/string-unicode",
       "op": "encode",
       "input": {
         "format": "msgpack@1",
@@ -178,7 +178,7 @@
       "bytes": "b468c3a96c6c6f202277c3b6726c642220e29c930a"
     },
     {
-      "id": "format-msgpack@1/array-empty",
+      "id": "format-msgpack/array-empty",
       "op": "encode",
       "input": {
         "format": "msgpack@1",
@@ -189,7 +189,7 @@
       "bytes": "90"
     },
     {
-      "id": "format-msgpack@1/array-u8",
+      "id": "format-msgpack/array-u8",
       "op": "encode",
       "input": {
         "format": "msgpack@1",
@@ -210,7 +210,7 @@
       "bytes": "93010203"
     },
     {
-      "id": "format-msgpack@1/option-none",
+      "id": "format-msgpack/option-none",
       "op": "encode",
       "input": {
         "format": "msgpack@1",
@@ -221,7 +221,7 @@
       "bytes": "c0"
     },
     {
-      "id": "format-msgpack@1/option-some",
+      "id": "format-msgpack/option-some",
       "op": "encode",
       "input": {
         "format": "msgpack@1",
@@ -234,7 +234,7 @@
       "bytes": "05"
     },
     {
-      "id": "format-msgpack@1/struct",
+      "id": "format-msgpack/struct",
       "op": "encode",
       "input": {
         "format": "msgpack@1",
@@ -261,7 +261,7 @@
       "bytes": "9201fe"
     },
     {
-      "id": "format-msgpack@1/struct-nested",
+      "id": "format-msgpack/struct-nested",
       "op": "encode",
       "input": {
         "format": "msgpack@1",
@@ -338,7 +338,7 @@
       "bytes": "94920000920304a46469616791a161"
     },
     {
-      "id": "format-msgpack@1/struct-optional-none",
+      "id": "format-msgpack/struct-optional-none",
       "op": "encode",
       "input": {
         "format": "msgpack@1",
@@ -365,7 +365,7 @@
       "bytes": "9201c0"
     },
     {
-      "id": "format-msgpack@1/enum-unit-variant",
+      "id": "format-msgpack/enum-unit-variant",
       "op": "encode",
       "input": {
         "format": "msgpack@1",
