@@ -188,6 +188,11 @@ pub enum Op {
     Response,
     /// `{format, value}` → the encoded value. Encode only.
     Encode,
+    /// `{format, type, value}`: decoding `bytes` as `type` gives `value`.
+    /// Decode only: the bytes were written by a different type (a field
+    /// more, a variant reordered), which is what a profile fact is about.
+    /// A rejection's input is `{format, type}`.
+    Decode,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
@@ -277,9 +282,124 @@ struct EncodeIn {
     value: Value,
 }
 
+/// A type a `decode` case reads into, described so any runtime can build a
+/// reader for it: a struct's fields in order, an enum's variants in order.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum Type {
+    U32,
+    I32,
+    String,
+    Option(Box<Type>),
+    Struct {
+        name: String,
+        fields: Vec<(String, Type)>,
+    },
+    Enum {
+        name: String,
+        variants: Vec<String>,
+    },
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+struct DecodeIn {
+    format: String,
+    #[serde(rename = "type")]
+    ty: Type,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    value: Option<Value>,
+}
+
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 struct FramingIn {
     framing: String,
+}
+
+/// An encoding's profile (`profiles/<name>.json`): facts about how it
+/// encodes, which the version comparison turns into bumps. Each fact names
+/// the vector cases that prove it.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct Profile {
+    pub name: String,
+    pub kind: ProfileKind,
+    pub facts: BTreeMap<String, Fact>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ProfileKind {
+    Format,
+    Framing,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct Fact {
+    pub value: String,
+    pub proven_by: Vec<String>,
+}
+
+impl ProfileKind {
+    /// Every fact a profile of this kind states, with the values it may
+    /// take. The set is fixed: a new fact is a change to the comparison too.
+    pub fn facts(self) -> &'static [(&'static str, &'static [&'static str])] {
+        match self {
+            ProfileKind::Format => &[
+                ("struct_fields", &["by_position", "by_name"]),
+                ("unknown_field", &["rejected", "ignored"]),
+                ("missing_optional", &["rejected", "absent"]),
+                ("enum_variants", &["by_name", "by_index"]),
+                ("unknown_variant", &["rejected", "tolerated"]),
+                ("integer_width", &["by_value", "exact"]),
+            ],
+            ProfileKind::Framing => &[
+                ("calls", &["by_index", "by_name", "by_id"]),
+                ("errors", &["by_ordinal", "by_name"]),
+            ],
+        }
+    }
+}
+
+/// Whether `cases` (a fact's `proven_by`, in order) show `value` for
+/// `fact`, beyond passing: a rejection where the fact says rejected, the
+/// decoded value where it says by name or by position.
+pub fn fact_shown(fact: &str, value: &str, cases: &[&Case]) -> Result<(), String> {
+    let decoded = |case: &Case| -> Option<Value> {
+        serde_json::from_value::<DecodeIn>(case.input.clone())
+            .ok()?
+            .value
+    };
+    let rejected = |case: &Case| case.expect == Expect::Reject;
+    let first = cases.first().ok_or("no proving case")?;
+    let point = |x: i32, y: i32| Value::Struct {
+        name: "Point".into(),
+        fields: vec![("x".into(), Value::I32(x)), ("y".into(), Value::I32(y))],
+    };
+    let shown = match (fact, value) {
+        ("struct_fields", "by_name") => decoded(first) == Some(point(1, -2)),
+        ("struct_fields", "by_position") => decoded(first) == Some(point(-2, 1)),
+        ("enum_variants", "by_name") => {
+            matches!(decoded(first), Some(Value::UnitVariant { ref variant, .. }) if variant == "Green")
+        }
+        ("enum_variants", "by_index") => {
+            matches!(decoded(first), Some(Value::UnitVariant { ref variant, .. }) if variant == "Red")
+        }
+        ("unknown_field" | "missing_optional" | "unknown_variant", "rejected") => rejected(first),
+        ("unknown_field", "ignored")
+        | ("missing_optional", "absent")
+        | ("unknown_variant", "tolerated") => !rejected(first),
+        ("integer_width", "by_value") => {
+            cases.len() == 2 && !rejected(cases[0]) && rejected(cases[1])
+        }
+        // Shown by the cases passing: the framing carries the call and the
+        // error that way, and decoding reads them back.
+        ("calls" | "errors", _) => true,
+        _ => return Err(format!("no check for `{fact}: {value}`")),
+    };
+    if shown {
+        Ok(())
+    } else {
+        Err(format!("its cases don't show `{fact}: {value}`"))
+    }
 }
 
 /// A feature of the wire contract, from the corpus's `features.json`.
@@ -464,6 +584,7 @@ fn encode(op: Op, input: &serde_json::Value) -> Result<Vec<u8>, Outcome> {
             return encode_with(&i.format, &i.value)
                 .ok_or_else(|| Outcome::NotImplemented(format!("format `{}`", i.format)));
         }
+        Op::Decode => return Err(Outcome::Fail("`decode` cases are decode only".into())),
     }
     Ok(out)
 }
@@ -478,6 +599,16 @@ fn decode(
     let json = |v: serde_json::Value| -> Result<Option<serde_json::Value>, Outcome> { Ok(Some(v)) };
     match op {
         Op::NameHash | Op::Encode => Ok(None),
+        Op::Decode => {
+            let i: DecodeIn = parse(input)?;
+            Ok(decode_as(&i.format, &i.ty, bytes)?.map(|value| {
+                to_json(&DecodeIn {
+                    format: i.format,
+                    ty: i.ty,
+                    value: Some(value),
+                })
+            }))
+        }
         Op::Handshake => {
             let Some(h) = Handshake::decode(bytes) else {
                 return Ok(None);
@@ -593,16 +724,18 @@ fn run_inner(case: &Case) -> Result<(), Outcome> {
         };
     }
 
-    let encoded = encode(case.op, &case.input)?;
-    if &encoded != bytes {
-        return Err(Outcome::Fail(format!(
-            "encodes to {}, expected {}",
-            to_json(&Hex(encoded)),
-            to_json(&case.bytes),
-        )));
-    }
-    if matches!(case.op, Op::NameHash | Op::Encode) {
-        return Ok(());
+    if case.op != Op::Decode {
+        let encoded = encode(case.op, &case.input)?;
+        if &encoded != bytes {
+            return Err(Outcome::Fail(format!(
+                "encodes to {}, expected {}",
+                to_json(&Hex(encoded)),
+                to_json(&case.bytes),
+            )));
+        }
+        if matches!(case.op, Op::NameHash | Op::Encode) {
+            return Ok(());
+        }
     }
     match decode(case.op, &case.input, bytes)? {
         Some(got) if got == case.input => Ok(()),
@@ -733,10 +866,20 @@ pub fn reference_cases() -> Vec<Vectors> {
     }
 
     feature("format-json", format_cases("format-json", FORMAT_JSON));
-    feature("format-msgpack", format_cases("format-msgpack", FORMAT_MSGPACK));
+    feature(
+        "format-msgpack",
+        format_cases("format-msgpack", FORMAT_MSGPACK),
+    );
 
     for v in &mut vectors {
         v.cases.extend(rejections(&v.feature));
+        match v.feature.as_str() {
+            "format-json" => v.cases.extend(decode_cases("format-json", FORMAT_JSON)),
+            "format-msgpack" => v
+                .cases
+                .extend(decode_cases("format-msgpack", FORMAT_MSGPACK)),
+            _ => {}
+        }
     }
     vectors
 }
@@ -917,6 +1060,215 @@ fn format_cases(feature_id: &str, format: &str) -> Vec<(String, Op, serde_json::
             (format!("{feature_id}/{id}"), Op::Encode, to_json(&input))
         })
         .collect()
+}
+
+// --- Decoding what another version wrote ---
+
+/// The types `decode` cases read into, as generated code declares them:
+/// plain `serde` derives, nothing added. Decoding through them is what makes
+/// a case prove how generated code behaves, not how a hand-written decoder
+/// would.
+mod readers {
+    use serde::Deserialize;
+
+    #[derive(Deserialize)]
+    pub struct Point {
+        pub x: i32,
+        pub y: i32,
+    }
+
+    #[derive(Deserialize)]
+    pub struct Tagged {
+        pub id: u32,
+        pub label: Option<String>,
+    }
+
+    #[derive(Deserialize)]
+    pub enum Color {
+        Red,
+        Green,
+        Blue,
+    }
+}
+
+fn point_type() -> Type {
+    Type::Struct {
+        name: "Point".into(),
+        fields: vec![("x".into(), Type::I32), ("y".into(), Type::I32)],
+    }
+}
+
+fn tagged_type() -> Type {
+    Type::Struct {
+        name: "Tagged".into(),
+        fields: vec![
+            ("id".into(), Type::U32),
+            ("label".into(), Type::Option(Box::new(Type::String))),
+        ],
+    }
+}
+
+fn color_type() -> Type {
+    Type::Enum {
+        name: "Color".into(),
+        variants: vec!["Red".into(), "Green".into(), "Blue".into()],
+    }
+}
+
+fn decode_with<T: for<'de> Deserialize<'de>>(
+    format: &str,
+    bytes: &[u8],
+) -> Result<Option<T>, Outcome> {
+    match format {
+        FORMAT_JSON => Ok(Json.decode(bytes).ok()),
+        FORMAT_MSGPACK => Ok(MsgPack.decode(bytes).ok()),
+        other => Err(Outcome::NotImplemented(format!("format `{other}`"))),
+    }
+}
+
+/// Decodes `bytes` as `ty` through the reader generated code would have;
+/// `Ok(None)` when the format refuses them.
+fn decode_as(format: &str, ty: &Type, bytes: &[u8]) -> Result<Option<Value>, Outcome> {
+    let point = |p: readers::Point| Value::Struct {
+        name: "Point".into(),
+        fields: vec![("x".into(), Value::I32(p.x)), ("y".into(), Value::I32(p.y))],
+    };
+    let tagged = |t: readers::Tagged| Value::Struct {
+        name: "Tagged".into(),
+        fields: vec![
+            ("id".into(), Value::U32(t.id)),
+            (
+                "label".into(),
+                Value::Option(t.label.map(|l| Box::new(Value::String(l)))),
+            ),
+        ],
+    };
+    let color = |c: readers::Color| {
+        let (index, variant) = match c {
+            readers::Color::Red => (0, "Red"),
+            readers::Color::Green => (1, "Green"),
+            readers::Color::Blue => (2, "Blue"),
+        };
+        Value::UnitVariant {
+            enum_name: "Color".into(),
+            index,
+            variant: variant.into(),
+        }
+    };
+    Ok(if *ty == Type::U32 {
+        decode_with::<u32>(format, bytes)?.map(Value::U32)
+    } else if *ty == point_type() {
+        decode_with(format, bytes)?.map(point)
+    } else if *ty == tagged_type() {
+        decode_with(format, bytes)?.map(tagged)
+    } else if *ty == color_type() {
+        decode_with(format, bytes)?.map(color)
+    } else {
+        return Err(Outcome::NotImplemented(format!(
+            "a reader for {}",
+            to_json(ty)
+        )));
+    })
+}
+
+/// Bytes `written` encodes to, read back as `ty`: an exact case with the
+/// value the runtime decoded, or a rejection if it refused them.
+fn decode_case(id: String, format: &str, written: &Value, ty: Type) -> Case {
+    let bytes = encode_with(format, written).expect("reference formats encode");
+    match decode_as(format, &ty, &bytes) {
+        Ok(Some(value)) => Case {
+            id,
+            op: Op::Decode,
+            input: to_json(&DecodeIn {
+                format: format.into(),
+                ty,
+                value: Some(value),
+            }),
+            bytes: Hex(bytes),
+            expect: Expect::Exact,
+            compare: Compare::Bytes,
+        },
+        Ok(None) => reject(
+            &id,
+            Op::Decode,
+            to_json(&DecodeIn {
+                format: format.into(),
+                ty,
+                value: None,
+            }),
+            &bytes,
+        ),
+        Err(outcome) => panic!("reference case `{id}` doesn't decode: {outcome:?}"),
+    }
+}
+
+/// What a newer or older peer wrote, read by today's types: the cases an
+/// encoding profile's facts point to.
+fn decode_cases(feature_id: &str, format: &str) -> Vec<Case> {
+    let structure = |name: &str, fields: Vec<(&str, Value)>| Value::Struct {
+        name: name.into(),
+        fields: fields.into_iter().map(|(f, v)| (f.into(), v)).collect(),
+    };
+    let variant = |index: u32, variant: &str| Value::UnitVariant {
+        enum_name: "Color".into(),
+        index,
+        variant: variant.into(),
+    };
+    let p = |id: &str| format!("{feature_id}/{id}");
+    vec![
+        // Written with the fields the other way round: by name, x stays 1;
+        // by position, x reads the written y.
+        decode_case(
+            p("decode-fields-reordered"),
+            format,
+            &structure("Point", vec![("y", Value::I32(-2)), ("x", Value::I32(1))]),
+            point_type(),
+        ),
+        // Written with a field this reader doesn't have.
+        decode_case(
+            p("decode-unknown-field"),
+            format,
+            &structure(
+                "Point",
+                vec![
+                    ("x", Value::I32(1)),
+                    ("y", Value::I32(-2)),
+                    ("z", Value::I32(5)),
+                ],
+            ),
+            point_type(),
+        ),
+        // Written before the optional `label` existed.
+        decode_case(
+            p("decode-missing-optional"),
+            format,
+            &structure("Tagged", vec![("id", Value::U32(1))]),
+            tagged_type(),
+        ),
+        // Written by an enum where `Green` came first: by name it's still
+        // Green; by index it would read as Red.
+        decode_case(
+            p("decode-variant-reordered"),
+            format,
+            &variant(0, "Green"),
+            color_type(),
+        ),
+        // Written by an enum with a variant this reader doesn't have.
+        decode_case(
+            p("decode-unknown-variant"),
+            format,
+            &variant(3, "Purple"),
+            color_type(),
+        ),
+        // A `u64` field read as `u32`: decodes while the value fits.
+        decode_case(p("decode-wider-integer"), format, &Value::U64(7), Type::U32),
+        decode_case(
+            p("decode-wider-integer-overflow"),
+            format,
+            &Value::U64(1 << 40),
+            Type::U32,
+        ),
+    ]
 }
 
 /// Bytes a runtime must refuse, per feature.

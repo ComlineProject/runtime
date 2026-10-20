@@ -40,7 +40,14 @@
         "format-json/struct",
         "format-json/struct-nested",
         "format-json/struct-optional-none",
-        "format-json/enum-unit-variant"
+        "format-json/enum-unit-variant",
+        "format-json/decode-fields-reordered",
+        "format-json/decode-unknown-field",
+        "format-json/decode-missing-optional",
+        "format-json/decode-variant-reordered",
+        "format-json/decode-unknown-variant",
+        "format-json/decode-wider-integer",
+        "format-json/decode-wider-integer-overflow"
       ]
     },
     "format-msgpack": {
@@ -69,7 +76,14 @@
         "format-msgpack/struct",
         "format-msgpack/struct-nested",
         "format-msgpack/struct-optional-none",
-        "format-msgpack/enum-unit-variant"
+        "format-msgpack/enum-unit-variant",
+        "format-msgpack/decode-fields-reordered",
+        "format-msgpack/decode-unknown-field",
+        "format-msgpack/decode-missing-optional",
+        "format-msgpack/decode-variant-reordered",
+        "format-msgpack/decode-unknown-variant",
+        "format-msgpack/decode-wider-integer",
+        "format-msgpack/decode-wider-integer-overflow"
       ]
     },
     "framing-datagram": {

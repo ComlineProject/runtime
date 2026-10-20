@@ -13,8 +13,10 @@ use std::collections::BTreeMap;
 use std::fs;
 use std::path::{Path, PathBuf};
 
+use comline_runtime::contract::{FORMAT_JSON, FORMAT_MSGPACK, FRAMING_DATAGRAM, FRAMING_JSONRPC};
 use comline_runtime_conformance::{
-    reference_cases, render, run, Features, Outcome, ProvenClaim, Report, State, Support, Vectors,
+    fact_shown, reference_cases, render, run, Case, Features, Outcome, Profile, ProvenClaim,
+    Report, State, Support, Vectors,
 };
 
 fn root() -> PathBuf {
@@ -194,4 +196,73 @@ fn rust_support_is_proven() {
         "{}\nIf only the report is stale: CONFORMANCE_BLESS=1 cargo test -p comline-runtime-conformance",
         problems.join("\n")
     );
+}
+
+/// Every official encoding has a profile, every profile states exactly its
+/// kind's facts with allowed values, and every fact is proven: its cases
+/// exist, pass against `comline-runtime`, and show the stated value.
+#[test]
+fn profiles_are_proven() {
+    let vectors: Vec<Vectors> = reference_cases();
+    let case =
+        |id: &str| -> Option<&Case> { vectors.iter().flat_map(|v| &v.cases).find(|c| c.id == id) };
+    let mut problems = Vec::new();
+
+    let names = [
+        FORMAT_JSON,
+        FORMAT_MSGPACK,
+        FRAMING_DATAGRAM,
+        FRAMING_JSONRPC,
+    ];
+    for name in names {
+        let path = root().join("profiles").join(format!("{name}.json"));
+        if !path.exists() {
+            problems.push(format!("`{name}` has no profile"));
+            continue;
+        }
+        let profile: Profile = read(&path);
+        if profile.name != name {
+            problems.push(format!("{} names `{}`", path.display(), profile.name));
+        }
+        let expected = profile.kind.facts();
+        for (fact, values) in expected {
+            let Some(stated) = profile.facts.get(*fact) else {
+                problems.push(format!("`{name}` doesn't state `{fact}`"));
+                continue;
+            };
+            if !values.contains(&stated.value.as_str()) {
+                problems.push(format!(
+                    "`{name}`: `{fact}` is `{}`, expected one of {values:?}",
+                    stated.value
+                ));
+            }
+            if stated.proven_by.is_empty() {
+                problems.push(format!("`{name}`: `{fact}` has no proving case"));
+            }
+            let mut proving = Vec::new();
+            for id in &stated.proven_by {
+                match case(id) {
+                    None => problems.push(format!("`{name}`: `{fact}` names unknown case `{id}`")),
+                    Some(c) => match run(c) {
+                        Outcome::Pass => proving.push(c),
+                        other => {
+                            problems.push(format!("`{name}`: `{fact}`'s case `{id}`: {other:?}"))
+                        }
+                    },
+                }
+            }
+            if proving.len() == stated.proven_by.len() {
+                if let Err(e) = fact_shown(fact, &stated.value, &proving) {
+                    problems.push(format!("`{name}`: `{fact}`: {e}"));
+                }
+            }
+        }
+        for fact in profile.facts.keys() {
+            if !expected.iter().any(|(f, _)| f == fact) {
+                problems.push(format!("`{name}` states unknown fact `{fact}`"));
+            }
+        }
+    }
+
+    assert!(problems.is_empty(), "{}", problems.join("\n"));
 }
