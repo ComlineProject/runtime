@@ -8,21 +8,26 @@
 
 mod buf;
 mod call;
+mod connection_framing;
 mod dispatch;
 mod envelope;
 mod error;
 mod framing;
 mod handshake;
+mod peer;
 mod wire;
 
 pub use buf::{BufMut, SliceBuf};
 pub use call::{CallError, Fault};
+pub use connection_framing::{ConnectionFraming, Datagram2Framing, Frame, ProtocolNumber};
 pub use dispatch::{Dispatch, Kind, Outcome, Reply};
 pub use envelope::Envelope;
 pub use error::RuntimeError;
 pub use framing::{Call, DatagramFraming, Framing, Request, RequestCall};
 pub use handshake::{
-    name_hash, HandshakeFrame, FORMAT_JSON, FORMAT_MSGPACK, FRAMING_DATAGRAM, FRAMING_JSONRPC,
+    name_hash, HandshakeFrame, FORMAT_JSON, FORMAT_MSGPACK, FRAMING_DATAGRAM, FRAMING_DATAGRAM2,
+    FRAMING_JSONRPC,
     HANDSHAKE_COMLINE, HANDSHAKE_NONE,
 };
+pub use peer::{ConnectionId, Peer};
 pub use wire::WireFormat;

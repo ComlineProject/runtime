@@ -12,6 +12,11 @@ const LEN: usize = 2 + 1 + 8 + 8 + 8 + 4;
 /// Name of the Comline datagram framing (`wire::encode_request` /
 /// `encode_response`). Pass it to [`HandshakeFrame::new`].
 pub const FRAMING_DATAGRAM: &str = "datagram@1";
+/// Name of the Comline datagram framing with a request/reply kind and a
+/// protocol number (`contract::Datagram2Framing`), for a
+/// [`Connection`](crate::connection::Connection).
+pub const FRAMING_DATAGRAM2: &str = "datagram@2";
+
 /// Name of the JSON-RPC 2.0 framing (`framing::JsonRpcFraming`).
 pub const FRAMING_JSONRPC: &str = "jsonrpc@1";
 /// Name of the JSON wire format (`format::Json`).

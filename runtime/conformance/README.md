@@ -6,8 +6,8 @@ reproduce, and the Rust runtime's proof that it does.
 ## The corpus
 
 - [`features.json`](features.json): the wire features, with stable ids:
-  `name-hash`, `handshake`, `envelope`, `framing-datagram`, `framing-jsonrpc`,
-  `format-json` and `format-msgpack`.
+  `name-hash`, `handshake`, `envelope`, `framing-datagram`, `framing-datagram2`,
+  `framing-jsonrpc`, `format-json` and `format-msgpack`.
 - `vectors/<feature>.json`: that feature's cases.
 
 A case is one operation and the bytes it must produce:
@@ -107,7 +107,8 @@ vectors, and the docs' language reference is rendered from it.
 ## Encoding profiles
 
 [`profiles/`](profiles) holds one profile per official encoding name
-(`json@1.json`, `msgpack@1.json`, `datagram@1.json`, `jsonrpc@1.json`): facts
+(`json@1.json`, `msgpack@1.json`, `datagram@1.json`, `datagram@2.json`,
+`jsonrpc@1.json`): facts
 about how it encodes, which the version comparison turns into bumps. A format
 states `struct_fields`, `unknown_field`, `missing_optional`, `enum_variants`,
 `unknown_variant` and `integer_width`; a framing states `calls` and `errors`.

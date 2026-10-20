@@ -1,8 +1,10 @@
 # comline-runtime
 
 The Comline RPC/IPC runtime — the surface-4 contract (`Dispatch`, `WireFormat`,
-`Envelope`, `Handshake`, …), framing, transports, and the `Client` / `Server`
-call path. `no_std`-first; `alloc` and `std` are additive features.
+`Envelope`, `Handshake`, …), framing, transports, the `Client` / `Server`
+call path, and `Connection`, which carries calls in both directions and several
+protocols over `datagram@2`. `no_std`-first; `alloc` and `std` are additive
+features.
 
 Generated protocol code (`comline-codegen-<lang>` output) links this crate.
 
