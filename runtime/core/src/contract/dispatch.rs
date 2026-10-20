@@ -1,4 +1,4 @@
-use crate::contract::{BufMut, RuntimeError, WireFormat};
+use crate::contract::{BufMut, Peer, RuntimeError, WireFormat};
 
 /// How a call is addressed on the wire.
 ///
@@ -103,6 +103,21 @@ pub trait Dispatch {
         format: &W,
         reply: &mut Reply,
     ) -> Result<(), RuntimeError>;
+
+    /// [`dispatch`](Self::dispatch) on a
+    /// [`Connection`](crate::connection::Connection), with a handle to the
+    /// peer that made the call, so a handler can call it back (the peer
+    /// keeps being served while this side waits). The format is the peer's,
+    /// [`Peer::format`]. The default ignores the peer.
+    fn dispatch_with<P: Peer>(
+        &self,
+        call: Kind,
+        params: &[u8],
+        reply: &mut Reply,
+        peer: &mut P,
+    ) -> Result<(), RuntimeError> {
+        self.dispatch(call, params, peer.format(), reply)
+    }
 }
 
 #[cfg(test)]

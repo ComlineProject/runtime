@@ -68,6 +68,15 @@ impl<'a> Envelope<'a> {
     pub fn encode_fault(out: &mut dyn BufMut) {
         out.put_u8(TAG_FAULT);
     }
+
+    /// Write this envelope, whichever case it is.
+    pub fn encode(&self, out: &mut dyn BufMut) {
+        match self {
+            Envelope::Ok(payload) => Self::encode_ok(payload, out),
+            Envelope::Err { id, body } => Self::encode_err(*id, body, out),
+            Envelope::Fault => Self::encode_fault(out),
+        }
+    }
 }
 
 #[cfg(all(test, feature = "alloc"))]
