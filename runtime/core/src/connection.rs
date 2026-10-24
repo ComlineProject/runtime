@@ -6,7 +6,10 @@
 //! the peer's requests (so calls nest: a handler can call back the peer that
 //! called it), and several protocols share the connection, each under its
 //! [`ProtocolNumber`]. It needs a [`ConnectionFraming`], whose frames say
-//! whether they're a request or a reply: [`Datagram2Framing`] (`datagram@2`).
+//! whether they're a request or a reply: [`Datagram2Framing`] (`datagram@2`),
+//! or [`JsonRpcFraming`](crate::framing::JsonRpcFraming), whose requests name
+//! only their method, so the protocol is the one this side provides with a
+//! call by that name.
 //!
 //! Two layers:
 //! - [`State`] is the transport-independent core: it hands out request ids,
@@ -43,11 +46,15 @@ use crate::transport::Transport;
 /// What a received frame means for this side.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Event<'f> {
-    /// The peer calls `protocol` on this side; answer with
+    /// The peer calls `protocol` on this side (or, when the framing names
+    /// only the call, whichever protocol has it); answer with
     /// [`State::encode_reply`] unless the call is one-way.
     Request {
-        protocol: ProtocolNumber,
+        protocol: Option<ProtocolNumber>,
         request: Request<'f>,
+        /// The frame asked for no reply: send none, whatever the handler
+        /// returns.
+        one_way: bool,
     },
     /// The reply to the innermost call this side is waiting on.
     Reply {
@@ -104,7 +111,7 @@ impl State {
         let request_id = self.next_id;
         self.next_id = self.next_id.wrapping_add(1);
         out.clear();
-        framing.encode_request(protocol, call, request_id, params, format, out)?;
+        framing.encode_request(protocol, call, request_id, !expects_reply, params, format, out)?;
         if expects_reply {
             self.waiting.push(request_id);
         }
@@ -133,7 +140,7 @@ impl State {
         frame: &'f [u8],
     ) -> Result<Event<'f>, RuntimeError> {
         match framing.decode(frame).ok_or(RuntimeError::Framing)? {
-            Frame::Request { protocol, request } => Ok(Event::Request { protocol, request }),
+            Frame::Request { protocol, request, one_way } => Ok(Event::Request { protocol, request, one_way }),
             Frame::Reply { request_id, envelope, .. } => {
                 if self.unordered {
                     return Ok(match self.waiting.iter().position(|&id| id == request_id) {
@@ -250,6 +257,33 @@ struct Link<T, W, F> {
 /// This side's providers, by protocol number.
 struct Providers<T, W, F> {
     table: Vec<Option<BoxedProvider<T, W, F>>>,
+}
+
+impl<T, W, F> Providers<T, W, F> {
+    /// The provider a request is for, and its call's index there.
+    fn find(
+        &self,
+        protocol: Option<ProtocolNumber>,
+        call: RequestCall<'_>,
+    ) -> Option<(ProtocolNumber, &dyn Provider<T, W, F>, u16)> {
+        let numbers = match protocol {
+            Some(number) => usize::from(number)..usize::from(number) + 1,
+            None => 0..self.table.len(),
+        };
+        numbers.into_iter().find_map(|number| {
+            let provider = self.table.get(number)?.as_deref()?;
+            let index = call_index(call, provider.calls())?;
+            Some((ProtocolNumber::try_from(number).ok()?, provider, index))
+        })
+    }
+}
+
+/// `call`'s index among `calls`: its id, or its name's position.
+pub(crate) fn call_index(call: RequestCall<'_>, calls: &[&str]) -> Option<u16> {
+    match call {
+        RequestCall::Id(id) => Some(id),
+        RequestCall::Name(name) => calls.iter().position(|c| *c == name).map(|i| i as u16),
+    }
 }
 
 type BoxedProvider<T, W, F> = Box<dyn Provider<T, W, F>>;
@@ -581,8 +615,8 @@ impl<T: Transport, W: WireFormat, F: ConnectionFraming> Link<T, W, F> {
         // request's bytes move out of `recv` while it runs.
         let frame = core::mem::take(&mut self.recv);
         let handled = match self.state.receive(&self.framing, &frame) {
-            Ok(Event::Request { protocol, request }) => {
-                self.serve_request(providers, protocol, request).map(|()| None)
+            Ok(Event::Request { protocol, request, one_way }) => {
+                self.serve_request(providers, protocol, request, one_way).map(|()| None)
             }
             Ok(Event::Reply { request_id, .. }) => Ok(Some(request_id)),
             Ok(Event::Stale) => Ok(None),
@@ -595,45 +629,33 @@ impl<T: Transport, W: WireFormat, F: ConnectionFraming> Link<T, W, F> {
     fn serve_request(
         &mut self,
         providers: &Providers<T, W, F>,
-        protocol: ProtocolNumber,
+        protocol: Option<ProtocolNumber>,
         request: Request<'_>,
+        one_way: bool,
     ) -> Result<(), RuntimeError> {
         let mut body = core::mem::take(&mut self.body);
         body.clear();
+        let target = providers.find(protocol, request.call);
         let outcome = {
             let mut reply = Reply::new(&mut body);
-            let provider = providers
-                .table
-                .get(usize::from(protocol))
-                .and_then(Option::as_deref);
-            let dispatched = match provider {
-                Some(provider) => {
-                    let index = match request.call {
-                        RequestCall::Id(id) => Some(id),
-                        RequestCall::Name(name) => provider
-                            .calls()
-                            .iter()
-                            .position(|c| *c == name)
-                            .map(|i| i as u16),
-                    };
-                    match index {
-                        Some(index) => {
-                            let mut handle = Handle { link: self, providers };
-                            provider
-                                .dispatch(Kind::Id(index), request.params, &mut reply, &mut handle)
-                                .map(|()| reply.outcome())
-                        }
-                        None => Err(RuntimeError::UnknownCall),
-                    }
+            let dispatched = match target {
+                Some((_, provider, index)) => {
+                    let mut handle = Handle { link: self, providers };
+                    provider
+                        .dispatch(Kind::Id(index), request.params, &mut reply, &mut handle)
+                        .map(|()| reply.outcome())
                 }
-                // A protocol this side doesn't provide: the caller hears a
-                // fault, as for an unknown call (see `Server::serve_one`).
+                // A protocol or call this side doesn't provide: the caller
+                // hears a fault, as for an unknown call (see
+                // `Server::serve_one`).
                 None => Err(RuntimeError::UnknownCall),
             };
             dispatched.unwrap_or(Outcome::Fault)
         };
+        let protocol = target.map(|(number, ..)| number).or(protocol).unwrap_or_default();
 
         let envelope = match outcome {
+            _ if one_way => None,
             Outcome::None => None,
             Outcome::Ok => Some(Envelope::Ok(&body)),
             Outcome::Err(id) => Some(Envelope::Err { id, body: &body }),

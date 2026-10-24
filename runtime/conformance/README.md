@@ -28,7 +28,7 @@ The ops, and what their `input` holds:
 | `name_hash` | `name` | the hash, 8 bytes little-endian |
 | `handshake` | `ir_hash`, `wire_format`, `framing` (names, unhashed), `capabilities` | encode and decode |
 | `envelope` | `kind`: `ok` with `payload`, `err` with `id` and `body`, or `fault` | encode and decode |
-| `request` | `framing`, `call_id`, `method`, `request_id`, `format`, `params` | encode and decode |
+| `request` | `framing`, `call_id`, `method`, `request_id`, `format`, `params`, and `one_way` when `true` | encode and decode |
 | `response` | `framing`, `request_id`, and an envelope's fields | encode and decode |
 | `encode` | `format`, `value` | encode |
 | `decode` | `format`, `type`, `value` | decode: `bytes` read as `type` give `value` |
@@ -38,6 +38,8 @@ The ops, and what their `input` holds:
   - A datagram request carries the call id but not the method name; JSON-RPC
     carries the name but not the id. Decoding takes the other from the input.
   - Decoded request params must be exactly `params` encoded in `format`.
+  - `one_way` is a one-way call on a connection: JSON-RPC sends it as a
+    notification, with no `id`, and decoding one gives `request_id` `"0"`.
 - **`"compare": "json"`:** for bytes that are JSON text (JSON values and
   JSON-RPC frames), the output must equal `bytes` as JSON (RFC 8259) rather
   than byte for byte.

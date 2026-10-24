@@ -37,10 +37,10 @@ use futures_util::stream::FuturesUnordered;
 use futures_util::{Sink, SinkExt, Stream, StreamExt};
 use serde::Serialize;
 
-use crate::connection::{Event, Extensions, State};
+use crate::connection::{call_index, Event, Extensions, State};
 use crate::contract::{
     Call, ConnectionFraming, ConnectionId, Datagram2Framing, Envelope, HandshakeFrame, Kind,
-    Outcome, ProtocolNumber, RequestCall, RuntimeError, WireFormat,
+    Outcome, ProtocolNumber, RuntimeError, WireFormat,
 };
 
 // ── transports ─────────────────────────────────────────────────────────────
@@ -468,6 +468,8 @@ where
 struct Incoming<W, F> {
     protocol: ProtocolNumber,
     request_id: u64,
+    /// The frame asked for no reply.
+    one_way: bool,
     target: Option<(Arc<dyn Provider<W, F>>, u16)>,
     params: Vec<u8>,
 }
@@ -557,26 +559,23 @@ where
                 }
             }
             Event::Stale => {}
-            Event::Request { protocol, request } => {
-                let target = self
-                    .providers
-                    .get(usize::from(protocol))
-                    .and_then(Option::as_ref)
-                    .and_then(|provider| {
-                        let index = match request.call {
-                            RequestCall::Id(id) => Some(id),
-                            RequestCall::Name(name) => provider
-                                .calls()
-                                .iter()
-                                .position(|c| *c == name)
-                                .map(|i| i as u16),
-                        }?;
-                        Some((Arc::clone(provider), index))
-                    });
+            Event::Request { protocol, request, one_way } => {
+                // By number, or, when the framing names only the call, the
+                // protocol that has a call by that name.
+                let numbers = match protocol {
+                    Some(number) => usize::from(number)..usize::from(number) + 1,
+                    None => 0..self.providers.len(),
+                };
+                let found = numbers.into_iter().find_map(|number| {
+                    let provider = self.providers.get(number)?.as_ref()?;
+                    let index = call_index(request.call, provider.calls())?;
+                    Some((ProtocolNumber::try_from(number).ok()?, Arc::clone(provider), index))
+                });
                 self.queue.push_back(Incoming {
-                    protocol,
+                    protocol: found.as_ref().map(|(number, ..)| *number).or(protocol).unwrap_or_default(),
                     request_id: request.request_id,
-                    target,
+                    one_way,
+                    target: found.map(|(_, provider, index)| (provider, index)),
                     params: request.params.to_vec(),
                 });
             }
@@ -619,6 +618,9 @@ where
                 // hears a fault.
                 None => Answer::fault(),
             };
+            if incoming.one_way {
+                return None;
+            }
             let envelope = answer.envelope()?;
             let mut frame = Vec::new();
             shared
