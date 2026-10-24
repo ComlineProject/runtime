@@ -14,15 +14,15 @@
 use std::collections::BTreeMap;
 
 use serde::de::Error as _;
-use serde::ser::{SerializeSeq, SerializeStruct};
+use serde::ser::{SerializeSeq, SerializeStruct, SerializeTuple};
 use serde::{Deserialize, Deserializer, Serialize, Serializer};
 
 use comline_runtime::contract::{
     name_hash, Call, ConnectionFraming, Datagram2Framing, DatagramFraming, Envelope, Frame,
-    Framing, HandshakeFrame, RequestCall, WireFormat, FORMAT_JSON, FORMAT_MSGPACK,
+    Framing, HandshakeFrame, RequestCall, WireFormat, FORMAT_JSON, FORMAT_MSGPACK, FORMAT_PACKED,
     FRAMING_DATAGRAM, FRAMING_DATAGRAM2, FRAMING_JSONRPC,
 };
-use comline_runtime::format::{Json, MsgPack};
+use comline_runtime::format::{Json, MsgPack, Packed};
 use comline_runtime::framing::JsonRpcFraming;
 
 /// A value as a vector states it: typed, so a runtime knows which width or
@@ -42,9 +42,13 @@ pub enum Value {
     I32(i32),
     #[serde(with = "decimal")]
     I64(i64),
+    F32(f32),
     F64(f64),
     String(String),
     Array(Vec<Value>),
+    /// A fixed-size array, `T[N]`: its length is in the type, so formats
+    /// that can leave it out do.
+    Tuple(Vec<Value>),
     Option(Option<Box<Value>>),
     Struct {
         name: String,
@@ -75,6 +79,7 @@ impl Serialize for Wire<'_> {
             Value::I16(v) => s.serialize_i16(*v),
             Value::I32(v) => s.serialize_i32(*v),
             Value::I64(v) => s.serialize_i64(*v),
+            Value::F32(v) => s.serialize_f32(*v),
             Value::F64(v) => s.serialize_f64(*v),
             Value::String(v) => s.serialize_str(v),
             Value::Array(items) => {
@@ -83,6 +88,13 @@ impl Serialize for Wire<'_> {
                     seq.serialize_element(&Wire(item))?;
                 }
                 seq.end()
+            }
+            Value::Tuple(items) => {
+                let mut tuple = s.serialize_tuple(items.len())?;
+                for item in items {
+                    tuple.serialize_element(&Wire(item))?;
+                }
+                tuple.end()
             }
             Value::Option(None) => s.serialize_none(),
             Value::Option(Some(v)) => s.serialize_some(&Wire(v)),
@@ -302,6 +314,7 @@ struct EncodeIn {
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum Type {
+    Bool,
     U32,
     I32,
     String,
@@ -405,6 +418,7 @@ pub fn fact_shown(fact: &str, value: &str, cases: &[&Case]) -> Result<(), String
         ("integer_width", "by_value") => {
             cases.len() == 2 && !rejected(cases[0]) && rejected(cases[1])
         }
+        ("integer_width", "exact") => cases.len() == 2 && cases.iter().all(|c| rejected(c)),
         // Shown by the cases passing: the framing carries the call and the
         // error that way, and decoding reads them back.
         ("calls" | "errors", _) => true,
@@ -496,6 +510,7 @@ fn encode_with(format: &str, value: &Value) -> Option<Vec<u8>> {
     match format {
         FORMAT_JSON => Json.encode(&Wire(value), &mut out),
         FORMAT_MSGPACK => MsgPack.encode(&Wire(value), &mut out),
+        FORMAT_PACKED => Packed.encode(&Wire(value), &mut out),
         _ => return None,
     }
     .ok()?;
@@ -902,6 +917,7 @@ pub fn reference_cases() -> Vec<Vectors> {
             "",
             FORMAT_JSON,
             FORMAT_MSGPACK,
+            FORMAT_PACKED,
             FRAMING_DATAGRAM,
             FRAMING_DATAGRAM2,
             FRAMING_JSONRPC,
@@ -940,6 +956,13 @@ pub fn reference_cases() -> Vec<Vectors> {
                 "handshake/msgpack-datagram2",
                 0x0102_0304_0506_0708,
                 FORMAT_MSGPACK,
+                FRAMING_DATAGRAM2,
+                0,
+            ),
+            handshake(
+                "handshake/packed-datagram2",
+                0x0102_0304_0506_0708,
+                FORMAT_PACKED,
                 FRAMING_DATAGRAM2,
                 0,
             ),
@@ -1045,6 +1068,10 @@ pub fn reference_cases() -> Vec<Vectors> {
         "format-msgpack",
         format_cases("format-msgpack", FORMAT_MSGPACK),
     );
+    feature(
+        "format-packed",
+        [format_cases("format-packed", FORMAT_PACKED), packed_cases()].concat(),
+    );
 
     for v in &mut vectors {
         v.cases.extend(rejections(&v.feature));
@@ -1053,6 +1080,9 @@ pub fn reference_cases() -> Vec<Vectors> {
             "format-msgpack" => v
                 .cases
                 .extend(decode_cases("format-msgpack", FORMAT_MSGPACK)),
+            "format-packed" => v
+                .cases
+                .extend(decode_cases("format-packed", FORMAT_PACKED)),
             _ => {}
         }
     }
@@ -1240,6 +1270,48 @@ fn format_cases(feature_id: &str, format: &str) -> Vec<(String, Op, serde_json::
         .collect()
 }
 
+/// Shapes only `packed@1` vectors carry: widths the other formats don't
+/// keep apart (`f32`), a fixed-size array, and the proposal's example.
+fn packed_cases() -> Vec<(String, Op, serde_json::Value)> {
+    let class = |index: u32, variant: &str| Value::UnitVariant {
+        enum_name: "Class".into(),
+        index,
+        variant: variant.into(),
+    };
+    let samples: Vec<(&str, Value)> = vec![
+        ("f32", Value::F32(1.5)),
+        ("u16-small", Value::U16(1)),
+        ("tuple-f32", Value::Tuple(vec![Value::F32(1.0), Value::F32(2.0)])),
+        // 300 elements: a count that takes two varint bytes.
+        ("array-two-byte-count", Value::Array(vec![Value::U8(0); 300])),
+        ("enum-first-variant", class(0, "Warrior")),
+        (
+            "struct-player",
+            Value::Struct {
+                name: "Player".into(),
+                fields: vec![
+                    ("id".into(), Value::U32(7)),
+                    ("hp".into(), Value::U16(100)),
+                    ("name".into(), Value::String("ab".into())),
+                    ("guild".into(), Value::Option(None)),
+                    ("class".into(), class(1, "Mage")),
+                    ("pos".into(), Value::Tuple(vec![Value::F32(1.0), Value::F32(2.0)])),
+                ],
+            },
+        ),
+    ];
+    samples
+        .into_iter()
+        .map(|(id, value)| {
+            let input = EncodeIn {
+                format: FORMAT_PACKED.into(),
+                value,
+            };
+            (format!("format-packed/{id}"), Op::Encode, to_json(&input))
+        })
+        .collect()
+}
+
 // --- Decoding what another version wrote ---
 
 /// The types `decode` cases read into, as generated code declares them:
@@ -1300,6 +1372,7 @@ fn decode_with<T: for<'de> Deserialize<'de>>(
     match format {
         FORMAT_JSON => Ok(Json.decode(bytes).ok()),
         FORMAT_MSGPACK => Ok(MsgPack.decode(bytes).ok()),
+        FORMAT_PACKED => Ok(Packed.decode(bytes).ok()),
         other => Err(Outcome::NotImplemented(format!("format `{other}`"))),
     }
 }
@@ -1333,8 +1406,15 @@ fn decode_as(format: &str, ty: &Type, bytes: &[u8]) -> Result<Option<Value>, Out
             variant: variant.into(),
         }
     };
-    Ok(if *ty == Type::U32 {
+    Ok(if *ty == Type::Bool {
+        decode_with::<bool>(format, bytes)?.map(Value::Bool)
+    } else if *ty == Type::U32 {
         decode_with::<u32>(format, bytes)?.map(Value::U32)
+    } else if *ty == Type::String {
+        decode_with::<String>(format, bytes)?.map(Value::String)
+    } else if *ty == Type::Option(Box::new(Type::U32)) {
+        decode_with::<Option<u32>>(format, bytes)?
+            .map(|v| Value::Option(v.map(|v| Box::new(Value::U32(v)))))
     } else if *ty == point_type() {
         decode_with(format, bytes)?.map(point)
     } else if *ty == tagged_type() {
@@ -1532,6 +1612,27 @@ fn rejections(feature: &str) -> Vec<Case> {
                 reject("framing-datagram2/reject-request-as-reply", Op::Response, d2(), &request),
                 reject("framing-datagram2/reject-short-request", Op::Request, d2(), &request[..9]),
                 reject("framing-datagram2/reject-reply-without-envelope", Op::Response, d2(), &reply[..10]),
+            ]
+        }
+        "format-packed" => {
+            let decode = |ty: Type| {
+                to_json(&DecodeIn {
+                    format: FORMAT_PACKED.into(),
+                    ty,
+                    value: None,
+                })
+            };
+            let r = |id: &str, ty: Type, bytes: &[u8]| {
+                reject(&format!("format-packed/{id}"), Op::Decode, decode(ty), bytes)
+            };
+            vec![
+                r("reject-bool-not-0-or-1", Type::Bool, &[2]),
+                r("reject-option-tag-not-0-or-1", Type::Option(Box::new(Type::U32)), &[2, 0, 0, 0, 0]),
+                r("reject-truncated-u32", Type::U32, &[1, 2, 3]),
+                r("reject-trailing-bytes", Type::U32, &[1, 0, 0, 0, 9]),
+                r("reject-overlong-length", Type::String, &[0x80, 0x00]),
+                r("reject-length-past-input", Type::String, &[5, b'a', b'b']),
+                r("reject-invalid-utf8", Type::String, &[2, 0xc3, 0x28]),
             ]
         }
         "framing-jsonrpc" => vec![

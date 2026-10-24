@@ -14,7 +14,7 @@ use std::fs;
 use std::path::{Path, PathBuf};
 
 use comline_runtime::contract::{
-    FORMAT_JSON, FORMAT_MSGPACK, FRAMING_DATAGRAM, FRAMING_DATAGRAM2, FRAMING_JSONRPC,
+    FORMAT_JSON, FORMAT_MSGPACK, FORMAT_PACKED, FRAMING_DATAGRAM, FRAMING_DATAGRAM2, FRAMING_JSONRPC,
 };
 use comline_runtime_conformance::{
     fact_shown, reference_cases, render, run, Case, Features, Outcome, Profile, ProvenClaim,
@@ -213,6 +213,7 @@ fn profiles_are_proven() {
     let names = [
         FORMAT_JSON,
         FORMAT_MSGPACK,
+        FORMAT_PACKED,
         FRAMING_DATAGRAM,
         FRAMING_DATAGRAM2,
         FRAMING_JSONRPC,

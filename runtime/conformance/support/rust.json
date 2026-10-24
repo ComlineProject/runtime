@@ -8,6 +8,7 @@
     "framing-datagram2": { "state": "supported" },
     "framing-jsonrpc": { "state": "supported" },
     "format-json": { "state": "supported" },
-    "format-msgpack": { "state": "supported" }
+    "format-msgpack": { "state": "supported" },
+    "format-packed": { "state": "supported" }
   }
 }
