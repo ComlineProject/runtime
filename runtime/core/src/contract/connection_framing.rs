@@ -10,18 +10,24 @@ pub type ProtocolNumber = u16;
 /// How a [`Connection`](crate::connection::Connection) puts calls on the wire
 /// when either end may start one. Unlike [`Framing`](crate::contract::Framing),
 /// whose frames only make sense in lockstep, every frame here says whether
-/// it's a request or a reply, and which protocol it belongs to.
+/// it's a request or a reply. A request names its protocol by number
+/// ([`Datagram2Framing`]), or only by its call's name, which the receiver
+/// looks up among the protocols it provides
+/// ([`JsonRpcFraming`](crate::framing::JsonRpcFraming)).
 pub trait ConnectionFraming: Default {
     /// A stable name, folded into the handshake.
     fn name(&self) -> &'static str;
 
     /// Frame a request to `protocol`: the call, its id, and its params
-    /// (serialised with `fmt`).
+    /// (serialised with `fmt`). A `one_way` call gets no reply; a framing
+    /// that can say so on the wire does.
+    #[allow(clippy::too_many_arguments)]
     fn encode_request<W, P>(
         &self,
         protocol: ProtocolNumber,
         call: Call,
         request_id: u64,
+        one_way: bool,
         params: &P,
         fmt: &W,
         out: &mut dyn BufMut,
@@ -46,14 +52,21 @@ pub trait ConnectionFraming: Default {
 /// A decoded [`ConnectionFraming`] frame.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Frame<'f> {
-    /// The peer calls one of this side's protocols.
+    /// The peer calls one of this side's protocols: `protocol`, or, when the
+    /// framing names only the call, whichever of them has a call by that
+    /// name.
     Request {
-        protocol: ProtocolNumber,
+        protocol: Option<ProtocolNumber>,
         request: Request<'f>,
+        /// The frame says the caller wants no reply (a JSON-RPC
+        /// notification). A framing with no way to say so leaves it
+        /// `false`; a one-way call then simply writes no reply.
+        one_way: bool,
     },
-    /// The peer answers a call this side made.
+    /// The peer answers a call this side made. Matched by `request_id`
+    /// alone; `protocol` is there when the framing carries it.
     Reply {
-        protocol: ProtocolNumber,
+        protocol: Option<ProtocolNumber>,
         request_id: u64,
         envelope: Envelope<'f>,
     },
@@ -87,6 +100,7 @@ impl ConnectionFraming for Datagram2Framing {
         protocol: ProtocolNumber,
         call: Call,
         request_id: u64,
+        _one_way: bool,
         params: &P,
         fmt: &W,
         out: &mut dyn BufMut,
@@ -124,18 +138,19 @@ impl ConnectionFraming for Datagram2Framing {
                 let call = u16::from_le_bytes([head[0], head[1]]);
                 let request_id = u64::from_le_bytes(head[2..10].try_into().ok()?);
                 Some(Frame::Request {
-                    protocol,
+                    protocol: Some(protocol),
                     request: Request {
                         call: RequestCall::Id(call),
                         request_id,
                         params,
                     },
+                    one_way: false,
                 })
             }
             KIND_REPLY => {
                 let (head, envelope) = rest.split_at_checked(8)?;
                 Some(Frame::Reply {
-                    protocol,
+                    protocol: Some(protocol),
                     request_id: u64::from_le_bytes(head.try_into().ok()?),
                     envelope: Envelope::decode(envelope)?,
                 })
@@ -208,7 +223,7 @@ mod tests {
             assert_eq!(frame[0], KIND_REPLY);
             assert_eq!(
                 f.decode(&frame),
-                Some(Frame::Reply { protocol: 200, request_id: 7, envelope })
+                Some(Frame::Reply { protocol: Some(200), request_id: 7, envelope })
             );
         }
     }
@@ -222,8 +237,9 @@ mod tests {
         assert_eq!(
             Datagram2Framing.decode(&frame),
             Some(Frame::Request {
-                protocol: 3,
+                protocol: Some(3),
                 request: Request { call: RequestCall::Id(5), request_id: 42, params: b"args" },
+                one_way: false,
             })
         );
     }
