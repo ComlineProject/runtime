@@ -8,10 +8,10 @@ license = "MPL-2.0"
 [features]
 default = ["std"]
 
-# `contract` needs only `serde`'s core traits and no allocation.
-# `alloc` adds owned generated types, the frame `transport`, and the `serve`
-# loop. `std` adds the MessagePack `format` and the in-memory transport, plus
-# the dylib ABI.
+# `contract` and the `packed@1` format need only `serde`'s core traits and no
+# allocation. `alloc` adds owned generated types, the frame `transport`, and
+# the `serve` loop. `std` adds the JSON and MessagePack formats and the
+# in-memory transport, plus the dylib ABI.
 alloc = ["serde/alloc"]
 std = [
     "alloc",

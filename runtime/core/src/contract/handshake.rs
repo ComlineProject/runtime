@@ -23,6 +23,9 @@ pub const FRAMING_JSONRPC: &str = "jsonrpc@1";
 pub const FORMAT_JSON: &str = "json@1";
 /// Name of the MessagePack wire format (`format::MsgPack`).
 pub const FORMAT_MSGPACK: &str = "msgpack@1";
+/// Name of the packed wire format (`format::Packed`): fixed-width fields back
+/// to back, varint lengths. The default a package gets.
+pub const FORMAT_PACKED: &str = "packed@1";
 
 /// Name of Comline's own handshake, the fixed [`HandshakeFrame`] each end sends
 /// (`handshake::ComlineHandshake`).

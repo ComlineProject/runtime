@@ -13,8 +13,8 @@ extern crate alloc;
 // datagram `Framing` lives here (`contract::DatagramFraming`).
 pub mod contract;
 
-// `WireFormat` implementations (`std`-gated for now — see the module).
-#[cfg(feature = "std")]
+// `WireFormat` implementations. `packed@1` needs nothing; JSON and
+// MessagePack need `std`.
 pub mod format;
 
 // Alternative `Framing` implementations that need `std` / extra deps
