@@ -1028,6 +1028,18 @@
         }
       },
       "bytes": "5b312c6e756c6c5d"
+    },
+    {
+      "id": "format-json/found-f64-exact-digits",
+      "op": "decode",
+      "input": {
+        "format": "json@1",
+        "type": "f64",
+        "value": {
+          "f64": 4.520618856987477e-279
+        }
+      },
+      "bytes": "342e353230363138383536393837343737652d323739"
     }
   ]
 }

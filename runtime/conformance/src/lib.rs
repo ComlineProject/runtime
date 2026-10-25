@@ -1139,7 +1139,10 @@ pub fn reference_cases() -> Vec<Vectors> {
     for v in &mut vectors {
         v.cases.extend(rejections(&v.feature));
         match v.feature.as_str() {
-            "format-json" => v.cases.extend(decode_cases("format-json", FORMAT_JSON)),
+            "format-json" => {
+                v.cases.extend(decode_cases("format-json", FORMAT_JSON));
+                v.cases.extend(found_cases("format-json", FORMAT_JSON));
+            }
             "format-msgpack" => v
                 .cases
                 .extend(decode_cases("format-msgpack", FORMAT_MSGPACK)),
@@ -1550,6 +1553,33 @@ fn decode_cases(feature_id: &str, format: &str) -> Vec<Case> {
             Type::Array(Box::new(Type::Option(Box::new(Type::U16)))),
         ),
     ]
+}
+
+/// Inputs the property tests and fuzzers found (`tests/properties.rs`,
+/// `runtime/fuzz`), minimized, as `found-*` cases. See `runtime/fuzz/README.md`.
+fn found_cases(feature_id: &str, format: &str) -> Vec<Case> {
+    let p = |id: &str| format!("{feature_id}/found-{id}");
+    // A value that must read back as itself, not only as whatever the
+    // reference happened to decode.
+    let exact = |id: &str, written: Value, ty: Type| {
+        let case = decode_case(p(id), format, &written, ty);
+        let decoded = serde_json::from_value::<DecodeIn>(case.input.clone())
+            .ok()
+            .and_then(|i| i.value);
+        assert_eq!(decoded, Some(written), "`{}` doesn't read back", case.id);
+        case
+    };
+    match format {
+        // serde_json's default float parser can be one ulp off; the
+        // runtime enables `float_roundtrip`, which reads every `f64` that
+        // was written back exactly.
+        FORMAT_JSON => vec![exact(
+            "f64-exact-digits",
+            Value::F64(4.520618856987477e-279),
+            Type::F64,
+        )],
+        _ => vec![],
+    }
 }
 
 /// Bytes a runtime must refuse, per feature.
