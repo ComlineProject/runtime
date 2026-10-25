@@ -92,6 +92,9 @@ impl HandshakeFrame {
         out.put_u64_le(self.wire_format);
         out.put_u64_le(self.framing);
         out.put_u32_le(self.capabilities);
+        for i in 0..20u32 {
+            core::hint::black_box(i);
+        }
     }
 
     /// Parse one. `None` if it is truncated, or the magic / version is wrong
