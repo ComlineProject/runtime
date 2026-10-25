@@ -7,14 +7,18 @@ name: Benchmarks
 # counts to the `rust.bench.json` artifact.
 #
 # Accepting a regression: a benchmark that grows past the limit fails, unless
-# the pull request appends an entry for it to the ledger,
+# the pull request appends an `[[accepted]]` entry for it to the ledger,
 # runtime/core/benches/accepted-regressions.toml, naming the benchmark, the
-# most it may grow, and why. The entry is part of the diff, so it's reviewed
-# and stays in history; it counts only in the pull request that adds it
-# (`pr` must be its number), covers only that benchmark up to that growth,
-# and must be used. The job summary lists the accepted regressions with their
-# counts, and the entry is annotated on the diff. Nothing is accepted by a
-# label, a setting or a default. See CONTRIBUTING.md.
+# most it may grow, and why. Likewise a benchmark the base had and the head
+# doesn't run fails, unless the pull request appends a `[[removed]]` entry;
+# one with `renamed_to` is compared under its new id against its old count,
+# so a rename is gated like anything else. A new benchmark has nothing to
+# regress from, and is recorded only. Entries are part of the diff, so
+# they're reviewed and stay in history; they count only in the pull request
+# that adds them (`pr` must be its number), cover only what they name, and
+# must be used. The job summary lists them with their counts, and each is
+# annotated on the diff. Nothing is accepted by a label, a setting or a
+# default. See CONTRIBUTING.md.
 #
 # Plain `pull_request`, not `pull_request_target`: a fork's pull request runs
 # with a read-only token and no secrets, and the acceptance it can carry is
@@ -88,7 +92,13 @@ jobs:
             exit 0
           fi
           cd "$RUNNER_TEMP/base"
-          CARGO_TARGET_DIR="$RUNNER_TEMP/base-target" cargo bench -p comline-runtime --bench runtime -- --save-baseline=base
+          CARGO_TARGET_DIR="$RUNNER_TEMP/base-target" cargo bench -p comline-runtime --bench runtime -- \
+            --save-baseline=base --save-summary=json
+          # The base's own summaries, kept apart from the head's: they say
+          # which benchmarks the base had, so one the head drops or renames
+          # is noticed, and give a renamed one its old count.
+          mkdir -p "$RUNNER_TEMP/base-iai"
+          (cd "$IAI_CALLGRIND_HOME" && find . -name summary.json -exec cp --parents {} "$RUNNER_TEMP/base-iai" \;)
           echo "compare=true" >> "$GITHUB_OUTPUT"
 
       - name: Bench the head
@@ -119,6 +129,7 @@ jobs:
             --toolchain "$TOOLCHAIN" \
             --limit "$BENCH_LIMIT_PERCENT" \
             --pr "$PR" \
+            --base-home "$RUNNER_TEMP/base-iai" \
             --ledger "$LEDGER" \
             --base-ledger "$RUNNER_TEMP/base/$LEDGER" \
             --report runtime/conformance/reports/rust.bench.json \

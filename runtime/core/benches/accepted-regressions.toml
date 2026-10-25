@@ -23,6 +23,22 @@
 #   the ledger records only costs that were paid.
 # - Append only. Changing or removing an existing entry fails the gate.
 #
+# A benchmark the base had and the head doesn't run fails too, so a slowed
+# benchmark can't slip through by being renamed or dropped. A pull request
+# that means it says so, with the same rules (its own `pr`, used, append
+# only):
+#
+#   [[removed]]
+#   pr = 123
+#   bench = "handshake/check"                 # the id the base had
+#   renamed_to = "handshake/verify"           # optional: its new id
+#   reason = "the check is now called verify (#121)"
+#
+# A renamed benchmark is compared under its new id against its old count, so
+# it's held to the limit, or to an `[[accepted]]` entry for the new id. A new
+# benchmark, not a rename, has nothing to regress from: it's recorded only.
+#
 # The job summary lists each accepted regression with its base and head
-# counts, and the entry is annotated on the pull request's diff.
+# counts, and each removal or rename; each entry is annotated on the pull
+# request's diff.
 

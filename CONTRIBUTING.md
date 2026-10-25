@@ -48,6 +48,29 @@ The rules, which the gate enforces:
 - It must be needed: an entry for a benchmark that stayed within 1% fails.
 - The ledger is append-only: changing or removing an existing entry fails.
 
+### Removing or renaming a benchmark
+
+A benchmark the base had and the head doesn't run also fails the gate, so a
+slowed benchmark can't get through by being renamed or dropped in the same
+pull request. When that's intended, append a `[[removed]]` entry, under the
+same rules (this pull request's `pr`, needed, append-only):
+
+```toml
+[[removed]]
+pr = 123
+bench = "handshake/check"
+renamed_to = "handshake/verify"   # only for a rename
+reason = "the check is now called verify (#121)"
+```
+
+A renamed benchmark is compared under its new id against its old id's base
+count, so it's still held to 1%, or to an `[[accepted]]` entry for the new id.
+A new benchmark that isn't a rename has nothing to regress from, and is
+recorded only.
+
+### Where it shows
+
 The accepted regressions are listed, with their base and head counts, in the
-job summary, and annotated on the entry in the pull request's diff. Nothing
+job summary, as are removals and renames, and each entry is annotated in the
+pull request's diff. Nothing
 else accepts a regression: no label, setting or default.
