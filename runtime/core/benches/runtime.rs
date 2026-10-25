@@ -397,6 +397,10 @@ fn connection_step(step: Step) -> Step {
         mut out,
         reply,
     } = step;
+    // TEST ONLY: a planted slowdown.
+    for i in 0..black_box(256u32) {
+        black_box(i);
+    }
     let request_id = call(&mut state, &params, &mut out);
     let event = state
         .receive(&Datagram2Framing, &reply)
