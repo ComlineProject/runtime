@@ -48,8 +48,24 @@ impl WireFormat for Packed {
     }
 
     fn decode<'de, T: Deserialize<'de>>(&self, bytes: &'de [u8]) -> Result<T, RuntimeError> {
+        self.decode_seed(core::marker::PhantomData::<T>, bytes)
+    }
+}
+
+impl Packed {
+    /// [`decode`](WireFormat::decode) through a [`DeserializeSeed`], for a
+    /// caller whose type is known only at runtime: a seed that carries the
+    /// schema's type can read a value with no Rust type of its own. Just as
+    /// strict: the value must use every byte.
+    pub fn decode_seed<'de, S: DeserializeSeed<'de>>(
+        &self,
+        seed: S,
+        bytes: &'de [u8],
+    ) -> Result<S::Value, RuntimeError> {
         let mut de = Deserializer { input: bytes };
-        let value = T::deserialize(&mut de).map_err(|_| RuntimeError::Serialization)?;
+        let value = seed
+            .deserialize(&mut de)
+            .map_err(|_| RuntimeError::Serialization)?;
         if !de.input.is_empty() {
             return Err(RuntimeError::Serialization);
         }
@@ -955,5 +971,45 @@ mod tests {
             A(u8),
         }
         assert_eq!(reason::<Untagged>(&[1]), Error::Unsupported);
+    }
+
+    /// A seed reads a value whose type is data, not a Rust type: here, a
+    /// struct of two fields whose widths come from a list.
+    #[test]
+    fn a_seed_decodes_with_the_type_known_at_runtime() {
+        struct Widths(&'static [u8]);
+        impl<'de> DeserializeSeed<'de> for Widths {
+            type Value = Vec<u64>;
+            fn deserialize<D: de::Deserializer<'de>>(self, d: D) -> Result<Vec<u64>, D::Error> {
+                struct V(&'static [u8]);
+                impl<'de> Visitor<'de> for V {
+                    type Value = Vec<u64>;
+                    fn expecting(&self, f: &mut fmt::Formatter) -> fmt::Result {
+                        f.write_str("fields")
+                    }
+                    fn visit_seq<A: de::SeqAccess<'de>>(
+                        self,
+                        mut seq: A,
+                    ) -> Result<Vec<u64>, A::Error> {
+                        let mut out = Vec::new();
+                        for &width in self.0 {
+                            out.push(match width {
+                                1 => u64::from(seq.next_element::<u8>()?.unwrap()),
+                                _ => u64::from(seq.next_element::<u32>()?.unwrap()),
+                            });
+                        }
+                        Ok(out)
+                    }
+                }
+                d.deserialize_tuple(self.0.len(), V(self.0))
+            }
+        }
+        let bytes = [0x07, 0x2a, 0x00, 0x00, 0x00];
+        assert_eq!(Packed.decode_seed(Widths(&[1, 4]), &bytes), Ok(vec![7, 42]));
+        // As strict as `decode`: a byte left over is an error.
+        assert_eq!(
+            Packed.decode_seed(Widths(&[1, 4]), &[0x07, 0x2a, 0, 0, 0, 0]),
+            Err(RuntimeError::Serialization)
+        );
     }
 }
