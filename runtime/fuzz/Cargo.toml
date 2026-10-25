@@ -1,0 +1,58 @@
+[package]
+name = "comline-runtime-fuzz"
+version = "0.0.0"
+edition = "2021"
+license = "MPL-2.0"
+publish = false
+
+# cargo-fuzz targets against the reference (`comline-runtime` and the
+# conformance crate's `TypeSeed`). Outside the workspace: they need nightly,
+# `cargo +nightly fuzz run <target>`. See README.md.
+
+[package.metadata]
+cargo-fuzz = true
+
+[dependencies]
+libfuzzer-sys = "0.4"
+arbitrary = "1"
+comline-runtime = { path = "../core" }
+comline-runtime-conformance = { path = "../conformance" }
+serde = { version = "1.0.190", features = ["derive"] }
+# The seed-vs-derive mirrors (`conformance/tests/common`) need it.
+serde-big-array = "0.5"
+
+[[bin]]
+name = "decode_no_panic"
+path = "fuzz_targets/decode_no_panic.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "packed_canonical"
+path = "fuzz_targets/packed_canonical.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "framing_decode"
+path = "fuzz_targets/framing_decode.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "seed_vs_derive"
+path = "fuzz_targets/seed_vs_derive.rs"
+test = false
+doc = false
+bench = false
+
+[dev-dependencies]
+serde_json = "1.0.108"
+
+# Writes the seed corpora from the conformance vectors; see seed-corpus.sh.
+[[example]]
+name = "seed_corpus"
+path = "examples/seed_corpus.rs"

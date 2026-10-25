@@ -71,6 +71,17 @@ mod tests {
         assert_eq!(back, Msg { n: 7, s: "hi" });
     }
 
+    /// serde_json's default float parser is off by one ulp here; the
+    /// `float_roundtrip` feature reads every written `f64` back exactly.
+    /// Found by `conformance/tests/properties.rs`.
+    #[test]
+    fn an_f64_reads_back_exactly() {
+        let x = 4.520618856987477e-279_f64;
+        let mut buf = Vec::new();
+        Json.encode(&x, &mut buf).unwrap();
+        assert_eq!(Json.decode::<f64>(&buf).map(f64::to_bits), Ok(x.to_bits()));
+    }
+
     #[test]
     fn garbage_is_a_serialization_error() {
         let err = Json.decode::<u32>(b"not json").unwrap_err();

@@ -61,7 +61,8 @@
         "format-json/decode-fixed-array-33",
         "format-json/decode-fixed-array-short",
         "format-json/decode-fixed-array-long",
-        "format-json/decode-array-of-options"
+        "format-json/decode-array-of-options",
+        "format-json/found-f64-exact-digits"
       ]
     },
     "format-msgpack": {
@@ -160,6 +161,7 @@
         "format-packed/reject-overlong-length",
         "format-packed/reject-length-past-input",
         "format-packed/reject-invalid-utf8",
+        "format-packed/reject-count-past-input",
         "format-packed/decode-fields-reordered",
         "format-packed/decode-unknown-field",
         "format-packed/decode-missing-optional",

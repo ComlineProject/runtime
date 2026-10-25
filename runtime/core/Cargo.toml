@@ -39,7 +39,9 @@ abi_stable = { version = "0.11.2", optional = true }
 libloading = { version = "0.8.0", optional = true }
 rmp = { version = "0.8.12", optional = true }
 rmp-serde = { version = "1.1.2", optional = true }
-serde_json = { version = "1.0.108", optional = true, features = ["raw_value"] }
+# `float_roundtrip`: read every `f64` back exactly, not one ulp off (the
+# default parser is faster but best-effort).
+serde_json = { version = "1.0.108", optional = true, features = ["raw_value", "float_roundtrip"] }
 
 # `async` layer
 futures-channel = { version = "0.3.31", optional = true }

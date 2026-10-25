@@ -15,6 +15,8 @@ members = [
     #"runtime-langs/luau"
     #"runtime-langs/python"
 ]
+# cargo-fuzz targets: nightly only, built with `cargo +nightly fuzz`.
+exclude = ["runtime/fuzz"]
 # `runtime/core_no-std` removed — `comline-runtime` is now `no_std`-first with a
 # `std` feature, not a parallel fork. See ComlineProject/docs → Design.
 
