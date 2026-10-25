@@ -19,6 +19,12 @@ pub trait BufMut {
     fn put_u64_le(&mut self, value: u64) {
         self.put_slice(&value.to_le_bytes());
     }
+
+    /// Whether a write was dropped for want of room. A buffer that grows
+    /// never drops one.
+    fn overflowed(&self) -> bool {
+        false
+    }
 }
 
 #[cfg(feature = "alloc")]
@@ -76,6 +82,10 @@ impl BufMut for SliceBuf<'_> {
         }
         self.buf[self.len..end].copy_from_slice(bytes);
         self.len = end;
+    }
+
+    fn overflowed(&self) -> bool {
+        self.overflowed
     }
 }
 
