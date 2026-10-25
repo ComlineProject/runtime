@@ -355,7 +355,7 @@ fn run<F: ConnectionFraming>(ordered: bool, steps: &[Step]) -> Result<(), TestCa
                     let (expect_protocol, expect_call, expect_id, expect_one_way) = if json {
                         (
                             None,
-                            RequestCall::Name(call.name),
+                            RequestCall::Name(call.name.into()),
                             if *one_way { 0 } else { id },
                             *one_way,
                         )
@@ -404,7 +404,7 @@ fn run<F: ConnectionFraming>(ordered: bool, steps: &[Step]) -> Result<(), TestCa
                     Event::Request {
                         protocol: None,
                         request: Request {
-                            call: RequestCall::Name(call.name),
+                            call: RequestCall::Name(call.name.into()),
                             request_id: if *one_way { 0 } else { *request_id },
                             params: &params,
                         },

@@ -282,7 +282,7 @@ impl<T, W, F> Providers<T, W, F> {
 pub(crate) fn call_index(call: RequestCall<'_>, calls: &[&str]) -> Option<u16> {
     match call {
         RequestCall::Id(id) => Some(id),
-        RequestCall::Name(name) => calls.iter().position(|c| *c == name).map(|i| i as u16),
+        RequestCall::Name(name) => calls.iter().position(|c| name == *c).map(|i| i as u16),
     }
 }
 

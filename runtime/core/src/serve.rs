@@ -61,7 +61,7 @@ impl<D: Dispatch, W: WireFormat, F: Framing> Server<D, W, F> {
                 .dispatch
                 .calls()
                 .iter()
-                .position(|c| *c == name)
+                .position(|c| name == *c)
                 .map(|i| i as u16),
         };
 

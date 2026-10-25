@@ -162,7 +162,7 @@ fn event_json(event: Event<'_>) -> Json {
             }
             match request.call {
                 RequestCall::Id(id) => fields.insert("call_id".into(), id.into()),
-                RequestCall::Name(name) => fields.insert("method".into(), name.into()),
+                RequestCall::Name(name) => fields.insert("method".into(), name.to_string().into()),
             };
             fields.insert("request_id".into(), request.request_id.to_string().into());
             fields.insert("one_way".into(), one_way.into());

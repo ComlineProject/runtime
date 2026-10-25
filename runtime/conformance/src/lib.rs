@@ -817,7 +817,7 @@ fn decode(
             };
             let (call_id, method) = match req.call {
                 RequestCall::Id(id) => (id, i.method.clone()),
-                RequestCall::Name(name) => (i.call_id, name.to_owned()),
+                RequestCall::Name(name) => (i.call_id, name.to_string()),
             };
             let params = encode_with(&i.format, &i.params)
                 .ok_or_else(|| Outcome::NotImplemented(format!("format `{}`", i.format)))?;
