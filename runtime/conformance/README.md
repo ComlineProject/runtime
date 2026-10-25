@@ -60,15 +60,26 @@ reads into: a struct with a field more or one fewer, fields in another order,
 an enum whose variants are ordered differently or that has one more, a wider
 integer. They show what a reader generated from today's schema does with what
 another version wrote, which is what [profiles](#encoding-profiles) are about.
-`type` describes the reader so any runtime can build one: `"u32"`, `"i32"`,
-`"string"`, `{"option": T}`, `{"struct": {"name": "Point", "fields": [["x",
-"i32"], ["y", "i32"]]}}` and `{"enum": {"name": "Color", "variants": ["Red",
-"Green", "Blue"]}}`. The reference decodes through plain `serde` derives, as
-generated Rust declares its types, so the cases prove generated code, not a
-hand-written decoder.
+`type` describes the reader so any runtime can build one, in every shape a
+generated type can have:
+- the scalars `"bool"`, `"u8"` to `"u128"`, `"i8"` to `"i128"`, `"f32"`,
+  `"f64"`, `"string"` and `"unit"`;
+- `{"option": T}`, `{"array": T}` for `T[]`, and `{"fixed": {"of": T, "len": N}}`
+  for `T[N]`;
+- `{"struct": {"name": "Point", "fields": [["x", "i32"], ["y", "i32"]]}}`;
+- `{"enum": {"name": "Color", "variants": ["Red", "Green", "Blue"]}}`.
+
+The reference decodes by that description through `TypeSeed`
+([`src/seed.rs`](src/seed.rs)). It makes exactly the calls a plain `serde`
+derive makes, as generated Rust declares its types, so the cases prove
+generated code, not a hand-written decoder.
+[`tests/seed_vs_derive.rs`](tests/seed_vs_derive.rs) holds it to real
+derives, on valid and mutated bytes in every format.
 
 A value is typed, so a runtime knows which width and shape to encode:
-`{"u8": 255}`, `{"u64": "18446744073709551615"}`, `{"string": "x"}`,
+`{"u8": 255}`, `{"u64": "18446744073709551615"}` (and `u128`, `i128`, also as
+decimal strings), `{"string": "x"}`, `{"tuple": [...]}` for `T[N]`,
+`{"unit": null}`,
 `{"array": [...]}`, `{"option": null}`,
 `{"struct": {"name": "Point", "fields": [["x", {"i32": 1}]]}}` and
 `{"unit_variant": {"enum": "Color", "index": 1, "variant": "Green"}}`. A value
