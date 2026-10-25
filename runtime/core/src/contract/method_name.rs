@@ -83,6 +83,25 @@ impl PartialEq<&str> for MethodName<'_> {
     }
 }
 
+impl PartialEq<MethodName<'_>> for str {
+    fn eq(&self, other: &MethodName<'_>) -> bool {
+        *other == *self
+    }
+}
+
+impl PartialEq<MethodName<'_>> for &str {
+    fn eq(&self, other: &MethodName<'_>) -> bool {
+        *other == **self
+    }
+}
+
+#[cfg(feature = "alloc")]
+impl PartialEq<MethodName<'_>> for alloc::string::String {
+    fn eq(&self, other: &MethodName<'_>) -> bool {
+        *other == **self
+    }
+}
+
 impl PartialEq for MethodName<'_> {
     fn eq(&self, other: &Self) -> bool {
         match (self.0, other.0) {
@@ -215,6 +234,10 @@ mod tests {
             assert_eq!(read, MethodName::new(name), "{text}");
             assert!(read.chars().eq(name.chars()), "{text}");
         }
+        let slash = MethodName::from_json(r"app.Chat\/count").unwrap();
+        assert!("app.Chat/count" == slash);
+        #[cfg(feature = "alloc")]
+        assert!(alloc::string::String::from("app.Chat/count") == slash);
         assert_ne!(MethodName::from_json(r"gr\u0065et").unwrap(), "greets");
         assert_ne!(MethodName::from_json(r"gr\u0065et").unwrap(), "gree");
     }
