@@ -1,7 +1,8 @@
 //! Alternative [`Framing`](crate::contract::Framing) implementations.
 //!
 //! The Comline datagram framing is `DatagramFraming` in `contract`; this module
-//! holds ones that need `std` / extra deps.
+//! holds ones that need `alloc` and extra deps (the `jsonrpc` feature, which
+//! `std` implies).
 
 use serde::{Deserialize, Serialize};
 use serde_json::value::RawValue;
@@ -116,10 +117,21 @@ fn put_method(name: &str, out: &mut dyn BufMut) {
     out.put_slice(br#"","params":"#);
 }
 
-fn u64_bytes(n: u64) -> impl AsRef<[u8]> {
-    // small, no itoa dep
-    let s = n.to_string();
-    s.into_bytes()
+/// Writes `n` in decimal, as `u64`'s `Display` writes it, from a buffer on
+/// the stack: 20 digits hold `u64::MAX`.
+fn put_u64(n: u64, out: &mut dyn BufMut) {
+    let mut digits = [0u8; 20];
+    let mut start = digits.len();
+    let mut n = n;
+    loop {
+        start -= 1;
+        digits[start] = b'0' + (n % 10) as u8;
+        n /= 10;
+        if n == 0 {
+            break;
+        }
+    }
+    out.put_slice(&digits[start..]);
 }
 
 impl Framing for JsonRpcFraming {
@@ -142,7 +154,7 @@ impl Framing for JsonRpcFraming {
         put_method(call.name, out);
         fmt.encode(params, out)?;
         out.put_slice(br#","id":"#);
-        out.put_slice(u64_bytes(request_id).as_ref());
+        put_u64(request_id, out);
         out.put_slice(b"}");
         Ok(())
     }
@@ -169,17 +181,17 @@ impl Framing for JsonRpcFraming {
         out.put_slice(br#"{"jsonrpc":"2.0","result":"#);
         out.put_slice(if payload.is_empty() { b"null" } else { payload });
         out.put_slice(br#","id":"#);
-        out.put_slice(u64_bytes(request_id).as_ref());
+        put_u64(request_id, out);
         out.put_slice(b"}");
     }
 
     fn encode_response_err(&self, request_id: u64, id: u16, body: &[u8], out: &mut dyn BufMut) {
         out.put_slice(br#"{"jsonrpc":"2.0","error":{"code":"#);
-        out.put_slice(u64_bytes(u64::from(id)).as_ref());
+        put_u64(u64::from(id), out);
         out.put_slice(br#","message":"application error","data":"#);
         out.put_slice(if body.is_empty() { b"null" } else { body });
         out.put_slice(br#"},"id":"#);
-        out.put_slice(u64_bytes(request_id).as_ref());
+        put_u64(request_id, out);
         out.put_slice(b"}");
     }
 
@@ -187,7 +199,7 @@ impl Framing for JsonRpcFraming {
         out.put_slice(
             br#"{"jsonrpc":"2.0","error":{"code":-32603,"message":"Internal error"},"id":"#,
         );
-        out.put_slice(u64_bytes(request_id).as_ref());
+        put_u64(request_id, out);
         out.put_slice(b"}");
     }
 
@@ -284,8 +296,69 @@ impl ConnectionFraming for JsonRpcFraming {
 
 #[cfg(test)]
 mod tests {
+    use alloc::format;
+    use alloc::string::{String, ToString};
+    use alloc::vec::Vec;
+    use core::str;
+
     use super::*;
+    #[cfg(feature = "std")]
     use crate::format::Json;
+
+    /// Without `std` there is no [`crate::format::Json`]: a stand-in that
+    /// writes what it does, through `serde_json`'s `alloc` API.
+    #[cfg(not(feature = "std"))]
+    struct Json;
+
+    #[cfg(not(feature = "std"))]
+    impl WireFormat for Json {
+        fn name(&self) -> &'static str {
+            crate::contract::FORMAT_JSON
+        }
+
+        fn encode<T: Serialize + ?Sized>(
+            &self,
+            value: &T,
+            out: &mut dyn BufMut,
+        ) -> Result<(), RuntimeError> {
+            let bytes = serde_json::to_vec(value).map_err(|_| RuntimeError::Serialization)?;
+            out.put_slice(&bytes);
+            Ok(())
+        }
+
+        fn decode<'de, T: Deserialize<'de>>(&self, bytes: &'de [u8]) -> Result<T, RuntimeError> {
+            serde_json::from_slice(bytes).map_err(|_| RuntimeError::Serialization)
+        }
+    }
+
+    /// What [`put_u64`] writes.
+    fn decimal(n: u64) -> Vec<u8> {
+        let mut out = Vec::new();
+        put_u64(n, &mut out);
+        out
+    }
+
+    #[test]
+    fn an_id_is_written_in_decimal() {
+        for (n, text) in [
+            (0, "0"),
+            (1, "1"),
+            (9, "9"),
+            (10, "10"),
+            (u64::from(u16::MAX), "65535"),
+            (u64::MAX, "18446744073709551615"),
+        ] {
+            assert_eq!(decimal(n), text.as_bytes(), "{n}");
+        }
+        // Each power of ten, and one either side of it: every digit count,
+        // and every carry.
+        for exp in 0..=19 {
+            let p = 10u64.pow(exp);
+            for n in [p - 1, p, p + 1] {
+                assert_eq!(decimal(n), n.to_string().as_bytes(), "{n}");
+            }
+        }
+    }
 
     #[test]
     fn request_round_trips() {
@@ -301,7 +374,7 @@ mod tests {
         )
         .unwrap();
         assert_eq!(
-            std::str::from_utf8(&frame).unwrap(),
+            str::from_utf8(&frame).unwrap(),
             r#"{"jsonrpc":"2.0","method":"greet","params":[7,"x"],"id":1}"#
         );
 
@@ -328,7 +401,7 @@ mod tests {
         let mut frame = Vec::new();
         f.encode_response_fault(9, &mut frame);
         assert_eq!(
-            std::str::from_utf8(&frame).unwrap(),
+            str::from_utf8(&frame).unwrap(),
             r#"{"jsonrpc":"2.0","error":{"code":-32603,"message":"Internal error"},"id":9}"#
         );
         assert_eq!(f.decode_response(&frame), Some((9, Envelope::Fault)));
@@ -362,7 +435,7 @@ mod tests {
         )
         .unwrap();
         assert_eq!(
-            std::str::from_utf8(&frame).unwrap(),
+            str::from_utf8(&frame).unwrap(),
             r#"{"jsonrpc":"2.0","method":"chat.Chat/pushed","params":["hi"]}"#
         );
         assert_eq!(
@@ -531,7 +604,7 @@ mod tests {
             let mut frame = Vec::new();
             Framing::encode_request(&f, Call::new(0, name), 1, &(), &Json, &mut frame).unwrap();
             assert_eq!(
-                std::str::from_utf8(&frame).unwrap(),
+                str::from_utf8(&frame).unwrap(),
                 format!(r#"{{"jsonrpc":"2.0","method":{quoted},"params":null,"id":1}}"#)
             );
             assert_eq!(method_of(f.decode_request(&frame).unwrap().call), name);
@@ -549,7 +622,7 @@ mod tests {
             )
             .unwrap();
             assert_eq!(
-                std::str::from_utf8(&notification).unwrap(),
+                str::from_utf8(&notification).unwrap(),
                 format!(r#"{{"jsonrpc":"2.0","method":{quoted},"params":null}}"#)
             );
         }
