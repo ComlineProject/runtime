@@ -1,0 +1,21 @@
+[package]
+name = "comline-reference"
+version = "0.1.0"
+edition = "2021"
+license = "MPL-2.0"
+publish = false
+
+# The Rust runtime as a process: it answers encode and decode questions, in
+# the conformance corpus's own encoding, on stdin and stdout, so a fuzzer in
+# another language can check its runtime against `comline-runtime`. See
+# README.md.
+
+[[bin]]
+name = "comline-reference"
+path = "src/main.rs"
+
+[dependencies]
+comline-runtime = { path = "../core" }
+comline-runtime-conformance = { path = "../conformance" }
+serde = "1.0.190"
+serde_json = "1.0.108"

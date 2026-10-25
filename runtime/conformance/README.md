@@ -148,3 +148,11 @@ above, and write a report of the same shape. comline-typescript does this in
 
 Behavioural features (transports, timeouts, one-way calls) aren't here: a
 vector can't prove them. They're for live cross-runtime calls, later.
+
+### Asking the reference directly
+
+Beyond the fixed vectors, [`comline-reference`](../reference/README.md) is
+`comline-runtime` as a process: it answers any `op`/`input`/`bytes` question
+in this corpus's encoding, newline-delimited JSON on stdin and stdout, so a
+fuzzer in another language can compare its runtime with the reference on
+inputs no vector holds.
