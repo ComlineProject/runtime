@@ -840,7 +840,7 @@ pub mod tokio {
     use tokio_util::codec::{Framed, LengthDelimitedCodec};
 
     use super::Timer;
-    use crate::contract::stream::{MAX_FRAME, PREFIX_LEN};
+    use crate::contract::stream::{DEFAULT_MAX_FRAME, PREFIX_LEN};
     use crate::contract::RuntimeError;
 
     /// An [`AsyncTransport`](super::AsyncTransport) over a tokio TCP stream,
@@ -857,7 +857,7 @@ pub mod tokio {
             let codec = LengthDelimitedCodec::builder()
                 .length_field_length(PREFIX_LEN)
                 .little_endian()
-                .max_frame_length(MAX_FRAME)
+                .max_frame_length(DEFAULT_MAX_FRAME)
                 .new_codec();
             Self {
                 framed: Framed::new(stream, codec),
