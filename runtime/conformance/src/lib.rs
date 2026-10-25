@@ -13,6 +13,11 @@
 
 use std::collections::BTreeMap;
 
+mod intern;
+mod seed;
+
+pub use seed::{check, TypeSeed};
+
 use serde::de::Error as _;
 use serde::ser::{SerializeSeq, SerializeStruct, SerializeTuple};
 use serde::{Deserialize, Deserializer, Serialize, Serializer};
@@ -42,6 +47,10 @@ pub enum Value {
     I32(i32),
     #[serde(with = "decimal")]
     I64(i64),
+    #[serde(with = "decimal")]
+    U128(u128),
+    #[serde(with = "decimal")]
+    I128(i128),
     F32(f32),
     F64(f64),
     String(String),
@@ -60,6 +69,8 @@ pub enum Value {
         index: u32,
         variant: String,
     },
+    /// `()`: a function's empty return, written as `{"unit": null}`.
+    Unit(()),
 }
 
 /// Serializes a [`Value`] the way a generated type with the same shape
@@ -79,6 +90,8 @@ impl Serialize for Wire<'_> {
             Value::I16(v) => s.serialize_i16(*v),
             Value::I32(v) => s.serialize_i32(*v),
             Value::I64(v) => s.serialize_i64(*v),
+            Value::U128(v) => s.serialize_u128(*v),
+            Value::I128(v) => s.serialize_i128(*v),
             Value::F32(v) => s.serialize_f32(*v),
             Value::F64(v) => s.serialize_f64(*v),
             Value::String(v) => s.serialize_str(v),
@@ -99,11 +112,11 @@ impl Serialize for Wire<'_> {
             Value::Option(None) => s.serialize_none(),
             Value::Option(Some(v)) => s.serialize_some(&Wire(v)),
             Value::Struct { name, fields } => {
-                // Generated types have `'static` names; leaking the few a
-                // test run sees keeps the impl honest to them.
-                let mut st = s.serialize_struct(leak(name), fields.len())?;
+                // Generated types have `'static` names; interning them keeps
+                // the impl honest to that.
+                let mut st = s.serialize_struct(intern::name(name), fields.len())?;
                 for (field, value) in fields {
-                    st.serialize_field(leak(field), &Wire(value))?;
+                    st.serialize_field(intern::name(field), &Wire(value))?;
                 }
                 st.end()
             }
@@ -111,13 +124,10 @@ impl Serialize for Wire<'_> {
                 enum_name,
                 index,
                 variant,
-            } => s.serialize_unit_variant(leak(enum_name), *index, leak(variant)),
+            } => s.serialize_unit_variant(intern::name(enum_name), *index, intern::name(variant)),
+            Value::Unit(()) => s.serialize_unit(),
         }
     }
-}
-
-fn leak(s: &str) -> &'static str {
-    Box::leak(s.to_owned().into_boxed_str())
 }
 
 mod decimal {
@@ -311,14 +321,34 @@ struct EncodeIn {
 
 /// A type a `decode` case reads into, described so any runtime can build a
 /// reader for it: a struct's fields in order, an enum's variants in order.
+/// It covers every shape a generated Rust type can have; unions, which the
+/// Rust generator refuses, aren't here.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum Type {
     Bool,
+    U8,
+    U16,
     U32,
+    U64,
+    U128,
+    I8,
+    I16,
     I32,
+    I64,
+    I128,
+    F32,
+    F64,
     String,
+    Unit,
     Option(Box<Type>),
+    /// `T[]`.
+    Array(Box<Type>),
+    /// `T[N]`.
+    Fixed {
+        of: Box<Type>,
+        len: usize,
+    },
     Struct {
         name: String,
         fields: Vec<(String, Type)>,
@@ -586,7 +616,7 @@ fn encode(op: Op, input: &serde_json::Value) -> Result<Vec<u8>, Outcome> {
             let i: RequestIn = parse(input)?;
             if i.framing == FRAMING_DATAGRAM2 {
                 let protocol = i.protocol.ok_or_else(|| Outcome::Fail("no `protocol`".into()))?;
-                let call = Call::new(i.call_id, leak(&i.method));
+                let call = Call::new(i.call_id, intern::name(&i.method));
                 let f = Datagram2Framing;
                 let encoded = match i.format.as_str() {
                     FORMAT_JSON => f.encode_request(
@@ -614,7 +644,7 @@ fn encode(op: Op, input: &serde_json::Value) -> Result<Vec<u8>, Outcome> {
             }
             if i.one_way && i.framing == FRAMING_JSONRPC {
                 // Only a connection sends one-way calls as notifications.
-                let call = Call::new(i.call_id, leak(&i.method));
+                let call = Call::new(i.call_id, intern::name(&i.method));
                 let f = JsonRpcFraming;
                 let encoded = match i.format.as_str() {
                     FORMAT_JSON => ConnectionFraming::encode_request(
@@ -634,7 +664,7 @@ fn encode(op: Op, input: &serde_json::Value) -> Result<Vec<u8>, Outcome> {
             }
             let framing = framing_of(&i.framing)
                 .ok_or_else(|| Outcome::NotImplemented(format!("framing `{}`", i.framing)))?;
-            let call = Call::new(i.call_id, leak(&i.method));
+            let call = Call::new(i.call_id, intern::name(&i.method));
             let encoded = match i.format.as_str() {
                 FORMAT_JSON => with_framing!(framing, |f| Framing::encode_request(
                     &f,
@@ -695,7 +725,7 @@ fn decode(
         Op::NameHash | Op::Encode => Ok(None),
         Op::Decode => {
             let i: DecodeIn = parse(input)?;
-            Ok(decode_as(&i.format, &i.ty, bytes)?.map(|value| {
+            Ok(decode_typed(&i.format, &i.ty, bytes)?.map(|value| {
                 to_json(&DecodeIn {
                     format: i.format,
                     ty: i.ty,
@@ -853,6 +883,39 @@ fn parse<T: for<'de> Deserialize<'de>>(input: &serde_json::Value) -> Result<T, O
 
 fn to_json<T: Serialize>(v: &T) -> serde_json::Value {
     serde_json::to_value(v).expect("vector types serialize")
+}
+
+/// The reference's answer to one question: what `comline-runtime` encodes
+/// an input to, or what it decodes bytes to.
+#[derive(Debug, Clone, PartialEq)]
+pub enum Answer {
+    /// The input encodes to these bytes.
+    Bytes(Vec<u8>),
+    /// The bytes decode, to this input (in the case's own form).
+    Accept(serde_json::Value),
+    /// The runtime refuses the bytes.
+    Reject,
+    /// The runtime has no implementation of something the question needs.
+    NotImplemented(String),
+    /// The question itself is malformed.
+    Bad(String),
+}
+
+/// Asks `comline-runtime` one question, as a case states it: with no
+/// `bytes`, what `input` encodes to for `op`; with `bytes`, whether they
+/// decode, and to what.
+pub fn answer(op: Op, input: &serde_json::Value, bytes: Option<&[u8]>) -> Answer {
+    let answered = match bytes {
+        None => encode(op, input).map(Answer::Bytes),
+        Some(bytes) => {
+            decode(op, input, bytes).map(|decoded| decoded.map_or(Answer::Reject, Answer::Accept))
+        }
+    };
+    answered.unwrap_or_else(|outcome| match outcome {
+        Outcome::NotImplemented(what) => Answer::NotImplemented(what),
+        Outcome::Fail(why) => Answer::Bad(why),
+        Outcome::Pass => unreachable!("encode and decode fail with a reason"),
+    })
 }
 
 /// Runs one case against `comline-runtime`.
@@ -1257,6 +1320,22 @@ fn format_cases(feature_id: &str, format: &str) -> Vec<(String, Op, serde_json::
                 variant: "Green".into(),
             },
         ),
+        ("u128-max", Value::U128(u128::MAX)),
+        ("i128-min", Value::I128(i128::MIN)),
+        (
+            "tuple-u8",
+            Value::Tuple(vec![Value::U8(1), Value::U8(2), Value::U8(3), Value::U8(4)]),
+        ),
+        // Longer than 32: generated Rust needs `serde_big_array` for it.
+        ("tuple-u8-33", Value::Tuple(vec![Value::U8(7); 33])),
+        (
+            "array-of-options",
+            Value::Array(vec![
+                Value::Option(Some(Box::new(Value::U16(1)))),
+                Value::Option(None),
+            ]),
+        ),
+        ("unit", Value::Unit(())),
     ];
     samples
         .into_iter()
@@ -1314,33 +1393,6 @@ fn packed_cases() -> Vec<(String, Op, serde_json::Value)> {
 
 // --- Decoding what another version wrote ---
 
-/// The types `decode` cases read into, as generated code declares them:
-/// plain `serde` derives, nothing added. Decoding through them is what makes
-/// a case prove how generated code behaves, not how a hand-written decoder
-/// would.
-mod readers {
-    use serde::Deserialize;
-
-    #[derive(Deserialize)]
-    pub struct Point {
-        pub x: i32,
-        pub y: i32,
-    }
-
-    #[derive(Deserialize)]
-    pub struct Tagged {
-        pub id: u32,
-        pub label: Option<String>,
-    }
-
-    #[derive(Deserialize)]
-    pub enum Color {
-        Red,
-        Green,
-        Blue,
-    }
-}
-
 fn point_type() -> Type {
     Type::Struct {
         name: "Point".into(),
@@ -1365,67 +1417,15 @@ fn color_type() -> Type {
     }
 }
 
-fn decode_with<T: for<'de> Deserialize<'de>>(
-    format: &str,
-    bytes: &[u8],
-) -> Result<Option<T>, Outcome> {
-    match format {
-        FORMAT_JSON => Ok(Json.decode(bytes).ok()),
-        FORMAT_MSGPACK => Ok(MsgPack.decode(bytes).ok()),
-        FORMAT_PACKED => Ok(Packed.decode(bytes).ok()),
-        other => Err(Outcome::NotImplemented(format!("format `{other}`"))),
-    }
-}
-
-/// Decodes `bytes` as `ty` through the reader generated code would have;
-/// `Ok(None)` when the format refuses them.
-fn decode_as(format: &str, ty: &Type, bytes: &[u8]) -> Result<Option<Value>, Outcome> {
-    let point = |p: readers::Point| Value::Struct {
-        name: "Point".into(),
-        fields: vec![("x".into(), Value::I32(p.x)), ("y".into(), Value::I32(p.y))],
-    };
-    let tagged = |t: readers::Tagged| Value::Struct {
-        name: "Tagged".into(),
-        fields: vec![
-            ("id".into(), Value::U32(t.id)),
-            (
-                "label".into(),
-                Value::Option(t.label.map(|l| Box::new(Value::String(l)))),
-            ),
-        ],
-    };
-    let color = |c: readers::Color| {
-        let (index, variant) = match c {
-            readers::Color::Red => (0, "Red"),
-            readers::Color::Green => (1, "Green"),
-            readers::Color::Blue => (2, "Blue"),
-        };
-        Value::UnitVariant {
-            enum_name: "Color".into(),
-            index,
-            variant: variant.into(),
-        }
-    };
-    Ok(if *ty == Type::Bool {
-        decode_with::<bool>(format, bytes)?.map(Value::Bool)
-    } else if *ty == Type::U32 {
-        decode_with::<u32>(format, bytes)?.map(Value::U32)
-    } else if *ty == Type::String {
-        decode_with::<String>(format, bytes)?.map(Value::String)
-    } else if *ty == Type::Option(Box::new(Type::U32)) {
-        decode_with::<Option<u32>>(format, bytes)?
-            .map(|v| Value::Option(v.map(|v| Box::new(Value::U32(v)))))
-    } else if *ty == point_type() {
-        decode_with(format, bytes)?.map(point)
-    } else if *ty == tagged_type() {
-        decode_with(format, bytes)?.map(tagged)
-    } else if *ty == color_type() {
-        decode_with(format, bytes)?.map(color)
-    } else {
-        return Err(Outcome::NotImplemented(format!(
-            "a reader for {}",
-            to_json(ty)
-        )));
+/// Decodes `bytes` as `ty` the way a generated type with that shape would,
+/// through [`TypeSeed`]; `Ok(None)` when the format refuses them.
+pub fn decode_typed(format: &str, ty: &Type, bytes: &[u8]) -> Result<Option<Value>, Outcome> {
+    let seed = TypeSeed(ty);
+    Ok(match format {
+        FORMAT_JSON => Json.decode_seed(seed, bytes).ok(),
+        FORMAT_MSGPACK => MsgPack.decode_seed(seed, bytes).ok(),
+        FORMAT_PACKED => Packed.decode_seed(seed, bytes).ok(),
+        other => return Err(Outcome::NotImplemented(format!("format `{other}`"))),
     })
 }
 
@@ -1433,7 +1433,7 @@ fn decode_as(format: &str, ty: &Type, bytes: &[u8]) -> Result<Option<Value>, Out
 /// value the runtime decoded, or a rejection if it refused them.
 fn decode_case(id: String, format: &str, written: &Value, ty: Type) -> Case {
     let bytes = encode_with(format, written).expect("reference formats encode");
-    match decode_as(format, &ty, &bytes) {
+    match decode_typed(format, &ty, &bytes) {
         Ok(Some(value)) => Case {
             id,
             op: Op::Decode,
@@ -1473,6 +1473,11 @@ fn decode_cases(feature_id: &str, format: &str) -> Vec<Case> {
         variant: variant.into(),
     };
     let p = |id: &str| format!("{feature_id}/{id}");
+    let bytes = |n: u8| Value::Tuple((1..=n).map(Value::U8).collect());
+    let fixed = |len: usize| Type::Fixed {
+        of: Box::new(Type::U8),
+        len,
+    };
     vec![
         // Written with the fields the other way round: by name, x stays 1;
         // by position, x reads the written y.
@@ -1525,6 +1530,24 @@ fn decode_cases(feature_id: &str, format: &str) -> Vec<Case> {
             format,
             &Value::U64(1 << 40),
             Type::U32,
+        ),
+        // The shapes beyond the scalars a generated type can have.
+        decode_case(p("decode-u128"), format, &Value::U128(u128::MAX), Type::U128),
+        decode_case(p("decode-i128"), format, &Value::I128(i128::MIN), Type::I128),
+        decode_case(p("decode-unit"), format, &Value::Unit(()), Type::Unit),
+        decode_case(p("decode-fixed-array"), format, &bytes(4), fixed(4)),
+        decode_case(p("decode-fixed-array-33"), format, &bytes(33), fixed(33)),
+        // A fixed array written one element short, or one too long.
+        decode_case(p("decode-fixed-array-short"), format, &bytes(3), fixed(4)),
+        decode_case(p("decode-fixed-array-long"), format, &bytes(5), fixed(4)),
+        decode_case(
+            p("decode-array-of-options"),
+            format,
+            &Value::Array(vec![
+                Value::Option(Some(Box::new(Value::U16(1)))),
+                Value::Option(None),
+            ]),
+            Type::Array(Box::new(Type::Option(Box::new(Type::U16)))),
         ),
     ]
 }
