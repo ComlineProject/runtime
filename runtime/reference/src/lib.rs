@@ -22,6 +22,8 @@ use comline_runtime::contract::{
 };
 use comline_runtime_conformance::{answer, check, Answer, Hex, Op, Type, Value};
 
+mod session;
+
 /// The protocol's version. Ops are only ever added under it; a change to an
 /// existing op's request or reply is a new version.
 pub const PROTOCOL: u32 = 1;
@@ -42,7 +44,7 @@ pub fn ops() -> Vec<&'static str> {
     CORPUS_OPS
         .iter()
         .copied()
-        .chain(["check", "version"])
+        .chain(["check", "version", "session"])
         .collect()
 }
 
@@ -101,6 +103,12 @@ fn respond(fields: &Map<String, Json>) -> Result<Map<String, Json>, String> {
                 "framings": FRAMINGS,
             }
         }),
+        "session" => {
+            if bytes.is_some() {
+                return Err("`session` takes no `bytes`".into());
+            }
+            return session::session(input);
+        }
         "check" => {
             if bytes.is_some() {
                 return Err("`check` takes no `bytes`".into());
