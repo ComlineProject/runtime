@@ -367,7 +367,8 @@ def markdown(rows, gone, verdicts, accepted, problems, a):
     lines = ["## Instruction counts", ""]
     if not compared:
         lines += [
-            "The base has no benchmarks to compare with, so these are recorded only.",
+            "The base has no benchmarks to compare with, so these are recorded only."
+            if a.limit is not None else "The head alone, with nothing to compare with.",
             "",
             "| Benchmark | Instructions |",
             "|---|---:|",

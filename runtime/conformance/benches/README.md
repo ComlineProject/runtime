@@ -83,5 +83,10 @@ Results name each benchmark by an id built from the definitions:
   Callgrind), which only compare against the same runtime on another commit.
 - `benches` has one entry per id above.
 
-Rust's CI writes it as an artifact on every pull request; see
+Rust's CI writes it as an artifact on every pull request. On every push to
+`main` it benches the new head and commits the report to the
+[`reports`](https://github.com/ComlineProject/runtime/tree/reports) branch,
+where the docs read it:
+`https://raw.githubusercontent.com/ComlineProject/runtime/reports/rust.bench.json`.
+`commit` is the `main` commit it measured. See
 [`runtime/core/benches`](../../core/benches) for how the Rust benches run.
