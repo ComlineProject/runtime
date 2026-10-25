@@ -237,7 +237,10 @@ mod tests {
         let slash = MethodName::from_json(r"app.Chat\/count").unwrap();
         assert!("app.Chat/count" == slash);
         #[cfg(feature = "alloc")]
-        assert!(alloc::string::String::from("app.Chat/count") == slash);
+        {
+            let owned = alloc::string::String::from("app.Chat/count");
+            assert!(owned == slash);
+        }
         assert_ne!(MethodName::from_json(r"gr\u0065et").unwrap(), "greets");
         assert_ne!(MethodName::from_json(r"gr\u0065et").unwrap(), "gree");
     }
