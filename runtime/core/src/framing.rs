@@ -134,6 +134,32 @@ fn put_u64(n: u64, out: &mut dyn BufMut) {
     out.put_slice(&digits[start..]);
 }
 
+/// Writes a request: the method, the params `params` writes, and the `id`,
+/// which a notification (`request_id` `None`) goes without. Both ways of
+/// encoding a request go through here, so they can't write different frames.
+fn put_request(
+    name: &str,
+    request_id: Option<u64>,
+    out: &mut dyn BufMut,
+    params: impl FnOnce(&mut dyn BufMut) -> Result<(), RuntimeError>,
+) -> Result<(), RuntimeError> {
+    put_method(name, out);
+    params(out)?;
+    if let Some(id) = request_id {
+        out.put_slice(br#","id":"#);
+        put_u64(id, out);
+    }
+    out.put_slice(b"}");
+    Ok(())
+}
+
+/// Params already serialised. None at all are `null`, as an empty `result`
+/// is: a frame with nothing after `"params":` isn't JSON.
+fn put_params(params: &[u8], out: &mut dyn BufMut) -> Result<(), RuntimeError> {
+    out.put_slice(if params.is_empty() { b"null" } else { params });
+    Ok(())
+}
+
 impl Framing for JsonRpcFraming {
     fn name(&self) -> &'static str {
         crate::contract::FRAMING_JSONRPC
@@ -151,12 +177,21 @@ impl Framing for JsonRpcFraming {
         W: WireFormat,
         P: Serialize + ?Sized,
     {
-        put_method(call.name, out);
-        fmt.encode(params, out)?;
-        out.put_slice(br#","id":"#);
-        put_u64(request_id, out);
-        out.put_slice(b"}");
-        Ok(())
+        put_request(call.name, Some(request_id), out, |out| {
+            fmt.encode(params, out)
+        })
+    }
+
+    fn encode_request_body(
+        &self,
+        _call_id: u16,
+        name: &str,
+        request_id: u64,
+        params: &[u8],
+        out: &mut dyn BufMut,
+    ) {
+        // Infallible: the params are written as they are.
+        let _ = put_request(name, Some(request_id), out, |out| put_params(params, out));
     }
 
     fn decode_request<'f>(&self, frame: &'f [u8]) -> Option<Request<'f>> {
@@ -236,14 +271,24 @@ impl ConnectionFraming for JsonRpcFraming {
         W: WireFormat,
         P: Serialize + ?Sized,
     {
-        if !one_way {
-            return Framing::encode_request(self, call, request_id, params, fmt, out);
-        }
-        // A notification: no `id`, so the peer sends nothing back.
-        put_method(call.name, out);
-        fmt.encode(params, out)?;
-        out.put_slice(b"}");
-        Ok(())
+        // A notification has no `id`, so the peer sends nothing back.
+        let id = (!one_way).then_some(request_id);
+        put_request(call.name, id, out, |out| fmt.encode(params, out))
+    }
+
+    fn encode_request_body(
+        &self,
+        _protocol: ProtocolNumber,
+        _call_id: u16,
+        name: &str,
+        request_id: u64,
+        one_way: bool,
+        params: &[u8],
+        out: &mut dyn BufMut,
+    ) {
+        let id = (!one_way).then_some(request_id);
+        // Infallible: the params are written as they are.
+        let _ = put_request(name, id, out, |out| put_params(params, out));
     }
 
     fn encode_reply(
@@ -382,6 +427,57 @@ mod tests {
         assert_eq!(req.call, RequestCall::Name("greet".into()));
         assert_eq!(req.request_id, 1);
         assert_eq!(req.params, br#"[7,"x"]"#);
+    }
+
+    /// Params serialised by the caller frame exactly as `encode_request`
+    /// frames them, as a call and as a notification. None at all are `null`,
+    /// as `()` serialises, so the frame is still JSON.
+    #[test]
+    fn a_request_framed_around_its_params_bytes_matches() {
+        let f = JsonRpcFraming;
+        for (params, bytes) in [
+            (&(7u32, "x") as &dyn erased::Params, &br#"[7,"x"]"#[..]),
+            (&(), &b""[..]),
+        ] {
+            for one_way in [false, true] {
+                let (mut generic, mut body) = (Vec::new(), Vec::new());
+                params.encode(&f, one_way, &mut generic);
+                ConnectionFraming::encode_request_body(
+                    &f, 0, 0, "greet", 1, one_way, bytes, &mut body,
+                );
+                assert_eq!(body, generic, "one_way: {one_way}");
+                assert!(serde_json::from_slice::<serde_json::Value>(&body).is_ok());
+            }
+            let (mut generic, mut body) = (Vec::new(), Vec::new());
+            params.encode(&f, false, &mut generic);
+            Framing::encode_request_body(&f, 0, "greet", 1, bytes, &mut body);
+            assert_eq!(body, generic);
+        }
+    }
+
+    /// Lets the test above hold params of different types in one list.
+    mod erased {
+        use super::*;
+
+        pub trait Params {
+            fn encode(&self, f: &JsonRpcFraming, one_way: bool, out: &mut Vec<u8>);
+        }
+
+        impl<P: Serialize> Params for P {
+            fn encode(&self, f: &JsonRpcFraming, one_way: bool, out: &mut Vec<u8>) {
+                ConnectionFraming::encode_request(
+                    f,
+                    0,
+                    Call::new(0, "greet"),
+                    1,
+                    one_way,
+                    self,
+                    &Json,
+                    out,
+                )
+                .unwrap();
+            }
+        }
     }
 
     #[test]

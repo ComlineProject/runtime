@@ -599,6 +599,74 @@ fn reply_of(envelope: Envelope) -> Reply {
     }
 }
 
+/// A request's frame as a caller that serialises the params itself makes
+/// it: the params with the format alone, then `encode_request_body`, once
+/// per trait the framing frames requests through. Each must equal what
+/// [`encode`] writes. The method name is borrowed, not interned, as a
+/// binding's is.
+fn encode_request_bodies(
+    input: &serde_json::Value,
+) -> Result<Vec<(&'static str, Vec<u8>)>, Outcome> {
+    let i: RequestIn = parse(input)?;
+    let mut params = Vec::new();
+    match i.format.as_str() {
+        FORMAT_JSON => Json.encode(&Wire(&i.params), &mut params),
+        FORMAT_MSGPACK => MsgPack.encode(&Wire(&i.params), &mut params),
+        other => return Err(Outcome::NotImplemented(format!("format `{other}`"))),
+    }
+    .map_err(|e| Outcome::Fail(format!("encoding the params failed: {e:?}")))?;
+    let (call, name, id) = (i.call_id, i.method.as_str(), i.request_id);
+    let framed = |encode: &dyn Fn(&mut Vec<u8>)| {
+        let mut out = Vec::new();
+        encode(&mut out);
+        out
+    };
+    let mut bodies = Vec::new();
+    match i.framing.as_str() {
+        FRAMING_DATAGRAM => bodies.push((
+            "Framing::encode_request_body",
+            framed(&|out| DatagramFraming.encode_request_body(call, name, id, &params, out)),
+        )),
+        FRAMING_DATAGRAM2 => {
+            let protocol = i.protocol.ok_or_else(|| Outcome::Fail("no `protocol`".into()))?;
+            bodies.push((
+                "ConnectionFraming::encode_request_body",
+                framed(&|out| {
+                    Datagram2Framing
+                        .encode_request_body(protocol, call, name, id, i.one_way, &params, out)
+                }),
+            ));
+        }
+        FRAMING_JSONRPC => {
+            if !i.one_way {
+                bodies.push((
+                    "Framing::encode_request_body",
+                    framed(&|out| {
+                        Framing::encode_request_body(&JsonRpcFraming, call, name, id, &params, out)
+                    }),
+                ));
+            }
+            bodies.push((
+                "ConnectionFraming::encode_request_body",
+                framed(&|out| {
+                    ConnectionFraming::encode_request_body(
+                        &JsonRpcFraming,
+                        0,
+                        call,
+                        name,
+                        id,
+                        i.one_way,
+                        &params,
+                        out,
+                    )
+                }),
+            ));
+        }
+        other => return Err(Outcome::NotImplemented(format!("framing `{other}`"))),
+    }
+    Ok(bodies)
+}
+
 /// Encodes `input` for `op` with `comline-runtime`.
 fn encode(op: Op, input: &serde_json::Value) -> Result<Vec<u8>, Outcome> {
     let mut out = Vec::new();
@@ -939,13 +1007,27 @@ fn run_inner(case: &Case) -> Result<(), Outcome> {
     }
 
     if case.op != Op::Decode {
+        let same = |encoded: &[u8]| {
+            encoded == bytes || (case.compare == Compare::Json && json_equal(encoded, bytes))
+        };
         let encoded = encode(case.op, &case.input)?;
-        if &encoded != bytes && !(case.compare == Compare::Json && json_equal(&encoded, bytes)) {
+        if !same(&encoded) {
             return Err(Outcome::Fail(format!(
                 "encodes to {}, expected {}",
                 to_json(&Hex(encoded)),
                 to_json(&case.bytes),
             )));
+        }
+        if case.op == Op::Request {
+            for (path, encoded) in encode_request_bodies(&case.input)? {
+                if !same(&encoded) {
+                    return Err(Outcome::Fail(format!(
+                        "{path} encodes to {}, expected {}",
+                        to_json(&Hex(encoded)),
+                        to_json(&case.bytes),
+                    )));
+                }
+            }
         }
         if matches!(case.op, Op::NameHash | Op::Encode) {
             return Ok(());

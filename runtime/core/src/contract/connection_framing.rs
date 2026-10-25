@@ -36,6 +36,25 @@ pub trait ConnectionFraming: Default {
         W: WireFormat,
         P: Serialize + ?Sized;
 
+    /// Frame a request to `protocol` around `params` already serialised in
+    /// the connection's wire format, for a caller that encodes them itself.
+    /// It writes exactly what [`encode_request`](Self::encode_request) writes
+    /// when the format serialises the params to `params`. `name` is for a
+    /// name-oriented framing; the others ignore it. Required, for the reason
+    /// [`Framing::encode_request_body`](crate::contract::Framing::encode_request_body)
+    /// gives.
+    #[allow(clippy::too_many_arguments)]
+    fn encode_request_body(
+        &self,
+        protocol: ProtocolNumber,
+        call_id: u16,
+        name: &str,
+        request_id: u64,
+        one_way: bool,
+        params: &[u8],
+        out: &mut dyn BufMut,
+    );
+
     /// Frame the reply to request `request_id`, made by `protocol`.
     fn encode_reply(
         &self,
@@ -114,6 +133,23 @@ impl ConnectionFraming for Datagram2Framing {
         out.put_u16_le(call.id);
         out.put_u64_le(request_id);
         fmt.encode(params, out)
+    }
+
+    fn encode_request_body(
+        &self,
+        protocol: ProtocolNumber,
+        call_id: u16,
+        _name: &str,
+        request_id: u64,
+        _one_way: bool,
+        params: &[u8],
+        out: &mut dyn BufMut,
+    ) {
+        out.put_u8(KIND_REQUEST);
+        put_varint(protocol, out);
+        out.put_u16_le(call_id);
+        out.put_u64_le(request_id);
+        out.put_slice(params);
     }
 
     fn encode_reply(

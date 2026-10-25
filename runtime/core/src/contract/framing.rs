@@ -28,6 +28,27 @@ pub trait Framing: Default {
         W: WireFormat,
         P: Serialize + ?Sized;
 
+    /// Frame a request around `params` already serialised in the
+    /// connection's wire format, for a caller that encodes them itself: a
+    /// binding in another language, or anything schema-driven. It writes
+    /// exactly what [`encode_request`](Self::encode_request) writes when the
+    /// format serialises the params to `params`. `name` is for a
+    /// name-oriented framing; the others ignore it.
+    ///
+    /// Deliberately **required**, like
+    /// [`encode_response_fault`](Self::encode_response_fault): a default
+    /// would have to route the bytes through `encode_request` with a format
+    /// that ignores its value, which only works for a framing that writes
+    /// the params once and as they are. Each framing writes its own.
+    fn encode_request_body(
+        &self,
+        call_id: u16,
+        name: &str,
+        request_id: u64,
+        params: &[u8],
+        out: &mut dyn BufMut,
+    );
+
     /// Parse a request frame. The `params` slice borrows `frame` and is
     /// independently decodable with the peer's `WireFormat`.
     fn decode_request<'f>(&self, frame: &'f [u8]) -> Option<Request<'f>>;
@@ -126,6 +147,19 @@ impl Framing for DatagramFraming {
         out.put_u16_le(call.id);
         out.put_u64_le(request_id);
         fmt.encode(params, out)
+    }
+
+    fn encode_request_body(
+        &self,
+        call_id: u16,
+        _name: &str,
+        request_id: u64,
+        params: &[u8],
+        out: &mut dyn BufMut,
+    ) {
+        out.put_u16_le(call_id);
+        out.put_u64_le(request_id);
+        out.put_slice(params);
     }
 
     fn decode_request<'f>(&self, frame: &'f [u8]) -> Option<Request<'f>> {
