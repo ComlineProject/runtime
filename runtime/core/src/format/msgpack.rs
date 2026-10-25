@@ -38,7 +38,7 @@ impl MsgPack {
     /// caller whose type is known only at runtime: a seed that carries the
     /// schema's type can read a value with no Rust type of its own. This is
     /// `rmp_serde::from_slice` spelled out: the same constructor, with the
-    /// default config (structs as arrays, not human-readable) and its
+    /// default config (not human-readable) and its
     /// nesting limit of 1024.
     ///
     /// Unlike [`Packed`](super::Packed) and [`Json`](super::Json), it does not
