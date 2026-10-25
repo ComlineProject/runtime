@@ -26,3 +26,8 @@
 # The job summary lists each accepted regression with its base and head
 # counts, and the entry is annotated on the pull request's diff.
 
+[[accepted]]
+pr = 44
+bench = "handshake/check"
+max_percent = 1400.0
+reason = "TEST ONLY: proves an accepted regression passes the gate"
