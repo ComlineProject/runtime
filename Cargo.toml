@@ -3,6 +3,7 @@ resolver = "2"
 members = [
     "runtime/core",
     "runtime/conformance",
+    "runtime/reference",
     "runtime-std-extra",
     "runtime-langs/c",
 
