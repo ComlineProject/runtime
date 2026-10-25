@@ -59,7 +59,7 @@ jobs:
           restore-keys: fuzz-corpus-${{ matrix.target }}-
 
       - name: Seed the corpus from the vectors
-        run: runtime/fuzz/seed-corpus.sh
+        run: sh runtime/fuzz/seed-corpus.sh
 
       - name: Fuzz for ${{ env.SECONDS_PER_TARGET }}s
         run: >
