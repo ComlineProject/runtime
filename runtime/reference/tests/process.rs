@@ -12,7 +12,7 @@ use std::process::{Child, ChildStdin, ChildStdout, Command, Stdio};
 
 use serde_json::{json, Value as Json};
 
-use comline_runtime_conformance::{Case, Expect, Op, Vectors};
+use comline_runtime_conformance::{json_equal, Case, Compare, Expect, Hex, Op, Vectors};
 
 struct Reference {
     child: Child,
@@ -61,11 +61,31 @@ impl Reference {
 struct Expected {
     request: Json,
     reply: Json,
+    /// Whether the reply's `bytes` may be any JSON text equal to the
+    /// expected one's, as for a case that compares as JSON.
+    json_bytes: bool,
+}
+
+impl Expected {
+    fn matches(&self, got: &Json) -> bool {
+        if !self.json_bytes || self.reply == *got {
+            return self.reply == *got;
+        }
+        let hex = |reply: &Json| serde_json::from_value::<Hex>(reply["bytes"].clone()).ok();
+        match (hex(&self.reply), hex(got)) {
+            (Some(wanted), Some(got_bytes)) => {
+                got["id"] == self.reply["id"]
+                    && got.as_object().map(|o| o.len()) == Some(2)
+                    && json_equal(&got_bytes.0, &wanted.0)
+            }
+            _ => false,
+        }
+    }
 }
 
 /// The requests a case makes, with the replies `run` in the conformance
-/// crate would accept: encoding gives `bytes` exactly (except for
-/// decode-only cases), decoding `bytes` gives the input back (except for
+/// crate would accept: encoding gives `bytes` exactly, or as JSON for a case
+/// that compares as JSON (except for decode-only cases), decoding `bytes` gives the input back (except for
 /// encode-only ops), and a rejection's bytes are refused.
 fn expectations(case: &Case) -> Vec<Expected> {
     let id = |what: &str| format!("{}/{what}", case.id);
@@ -75,6 +95,7 @@ fn expectations(case: &Case) -> Vec<Expected> {
         out.push(Expected {
             request: json!({ "id": id("reject"), "op": case.op, "input": case.input, "bytes": bytes }),
             reply: json!({ "id": id("reject"), "accept": false }),
+            json_bytes: false,
         });
         return out;
     }
@@ -82,12 +103,14 @@ fn expectations(case: &Case) -> Vec<Expected> {
         out.push(Expected {
             request: json!({ "id": id("encode"), "op": case.op, "input": case.input }),
             reply: json!({ "id": id("encode"), "bytes": bytes }),
+            json_bytes: case.compare == Compare::Json,
         });
     }
     if !matches!(case.op, Op::NameHash | Op::Encode) {
         out.push(Expected {
             request: json!({ "id": id("decode"), "op": case.op, "input": case.input, "bytes": bytes }),
             reply: json!({ "id": id("decode"), "accept": true, "input": case.input }),
+            json_bytes: false,
         });
     }
     out
@@ -119,7 +142,7 @@ fn replays_every_vector() {
         let wrong: Vec<String> = expected
             .iter()
             .zip(replies)
-            .filter(|(e, got)| e.reply != **got)
+            .filter(|(e, got)| !e.matches(got))
             .map(|(e, got)| format!("  {}: got {got}, expected {}", e.request["id"], e.reply))
             .collect();
         assert!(

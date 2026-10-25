@@ -50,6 +50,10 @@ The ops, and what their `input` holds:
     `9007199254740992` doesn't equal `9007199254740993`.
   - The same holds for JSON inside a frame: JSON-RPC params, results and
     error data.
+  - Strings compare by the text they hold, however they're escaped:
+    `"app.Chat\/count"` equals `"app.Chat/count"`. Most such cases' bytes
+    are the reference's own output, but a `found-*` case can spell one
+    another way, which every runtime must read.
 - **`"expect": "reject"`:** decoding `bytes` must fail. The input then names
   only the framing, where there is one.
 - **Bytes** are lowercase hex.

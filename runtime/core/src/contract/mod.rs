@@ -14,6 +14,7 @@ mod envelope;
 mod error;
 mod framing;
 mod handshake;
+mod method_name;
 mod peer;
 mod wire;
 
@@ -25,9 +26,9 @@ pub use envelope::Envelope;
 pub use error::RuntimeError;
 pub use framing::{Call, DatagramFraming, Framing, Request, RequestCall};
 pub use handshake::{
-    name_hash, HandshakeFrame, FORMAT_JSON, FORMAT_MSGPACK, FORMAT_PACKED, FRAMING_DATAGRAM, FRAMING_DATAGRAM2,
-    FRAMING_JSONRPC,
-    HANDSHAKE_COMLINE, HANDSHAKE_NONE,
+    name_hash, HandshakeFrame, FORMAT_JSON, FORMAT_MSGPACK, FORMAT_PACKED, FRAMING_DATAGRAM,
+    FRAMING_DATAGRAM2, FRAMING_JSONRPC, HANDSHAKE_COMLINE, HANDSHAKE_NONE,
 };
+pub use method_name::{Chars as MethodNameChars, MethodName};
 pub use peer::{ConnectionId, Peer};
 pub use wire::WireFormat;

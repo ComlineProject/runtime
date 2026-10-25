@@ -1,6 +1,6 @@
 use serde::Serialize;
 
-use crate::contract::{BufMut, Envelope, RuntimeError, WireFormat};
+use crate::contract::{BufMut, Envelope, MethodName, RuntimeError, WireFormat};
 
 /// How a call is turned into bytes on the wire and back — the axis orthogonal
 /// to [`WireFormat`] (which serialises the *parts*). The Comline datagram
@@ -94,7 +94,8 @@ pub struct Request<'f> {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum RequestCall<'f> {
     Id(u16),
-    Name(&'f str),
+    /// The method's name, as the frame spells it.
+    Name(MethodName<'f>),
 }
 
 // ── the Comline datagram framing ───────────────────────────────────────────

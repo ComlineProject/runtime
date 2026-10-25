@@ -248,7 +248,8 @@ pub enum Compare {
     /// decimals, so `1` equals `1.0` but `9007199254740992` doesn't equal
     /// `9007199254740993`. The same holds for JSON carried inside the frame:
     /// JSON-RPC params, results and error data. `comline-runtime`, the
-    /// reference, reproduces the bytes exactly.
+    /// reference, reproduces the bytes exactly, except for a `found-*` case
+    /// that spells a string another way.
     Json,
 }
 
@@ -817,7 +818,7 @@ fn decode(
             };
             let (call_id, method) = match req.call {
                 RequestCall::Id(id) => (id, i.method.clone()),
-                RequestCall::Name(name) => (i.call_id, name.to_owned()),
+                RequestCall::Name(name) => (i.call_id, name.to_string()),
             };
             let params = encode_with(&i.format, &i.params)
                 .ok_or_else(|| Outcome::NotImplemented(format!("format `{}`", i.format)))?;
@@ -939,7 +940,7 @@ fn run_inner(case: &Case) -> Result<(), Outcome> {
 
     if case.op != Op::Decode {
         let encoded = encode(case.op, &case.input)?;
-        if &encoded != bytes {
+        if &encoded != bytes && !(case.compare == Compare::Json && json_equal(&encoded, bytes)) {
             return Err(Outcome::Fail(format!(
                 "encodes to {}, expected {}",
                 to_json(&Hex(encoded)),
@@ -957,6 +958,20 @@ fn run_inner(case: &Case) -> Result<(), Outcome> {
             case.input
         ))),
         None => Err(Outcome::Fail("refused bytes it must decode".into())),
+    }
+}
+
+/// Whether two JSON texts are the same JSON value, for a case that compares
+/// as JSON whose bytes aren't the reference's own spelling. Stricter than
+/// [`Compare::Json`] asks: numbers parse as serde_json's, so `1` and `1.0`
+/// differ, which no such case relies on.
+pub fn json_equal(a: &[u8], b: &[u8]) -> bool {
+    match (
+        serde_json::from_slice::<serde_json::Value>(a),
+        serde_json::from_slice::<serde_json::Value>(b),
+    ) {
+        (Ok(a), Ok(b)) => a == b,
+        _ => false,
     }
 }
 
@@ -1077,6 +1092,16 @@ pub fn reference_cases() -> Vec<Vectors> {
             let (id, op, mut input) = request(p("notification"), framing, 0, "chat.ChatClient/pushed", 0, &said);
             input["one_way"] = true.into();
             connection.push((id, op, input));
+            // Found by comline-typescript's differential tests (#41): a
+            // name a JSON string can hold only escaped is written escaped.
+            connection.push(request(
+                p("found-request-method-needs-escapes"),
+                framing,
+                0,
+                "app.Chat/say \"hi\" \\ \n\t\u{1}\u{1f}\u{7f} \u{e9}\u{1f600}",
+                6,
+                &said,
+            ));
         }
         feature(
             feature_id,
@@ -1149,6 +1174,7 @@ pub fn reference_cases() -> Vec<Vectors> {
             "format-packed" => v
                 .cases
                 .extend(decode_cases("format-packed", FORMAT_PACKED)),
+            "framing-jsonrpc" => v.cases.extend(found_jsonrpc_cases()),
             _ => {}
         }
     }
@@ -1582,6 +1608,51 @@ fn found_cases(feature_id: &str, format: &str) -> Vec<Case> {
     }
 }
 
+/// JSON-RPC frames the reference writes differently but must read, found by
+/// comline-typescript's differential tests (#41). They compare as JSON, so
+/// encoding the input must give the same JSON value as `bytes`, spelled
+/// however the runtime spells it.
+fn found_jsonrpc_cases() -> Vec<Case> {
+    let spelled = |id: &str, method: &str, bytes: &[u8]| {
+        let (id, op, input) = request(
+            format!("framing-jsonrpc/found-{id}"),
+            FRAMING_JSONRPC,
+            0,
+            method,
+            1,
+            &Value::Array(vec![]),
+        );
+        let case = Case {
+            id,
+            op,
+            input,
+            bytes: Hex(bytes.to_vec()),
+            expect: Expect::Exact,
+            compare: Compare::Json,
+        };
+        assert_ne!(
+            encode(op, &case.input).ok().as_deref(),
+            Some(bytes),
+            "`{}` is the reference's own spelling",
+            case.id
+        );
+        case
+    };
+    vec![
+        // `/` escaped, as PHP's `json_encode` writes it by default.
+        spelled(
+            "request-method-escaped-slash",
+            "app.Chat/count",
+            br#"{"jsonrpc":"2.0","method":"app.Chat\/count","params":[],"id":1}"#,
+        ),
+        spelled(
+            "request-method-unicode-escapes",
+            "greet\u{e9}\u{1f600}",
+            br#"{"jsonrpc":"2.0","method":"\u0067reet\u00E9\ud83d\ude00","params":[],"id":1}"#,
+        ),
+    ]
+}
+
 /// Bytes a runtime must refuse, per feature.
 fn rejections(feature: &str) -> Vec<Case> {
     let none = serde_json::Value::Null;
@@ -1719,6 +1790,39 @@ fn rejections(feature: &str) -> Vec<Case> {
                 Op::Response,
                 framing(FRAMING_JSONRPC),
                 br#"{"jsonrpc":"2.0","result":1}"#,
+            ),
+            // Found by comline-typescript's differential tests (#42): JSON
+            // text is UTF-8 throughout, so `\xff` is refused even in a member
+            // the framing ignores.
+            reject(
+                "framing-jsonrpc/found-reject-request-invalid-utf8-in-jsonrpc",
+                Op::Request,
+                framing(FRAMING_JSONRPC),
+                b"{\"jsonrpc\":\"2.\xff\",\"method\":\"greet\",\"params\":[],\"id\":1}",
+            ),
+            reject(
+                "framing-jsonrpc/found-reject-request-invalid-utf8-in-unknown-member",
+                Op::Request,
+                framing(FRAMING_JSONRPC),
+                b"{\"jsonrpc\":\"2.0\",\"method\":\"greet\",\"params\":[],\"x\":\"\xff\",\"id\":1}",
+            ),
+            reject(
+                "framing-jsonrpc/found-reject-response-invalid-utf8-in-jsonrpc",
+                Op::Response,
+                framing(FRAMING_JSONRPC),
+                b"{\"jsonrpc\":\"2.\xff\",\"result\":1,\"id\":1}",
+            ),
+            reject(
+                "framing-jsonrpc/found-reject-response-invalid-utf8-in-unknown-member",
+                Op::Response,
+                framing(FRAMING_JSONRPC),
+                b"{\"jsonrpc\":\"2.0\",\"result\":1,\"x\":\"\xff\",\"id\":1}",
+            ),
+            reject(
+                "framing-jsonrpc/found-reject-response-invalid-utf8-in-error-message",
+                Op::Response,
+                framing(FRAMING_JSONRPC),
+                b"{\"jsonrpc\":\"2.0\",\"error\":{\"code\":1,\"message\":\"\xff\"},\"id\":1}",
             ),
         ],
         _ => vec![],
