@@ -63,7 +63,9 @@ impl Packed {
         bytes: &'de [u8],
     ) -> Result<S::Value, RuntimeError> {
         let mut de = Deserializer { input: bytes };
-        let value = seed.deserialize(&mut de).map_err(|_| RuntimeError::Serialization)?;
+        let value = seed
+            .deserialize(&mut de)
+            .map_err(|_| RuntimeError::Serialization)?;
         if !de.input.is_empty() {
             return Err(RuntimeError::Serialization);
         }
@@ -985,7 +987,10 @@ mod tests {
                     fn expecting(&self, f: &mut fmt::Formatter) -> fmt::Result {
                         f.write_str("fields")
                     }
-                    fn visit_seq<A: de::SeqAccess<'de>>(self, mut seq: A) -> Result<Vec<u64>, A::Error> {
+                    fn visit_seq<A: de::SeqAccess<'de>>(
+                        self,
+                        mut seq: A,
+                    ) -> Result<Vec<u64>, A::Error> {
                         let mut out = Vec::new();
                         for &width in self.0 {
                             out.push(match width {
