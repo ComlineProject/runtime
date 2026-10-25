@@ -7,7 +7,7 @@ use serde::{Deserialize, Serialize};
 use serde_json::value::RawValue;
 
 use crate::contract::{
-    BufMut, Call, ConnectionFraming, Envelope, Frame, Framing, ProtocolNumber, Request,
+    BufMut, Call, ConnectionFraming, Envelope, Frame, Framing, MethodName, ProtocolNumber, Request,
     RequestCall, RuntimeError, WireFormat,
 };
 
@@ -59,6 +59,63 @@ fn envelope_of<'f>(result: Option<&'f RawValue>, error: Option<ErrIn<'f>>) -> En
     }
 }
 
+/// Reads a frame as `T`. JSON text is UTF-8 (RFC 8259 §8.1), all of it:
+/// serde_json checks only the strings it reads, and skips a member `T`
+/// ignores (`jsonrpc`, `error.message`, an unknown one) without looking, so
+/// the whole frame is checked first. Read from a `str`, serde_json then
+/// doesn't check its strings again.
+fn parse<'f, T: Deserialize<'f>>(frame: &'f [u8]) -> Option<T> {
+    serde_json::from_str(core::str::from_utf8(frame).ok()?).ok()
+}
+
+/// The method a request names, from its `method` member, which must be a
+/// string. It's read as written, so a name in any JSON spelling is borrowed
+/// from the frame rather than copied out to unescape it.
+fn method_of(method: &RawValue) -> Option<MethodName<'_>> {
+    let text = method.get().strip_prefix('"')?.strip_suffix('"')?;
+    MethodName::from_json(text)
+}
+
+/// Writes `{"jsonrpc":"2.0","method":<name>,"params":`, with the name a
+/// JSON string escaped as serde_json escapes one: `"` and `\` by backslash,
+/// control characters as `\b`, `\f`, `\n`, `\r`, `\t` or `\u00XX`, and
+/// nothing else. A generated name needs no escape, and goes out in one slice.
+fn put_method(name: &str, out: &mut dyn BufMut) {
+    const HEX: &[u8; 16] = b"0123456789abcdef";
+    out.put_slice(br#"{"jsonrpc":"2.0","method":""#);
+    let bytes = name.as_bytes();
+    let mut start = 0;
+    for (i, &b) in bytes.iter().enumerate() {
+        let control;
+        let escaped: &[u8] = match b {
+            b'"' => br#"\""#,
+            b'\\' => br"\\",
+            b'\n' => br"\n",
+            b'\r' => br"\r",
+            b'\t' => br"\t",
+            0x08 => br"\b",
+            0x0c => br"\f",
+            0x00..=0x1f => {
+                control = [
+                    b'\\',
+                    b'u',
+                    b'0',
+                    b'0',
+                    HEX[usize::from(b >> 4)],
+                    HEX[usize::from(b & 0xf)],
+                ];
+                &control
+            }
+            _ => continue,
+        };
+        out.put_slice(&bytes[start..i]);
+        out.put_slice(escaped);
+        start = i + 1;
+    }
+    out.put_slice(&bytes[start..]);
+    out.put_slice(br#"","params":"#);
+}
+
 fn u64_bytes(n: u64) -> impl AsRef<[u8]> {
     // small, no itoa dep
     let s = n.to_string();
@@ -82,10 +139,7 @@ impl Framing for JsonRpcFraming {
         W: WireFormat,
         P: Serialize + ?Sized,
     {
-        // method names are generated identifiers — no JSON escaping needed.
-        out.put_slice(br#"{"jsonrpc":"2.0","method":""#);
-        out.put_slice(call.name.as_bytes());
-        out.put_slice(br#"","params":"#);
+        put_method(call.name, out);
         fmt.encode(params, out)?;
         out.put_slice(br#","id":"#);
         out.put_slice(u64_bytes(request_id).as_ref());
@@ -96,15 +150,16 @@ impl Framing for JsonRpcFraming {
     fn decode_request<'f>(&self, frame: &'f [u8]) -> Option<Request<'f>> {
         #[derive(Deserialize)]
         struct ReqIn<'a> {
-            method: &'a str,
+            #[serde(borrow)]
+            method: &'a RawValue,
             #[serde(borrow, default)]
             params: Option<&'a RawValue>,
             #[serde(default)]
             id: Option<u64>,
         }
-        let r: ReqIn = serde_json::from_slice(frame).ok()?;
+        let r: ReqIn = parse(frame)?;
         Some(Request {
-            call: RequestCall::Name(r.method),
+            call: RequestCall::Name(method_of(r.method)?),
             request_id: r.id.unwrap_or(0),
             params: r.params.map(|p| p.get().as_bytes()).unwrap_or(b"null"),
         })
@@ -145,7 +200,7 @@ impl Framing for JsonRpcFraming {
             error: Option<ErrIn<'a>>,
             id: u64,
         }
-        let r: RespIn = serde_json::from_slice(frame).ok()?;
+        let r: RespIn = parse(frame)?;
         Some((r.id, envelope_of(r.result, r.error)))
     }
 }
@@ -173,9 +228,7 @@ impl ConnectionFraming for JsonRpcFraming {
             return Framing::encode_request(self, call, request_id, params, fmt, out);
         }
         // A notification: no `id`, so the peer sends nothing back.
-        out.put_slice(br#"{"jsonrpc":"2.0","method":""#);
-        out.put_slice(call.name.as_bytes());
-        out.put_slice(br#"","params":"#);
+        put_method(call.name, out);
         fmt.encode(params, out)?;
         out.put_slice(b"}");
         Ok(())
@@ -199,7 +252,7 @@ impl ConnectionFraming for JsonRpcFraming {
         #[derive(Deserialize)]
         struct MessageIn<'a> {
             #[serde(borrow, default)]
-            method: Option<&'a str>,
+            method: Option<&'a RawValue>,
             #[serde(borrow, default)]
             params: Option<&'a RawValue>,
             #[serde(default)]
@@ -209,12 +262,12 @@ impl ConnectionFraming for JsonRpcFraming {
             #[serde(borrow, default)]
             error: Option<ErrIn<'a>>,
         }
-        let m: MessageIn = serde_json::from_slice(frame).ok()?;
+        let m: MessageIn = parse(frame)?;
         Some(match m.method {
             Some(method) => Frame::Request {
                 protocol: None,
                 request: Request {
-                    call: RequestCall::Name(method),
+                    call: RequestCall::Name(method_of(method)?),
                     request_id: m.id.unwrap_or(0),
                     params: m.params.map(|p| p.get().as_bytes()).unwrap_or(b"null"),
                 },
@@ -238,15 +291,22 @@ mod tests {
     fn request_round_trips() {
         let f = JsonRpcFraming;
         let mut frame = Vec::new();
-        Framing::encode_request(&f, Call::new(0, "greet"), 1, &(7u32, "x"), &Json, &mut frame)
-            .unwrap();
+        Framing::encode_request(
+            &f,
+            Call::new(0, "greet"),
+            1,
+            &(7u32, "x"),
+            &Json,
+            &mut frame,
+        )
+        .unwrap();
         assert_eq!(
             std::str::from_utf8(&frame).unwrap(),
             r#"{"jsonrpc":"2.0","method":"greet","params":[7,"x"],"id":1}"#
         );
 
         let req = f.decode_request(&frame).unwrap();
-        assert_eq!(req.call, RequestCall::Name("greet"));
+        assert_eq!(req.call, RequestCall::Name("greet".into()));
         assert_eq!(req.request_id, 1);
         assert_eq!(req.params, br#"[7,"x"]"#);
     }
@@ -290,8 +350,17 @@ mod tests {
     fn on_a_connection_a_one_way_call_is_a_notification() {
         let f = JsonRpcFraming;
         let mut frame = Vec::new();
-        ConnectionFraming::encode_request(&f, 0, Call::new(0, "chat.Chat/pushed"), 4, true, &("hi",), &Json, &mut frame)
-            .unwrap();
+        ConnectionFraming::encode_request(
+            &f,
+            0,
+            Call::new(0, "chat.Chat/pushed"),
+            4,
+            true,
+            &("hi",),
+            &Json,
+            &mut frame,
+        )
+        .unwrap();
         assert_eq!(
             std::str::from_utf8(&frame).unwrap(),
             r#"{"jsonrpc":"2.0","method":"chat.Chat/pushed","params":["hi"]}"#
@@ -300,32 +369,71 @@ mod tests {
             f.decode(&frame),
             Some(Frame::Request {
                 protocol: None,
-                request: Request { call: RequestCall::Name("chat.Chat/pushed"), request_id: 0, params: br#"["hi"]"# },
+                request: Request {
+                    call: RequestCall::Name("chat.Chat/pushed".into()),
+                    request_id: 0,
+                    params: br#"["hi"]"#
+                },
                 one_way: true,
             })
         );
 
         // A call that wants a reply keeps its id, as in lockstep.
         let mut call = Vec::new();
-        ConnectionFraming::encode_request(&f, 0, Call::new(0, "send"), 4, false, &("hi",), &Json, &mut call)
-            .unwrap();
+        ConnectionFraming::encode_request(
+            &f,
+            0,
+            Call::new(0, "send"),
+            4,
+            false,
+            &("hi",),
+            &Json,
+            &mut call,
+        )
+        .unwrap();
         let mut lockstep = Vec::new();
-        Framing::encode_request(&f, Call::new(0, "send"), 4, &("hi",), &Json, &mut lockstep).unwrap();
+        Framing::encode_request(&f, Call::new(0, "send"), 4, &("hi",), &Json, &mut lockstep)
+            .unwrap();
         assert_eq!(call, lockstep);
-        assert!(matches!(f.decode(&call), Some(Frame::Request { request: Request { request_id: 4, .. }, one_way: false, .. })));
+        assert!(matches!(
+            f.decode(&call),
+            Some(Frame::Request {
+                request: Request { request_id: 4, .. },
+                one_way: false,
+                ..
+            })
+        ));
     }
 
     #[test]
     fn on_a_connection_anything_without_a_method_is_a_reply() {
         let f = JsonRpcFraming;
-        for envelope in [Envelope::Ok(br#"{"body":"hi"}"#), Envelope::Err { id: 3, body: br#"{"why":"no"}"# }, Envelope::Fault] {
+        for envelope in [
+            Envelope::Ok(br#"{"body":"hi"}"#),
+            Envelope::Err {
+                id: 3,
+                body: br#"{"why":"no"}"#,
+            },
+            Envelope::Fault,
+        ] {
             let mut frame = Vec::new();
             f.encode_reply(0, 9, &envelope, &mut frame);
-            assert_eq!(f.decode(&frame), Some(Frame::Reply { protocol: None, request_id: 9, envelope }));
+            assert_eq!(
+                f.decode(&frame),
+                Some(Frame::Reply {
+                    protocol: None,
+                    request_id: 9,
+                    envelope
+                })
+            );
         }
         assert_eq!(
             f.decode(br#"{"jsonrpc":"2.0","result":null,"id":2}"#),
-            Some(Frame::Reply { protocol: None, request_id: 2, envelope: Envelope::Ok(b"null") })
+            Some(Frame::Reply {
+                protocol: None,
+                request_id: 2,
+                envelope: Envelope::Ok(b"null")
+            })
         );
         // A reply has to say which call it answers.
         assert_eq!(f.decode(br#"{"jsonrpc":"2.0","result":1}"#), None);
@@ -347,5 +455,131 @@ mod tests {
                 }
             ))
         );
+    }
+    /// The name a decoded request calls, as text.
+    fn method_of(call: RequestCall<'_>) -> String {
+        match call {
+            RequestCall::Name(name) => name.to_string(),
+            RequestCall::Id(id) => panic!("a JSON-RPC request named call {id}"),
+        }
+    }
+
+    #[test]
+    fn a_method_name_reads_in_any_json_spelling() {
+        let f = JsonRpcFraming;
+        for (method, name) in [
+            (r#""greet""#, "greet"),
+            // PHP's `json_encode` escapes `/` by default (#41).
+            (r#""app.Chat\/count""#, "app.Chat/count"),
+            (r#""\u0067reet""#, "greet"),
+            (r#""\u00e9t\u00C9""#, "\u{e9}t\u{c9}"),
+            (r#""\ud83d\ude00""#, "\u{1f600}"),
+            (
+                r#""a\"b\\c\n\t\r\b\f\u0001""#,
+                "a\"b\\c\n\t\r\u{8}\u{c}\u{1}",
+            ),
+        ] {
+            let request = format!(r#"{{"jsonrpc":"2.0","method":{method},"params":[],"id":1}}"#);
+            let req = f
+                .decode_request(request.as_bytes())
+                .unwrap_or_else(|| panic!("refused {request}"));
+            assert_eq!(method_of(req.call), name, "{request}");
+
+            let Some(Frame::Request {
+                request: req,
+                one_way: false,
+                ..
+            }) = f.decode(request.as_bytes())
+            else {
+                panic!("a connection refused {request}");
+            };
+            assert_eq!(method_of(req.call), name, "{request}");
+        }
+    }
+
+    #[test]
+    fn a_method_name_that_is_not_a_valid_string_is_refused() {
+        let f = JsonRpcFraming;
+        for method in [
+            r#""\ud800""#,
+            r#""\udc00x""#,
+            r#""\ud83dx""#,
+            r#""\x""#,
+            "5",
+            "[]",
+            "\"a\u{1}\"",
+        ] {
+            let request = format!(r#"{{"jsonrpc":"2.0","method":{method},"params":[],"id":1}}"#);
+            assert_eq!(f.decode_request(request.as_bytes()), None, "{request}");
+            assert_eq!(f.decode(request.as_bytes()), None, "{request}");
+        }
+    }
+
+    #[test]
+    fn a_method_name_is_written_as_serde_json_writes_it() {
+        let f = JsonRpcFraming;
+        for name in [
+            "greet",
+            "a\"b",
+            "a\\b",
+            "line\nbreak",
+            "\u{0}\u{1}\u{1f}\u{7f}",
+            "\u{8}\u{c}\t\r",
+            "\u{e9}/\u{1f600}",
+        ] {
+            let quoted = serde_json::to_string(name).unwrap();
+            let mut frame = Vec::new();
+            Framing::encode_request(&f, Call::new(0, name), 1, &(), &Json, &mut frame).unwrap();
+            assert_eq!(
+                std::str::from_utf8(&frame).unwrap(),
+                format!(r#"{{"jsonrpc":"2.0","method":{quoted},"params":null,"id":1}}"#)
+            );
+            assert_eq!(method_of(f.decode_request(&frame).unwrap().call), name);
+
+            let mut notification = Vec::new();
+            ConnectionFraming::encode_request(
+                &f,
+                0,
+                Call::new(0, name),
+                1,
+                true,
+                &(),
+                &Json,
+                &mut notification,
+            )
+            .unwrap();
+            assert_eq!(
+                std::str::from_utf8(&notification).unwrap(),
+                format!(r#"{{"jsonrpc":"2.0","method":{quoted},"params":null}}"#)
+            );
+        }
+    }
+
+    #[test]
+    fn invalid_utf8_anywhere_refuses_the_frame() {
+        let f = JsonRpcFraming;
+        // `\xff` is never UTF-8. Each frame is otherwise valid, with the bad
+        // byte in a member the framing reads or one it ignores (#42).
+        let responses: [&[u8]; 5] = [
+            b"{\"jsonrpc\":\"2.\xff\",\"result\":1,\"id\":1}",
+            b"{\"jsonrpc\":\"2.0\",\"result\":1,\"x\":\"\xff\",\"id\":1}",
+            b"{\"jsonrpc\":\"2.0\",\"error\":{\"code\":1,\"message\":\"\xff\"},\"id\":1}",
+            b"{\"jsonrpc\":\"2.0\",\"result\":\"\xff\",\"id\":1}",
+            b"{\"jsonrpc\":\"2.0\",\"result\":1,\"\xff\":0,\"id\":1}",
+        ];
+        for frame in responses {
+            assert_eq!(f.decode_response(frame), None, "{frame:?}");
+            assert_eq!(f.decode(frame), None, "{frame:?}");
+        }
+        let requests: [&[u8]; 4] = [
+            b"{\"jsonrpc\":\"2.\xff\",\"method\":\"greet\",\"params\":[],\"id\":1}",
+            b"{\"jsonrpc\":\"2.0\",\"method\":\"greet\",\"params\":[],\"x\":\"\xff\",\"id\":1}",
+            b"{\"jsonrpc\":\"2.0\",\"method\":\"greet\",\"params\":[\"\xff\"],\"id\":1}",
+            b"{\"jsonrpc\":\"2.0\",\"method\":\"gr\xffeet\",\"params\":[],\"id\":1}",
+        ];
+        for frame in requests {
+            assert_eq!(f.decode_request(frame), None, "{frame:?}");
+            assert_eq!(f.decode(frame), None, "{frame:?}");
+        }
     }
 }

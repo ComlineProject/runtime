@@ -125,3 +125,13 @@ are `artifacts/`.
 - `format-packed/reject-count-past-input`: `packed@1` couldn't read back an
   array of data-less elements, such as `[Empty {}]`, which is `01`. Core now
   refuses such schemas (ComlineProject/core#141), and the decoder stays strict.
+- `framing-jsonrpc/found-request-method-escaped-slash`,
+  `found-request-method-unicode-escapes` and
+  `found-request-method-needs-escapes`, found by comline-typescript's
+  differential tests (runtime#41): `jsonrpc@1` refused a method name written
+  with any escape, such as `"app.Chat\/count"`, and wrote one unescaped, so a
+  name with a `"` in it made invalid JSON.
+- `framing-jsonrpc/found-reject-*-invalid-utf8-*`, also from comline-typescript
+  (runtime#42): serde_json skips a member it doesn't read without checking its
+  UTF-8, so `jsonrpc@1` accepted invalid bytes in `jsonrpc`, `error.message`
+  or an unknown member. It now checks the whole frame first.
