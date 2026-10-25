@@ -36,6 +36,20 @@ pub enum RuntimeError {
     /// Never raised when there is none (`none`, `Client::new_unverified` /
     /// `Server::serve_unverified`).
     Handshake,
+    /// A frame larger than the limit: the transport's, by default
+    /// [`DEFAULT_MAX_FRAME`](crate::contract::stream::DEFAULT_MAX_FRAME).
+    ///
+    /// - **On send** it is recoverable: nothing was written, and the
+    ///   connection keeps working.
+    /// - **On receive** the stream is out of sync past the oversized frame,
+    ///   so the transport closes, and later calls return
+    ///   [`Transport`](Self::Transport).
+    ///
+    /// A blocking `Client::call` sends and then receives, so this error
+    /// alone doesn't say which side it came from. The next call returning
+    /// [`Transport`](Self::Transport) is how a caller knows the connection
+    /// closed.
+    FrameTooLarge,
 }
 
 impl fmt::Display for RuntimeError {
@@ -49,6 +63,7 @@ impl fmt::Display for RuntimeError {
             RuntimeError::Remote { id } => write!(f, "unrecognised remote error (ordinal {id})"),
             RuntimeError::Provider => f.write_str("provider failure"),
             RuntimeError::Handshake => f.write_str("connection handshake mismatch"),
+            RuntimeError::FrameTooLarge => f.write_str("frame larger than the limit"),
         }
     }
 }

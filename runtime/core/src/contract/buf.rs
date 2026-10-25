@@ -78,3 +78,70 @@ impl BufMut for SliceBuf<'_> {
         self.len = end;
     }
 }
+
+/// A [`BufMut`] that keeps nothing and only counts: [`len`](CountBuf::len) is
+/// the number of bytes an encode would have written. Allocation-free.
+///
+/// For reporting the exact size needed after a [`SliceBuf`] overflowed: encode
+/// the same frame again into a `CountBuf`. Not for the success path, which
+/// writes once.
+#[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
+pub struct CountBuf {
+    len: usize,
+}
+
+impl CountBuf {
+    pub const fn new() -> Self {
+        Self { len: 0 }
+    }
+
+    /// The bytes counted so far. Saturates at `usize::MAX` rather than wrap.
+    pub const fn len(&self) -> usize {
+        self.len
+    }
+
+    /// Whether nothing has been counted.
+    pub const fn is_empty(&self) -> bool {
+        self.len == 0
+    }
+
+    /// Reset the count to 0.
+    pub fn clear(&mut self) {
+        self.len = 0;
+    }
+}
+
+impl BufMut for CountBuf {
+    fn put_slice(&mut self, bytes: &[u8]) {
+        self.len = self.len.saturating_add(bytes.len());
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn count_buf_counts_every_put() {
+        let mut count = CountBuf::new();
+        assert!(count.is_empty());
+        count.put_slice(b"abc");
+        count.put_u8(1);
+        count.put_u16_le(2);
+        count.put_u32_le(3);
+        count.put_u64_le(4);
+        count.put_slice(&[]);
+        assert_eq!(count.len(), 3 + 1 + 2 + 4 + 8);
+        count.clear();
+        assert_eq!(count.len(), 0);
+    }
+
+    #[test]
+    fn count_buf_saturates() {
+        let mut count = CountBuf {
+            len: usize::MAX - 1,
+        };
+        count.put_slice(b"xyz");
+        assert_eq!(count.len(), usize::MAX);
+    }
+}

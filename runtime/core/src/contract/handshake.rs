@@ -122,6 +122,19 @@ impl HandshakeFrame {
             Err(RuntimeError::Handshake)
         }
     }
+
+    /// The sans-IO handshake step: parse the peer's frame from `peer` and
+    /// [`check`](Self::check) it against ours. Returns the peer's frame when
+    /// they agree; `Err(RuntimeError::Handshake)` if it doesn't parse, or
+    /// disagrees.
+    ///
+    /// As [`decode`](Self::decode), bytes after the frame are ignored
+    /// (runtime#33).
+    pub fn check_bytes(&self, peer: &[u8]) -> Result<HandshakeFrame, RuntimeError> {
+        let peer = Self::decode(peer).ok_or(RuntimeError::Handshake)?;
+        self.check(&peer)?;
+        Ok(peer)
+    }
 }
 
 #[cfg(all(test, feature = "alloc"))]
@@ -186,5 +199,53 @@ mod tests {
         let mut schema_differ = sample();
         schema_differ.ir_hash = 0;
         assert_eq!(ours.check(&schema_differ), Err(RuntimeError::Handshake));
+    }
+
+    fn bytes(frame: &HandshakeFrame) -> Vec<u8> {
+        let mut out = Vec::new();
+        frame.encode(&mut out);
+        out
+    }
+
+    #[test]
+    fn check_bytes_decodes_and_checks() {
+        let ours = sample();
+        assert_eq!(ours.check_bytes(&bytes(&sample())), Ok(sample()));
+
+        let mut caps_differ = sample();
+        caps_differ.capabilities = 0;
+        assert_eq!(
+            ours.check_bytes(&bytes(&caps_differ)),
+            Ok(caps_differ),
+            "capability bits may differ, and the peer's are returned"
+        );
+
+        let mut schema_differ = sample();
+        schema_differ.ir_hash = 0;
+        assert_eq!(
+            ours.check_bytes(&bytes(&schema_differ)),
+            Err(RuntimeError::Handshake)
+        );
+
+        let whole = bytes(&sample());
+        assert_eq!(ours.check_bytes(&[]), Err(RuntimeError::Handshake));
+        assert_eq!(
+            ours.check_bytes(&whole[..LEN - 1]),
+            Err(RuntimeError::Handshake)
+        );
+        let mut bad_magic = whole.clone();
+        bad_magic[0] = b'X';
+        assert_eq!(ours.check_bytes(&bad_magic), Err(RuntimeError::Handshake));
+    }
+
+    /// Pins current behaviour, pending runtime#33 (undecided): bytes after the
+    /// 31-byte frame are ignored, by `decode` and so by `check_bytes`. If
+    /// runtime#33 decides to refuse them, this test changes with it.
+    #[test]
+    fn trailing_bytes_are_ignored_pending_runtime_33() {
+        let mut frame = bytes(&sample());
+        frame.extend_from_slice(b"trailing");
+        assert_eq!(HandshakeFrame::decode(&frame), Some(sample()));
+        assert_eq!(sample().check_bytes(&frame), Ok(sample()));
     }
 }

@@ -51,6 +51,19 @@ impl<'a> Facts<'a> {
     }
 }
 
+impl HandshakeFrame {
+    /// The frame `local` declares: its schema fingerprint, the hashes of its
+    /// format and framing names, and its capability bits.
+    pub fn from_facts(local: &Facts<'_>) -> Self {
+        Self::new(
+            local.ir_hash,
+            local.wire_format,
+            local.framing,
+            local.capabilities,
+        )
+    }
+}
+
 /// What runs on a connection before the first call.
 ///
 /// The consumer side [`initiate`](Self::initiate)s, the provider side
@@ -85,20 +98,14 @@ pub struct ComlineHandshake;
 
 impl ComlineHandshake {
     fn exchange<T: Transport>(transport: &mut T, local: &Facts<'_>) -> Result<(), RuntimeError> {
-        let ours = HandshakeFrame::new(
-            local.ir_hash,
-            local.wire_format,
-            local.framing,
-            local.capabilities,
-        );
+        let ours = HandshakeFrame::from_facts(local);
         let mut buf = Vec::new();
         ours.encode(&mut buf);
         transport.send(&buf)?;
 
         buf.clear();
         transport.recv(&mut buf)?;
-        let peer = HandshakeFrame::decode(&buf).ok_or(RuntimeError::Handshake)?;
-        ours.check(&peer)
+        ours.check_bytes(&buf).map(|_peer| ())
     }
 }
 
@@ -140,5 +147,26 @@ impl Handshake for NoHandshake {
 
     fn respond<T: Transport>(&mut self, _: &mut T, _: &Facts<'_>) -> Result<(), RuntimeError> {
         Ok(())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::contract::{FORMAT_PACKED, FRAMING_DATAGRAM2};
+
+    #[test]
+    fn from_facts_is_new_with_the_facts() {
+        let facts = Facts::new(0x0102_0304_0506_0708, FORMAT_PACKED, FRAMING_DATAGRAM2)
+            .with_capabilities(0b101);
+        assert_eq!(
+            HandshakeFrame::from_facts(&facts),
+            HandshakeFrame::new(
+                0x0102_0304_0506_0708,
+                FORMAT_PACKED,
+                FRAMING_DATAGRAM2,
+                0b101
+            )
+        );
     }
 }
