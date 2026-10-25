@@ -47,3 +47,9 @@ pr = 46
 bench = "handshake/check"
 renamed_to = "handshake/verify"
 reason = "TEST ONLY: proves a rename is still gated"
+
+[[accepted]]
+pr = 46
+bench = "handshake/verify"
+max_percent = 1400.0
+reason = "TEST ONLY: the renamed bench accepted within its cap"
