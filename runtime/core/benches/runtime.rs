@@ -390,6 +390,7 @@ fn connection_setup() -> Step {
 
 #[library_benchmark]
 #[bench::step(setup = connection_setup)]
+#[allow(dead_code)]
 fn connection_step(step: Step) -> Step {
     let Step {
         mut state,
@@ -419,6 +420,5 @@ library_benchmark_group!(
 main!(
     library_benchmark_groups = formats,
     framings,
-    handshake,
-    connection
+    handshake
 );
