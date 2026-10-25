@@ -1,6 +1,8 @@
 //! The method a decoded request names, as its frame spells it.
 
 use core::fmt::{self, Write as _};
+use core::marker::PhantomData;
+use core::ptr::NonNull;
 
 /// The method a decoded request names ([`RequestCall::Name`](crate::contract::RequestCall::Name)).
 ///
@@ -12,8 +14,27 @@ use core::fmt::{self, Write as _};
 /// [`chars`](Self::chars) or `Display`. [`as_str`](Self::as_str) borrows it
 /// when it has no escapes, which is how every Comline runtime writes a
 /// generated name.
+///
+/// It's the size of a `&str`, so a [`RequestCall`](crate::contract::RequestCall)
+/// and every frame that holds one are no bigger than when a name was a
+/// `&str`: whether the text is escaped is the top bit of its length, which a
+/// `str`'s length never sets (no allocation exceeds `isize::MAX` bytes).
 #[derive(Clone, Copy)]
-pub struct MethodName<'f>(Spelling<'f>);
+pub struct MethodName<'f> {
+    /// The text's first byte.
+    ptr: NonNull<u8>,
+    /// The text's length in bytes, with [`ESCAPED`] set when it's JSON
+    /// string text with escapes in it.
+    len: usize,
+    text: PhantomData<&'f str>,
+}
+
+/// The bit of [`MethodName::len`] that says its text is escaped.
+const ESCAPED: usize = 1 << (usize::BITS - 1);
+
+// SAFETY: a `MethodName` is a `&'f str` and a flag, and `&str` is both.
+unsafe impl Send for MethodName<'_> {}
+unsafe impl Sync for MethodName<'_> {}
 
 #[derive(Clone, Copy)]
 enum Spelling<'f> {
@@ -27,7 +48,33 @@ enum Spelling<'f> {
 impl<'f> MethodName<'f> {
     /// The name `name`, as it is.
     pub const fn new(name: &'f str) -> Self {
-        Self(Spelling::Plain(name))
+        Self::from_spelling(name, false)
+    }
+
+    const fn from_spelling(text: &'f str, escaped: bool) -> Self {
+        // A `str` is never longer than `isize::MAX` bytes, so `ESCAPED` is
+        // free.
+        debug_assert!(text.len() & ESCAPED == 0);
+        Self {
+            // SAFETY: a reference's pointer is never null.
+            ptr: unsafe { NonNull::new_unchecked(text.as_ptr().cast_mut()) },
+            len: text.len() | if escaped { ESCAPED } else { 0 },
+            text: PhantomData,
+        }
+    }
+
+    fn spelling(&self) -> Spelling<'f> {
+        let len = self.len & !ESCAPED;
+        // SAFETY: `ptr` and `len` are a `&'f str`'s, as `from_spelling`
+        // took them apart, and `PhantomData` holds the borrow for `'f`.
+        let text = unsafe {
+            core::str::from_utf8_unchecked(core::slice::from_raw_parts(self.ptr.as_ptr(), len))
+        };
+        if self.len & ESCAPED == 0 {
+            Spelling::Plain(text)
+        } else {
+            Spelling::Json(text)
+        }
     }
 
     /// The name a JSON string spells, from its text between the quotes as
@@ -41,13 +88,13 @@ impl<'f> MethodName<'f> {
         }
         let mut rest = text;
         while unescape_one(&mut rest)?.is_some() {}
-        Some(Self(Spelling::Json(text)))
+        Some(Self::from_spelling(text, true))
     }
 
     /// The name, borrowed from the frame, when the frame wrote it without
     /// escapes.
     pub fn as_str(&self) -> Option<&'f str> {
-        match self.0 {
+        match self.spelling() {
             Spelling::Plain(name) => Some(name),
             Spelling::Json(_) => None,
         }
@@ -55,7 +102,7 @@ impl<'f> MethodName<'f> {
 
     /// The name's characters, unescaped.
     pub fn chars(&self) -> Chars<'f> {
-        match self.0 {
+        match self.spelling() {
             Spelling::Plain(name) => Chars(CharsInner::Plain(name.chars())),
             Spelling::Json(text) => Chars(CharsInner::Json(text)),
         }
@@ -70,7 +117,7 @@ impl<'f> From<&'f str> for MethodName<'f> {
 
 impl PartialEq<str> for MethodName<'_> {
     fn eq(&self, other: &str) -> bool {
-        match self.0 {
+        match self.spelling() {
             Spelling::Plain(name) => name == other,
             Spelling::Json(_) => self.chars().eq(other.chars()),
         }
@@ -104,7 +151,7 @@ impl PartialEq<MethodName<'_>> for alloc::string::String {
 
 impl PartialEq for MethodName<'_> {
     fn eq(&self, other: &Self) -> bool {
-        match (self.0, other.0) {
+        match (self.spelling(), other.spelling()) {
             (Spelling::Plain(a), Spelling::Plain(b)) => a == b,
             _ => self.chars().eq(other.chars()),
         }
@@ -115,7 +162,7 @@ impl Eq for MethodName<'_> {}
 
 impl fmt::Display for MethodName<'_> {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        match self.0 {
+        match self.spelling() {
             Spelling::Plain(name) => f.write_str(name),
             Spelling::Json(_) => self.chars().try_for_each(|c| f.write_char(c)),
         }
@@ -211,6 +258,16 @@ fn hex4(chars: &mut core::str::Chars<'_>) -> Option<u32> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_name_is_no_bigger_than_a_str() {
+        use core::mem::size_of;
+        assert_eq!(size_of::<MethodName<'_>>(), size_of::<&str>());
+        assert_eq!(
+            size_of::<crate::contract::RequestCall<'_>>(),
+            size_of::<&str>()
+        );
+    }
 
     #[test]
     fn plain_text_is_borrowed_as_it_is() {
