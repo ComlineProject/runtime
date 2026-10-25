@@ -26,8 +26,9 @@
 //!
 //! An array whose element carries no data (unit, `T[0]`, a struct of only
 //! such fields) is never produced: core refuses those at schema build
-//! (runtime#29). Its element becomes a struct of a `bool` and that element,
-//! as in `conformance/tests/properties.rs`.
+//! (ComlineProject/core#141, `validation::array-of-dataless-type`). Its
+//! element becomes a struct of a `bool` and that element, as in
+//! `conformance/tests/properties.rs`.
 
 use arbitrary::Unstructured;
 use comline_runtime::contract::{WireFormat, FORMAT_JSON, FORMAT_MSGPACK, FORMAT_PACKED};

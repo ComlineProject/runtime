@@ -25,12 +25,13 @@
 //!   payloads included, and get them all.
 //! - **JSON and MessagePack can't tell `Some(None)` from `None`,** nor
 //!   `Some(())` from `None`: `Option<Option<T>>` and `Option<()>` write
-//!   both as `null` (`nil`), as for any `serde` type. Their generated types
-//!   never put an option or unit straight in an option, so for them the
-//!   generator wraps such an inner type in an array.
+//!   both as `null` (`nil`), as for any `serde` type, so no round trip can
+//!   hold for them. For these two formats the generator wraps such an inner
+//!   type in an array instead.
 //! - **No format has arrays of data-less elements.** Core refuses `T[]`
 //!   when `T` carries no data (unit, `T[0]`, a struct of only such fields),
-//!   at schema build, so no generated type has one; runtime#29. The
+//!   at schema build, so no generated type has one (ComlineProject/core#141,
+//!   `validation::array-of-dataless-type`). The
 //!   generator gives such an element a `bool` field beside it. `packed@1`
 //!   refuses a count past the bytes left even then, which the vector
 //!   `format-packed/reject-count-past-input` pins.
@@ -105,7 +106,8 @@ fn carries_data(ty: &Type) -> bool {
 }
 
 /// `T[]`, or, when `T` carries no data, an array of a struct holding a
-/// `bool` and `T`: core refuses arrays of data-less types, runtime#29.
+/// `bool` and `T`: core refuses arrays of data-less types
+/// (ComlineProject/core#141, `validation::array-of-dataless-type`).
 fn array_of(t: Type) -> Type {
     let element = if carries_data(&t) {
         t

@@ -1690,7 +1690,7 @@ fn rejections(feature: &str) -> Vec<Case> {
                 // a count is never more than the bytes left, even for
                 // elements that take none, so `[Empty {}]`'s `01` is refused.
                 // Schemas can't declare such an array: core refuses arrays
-                // of data-less types (runtime#29).
+                // of data-less types (ComlineProject/core#141).
                 r(
                     "reject-count-past-input",
                     Type::Array(Box::new(Type::Struct {
