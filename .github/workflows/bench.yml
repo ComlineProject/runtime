@@ -5,6 +5,24 @@ name: Benchmarks
 # same machine. Instruction counts are deterministic, so a fine limit holds
 # without flaking. The comparison goes to the job summary, and the head's
 # counts to the `rust.bench.json` artifact.
+#
+# Accepting a regression: a benchmark that grows past the limit fails, unless
+# the pull request appends an `[[accepted]]` entry for it to the ledger,
+# runtime/core/benches/accepted-regressions.toml, naming the benchmark, the
+# most it may grow, and why. Likewise a benchmark the base had and the head
+# doesn't run fails, unless the pull request appends a `[[removed]]` entry;
+# one with `renamed_to` is compared under its new id against its old count,
+# so a rename is gated like anything else. A new benchmark has nothing to
+# regress from, and is recorded only. Entries are part of the diff, so
+# they're reviewed and stay in history; they count only in the pull request
+# that adds them (`pr` must be its number), cover only what they name, and
+# must be used. The job summary lists them with their counts, and each is
+# annotated on the diff. Nothing is accepted by a label, a setting or a
+# default. See CONTRIBUTING.md.
+#
+# Plain `pull_request`, not `pull_request_target`: a fork's pull request runs
+# with a read-only token and no secrets, and the acceptance it can carry is
+# its own diff, which a maintainer reviews before merging.
 
 on:
   pull_request:
@@ -16,13 +34,16 @@ env:
   CARGO_TERM_COLOR: always
   # Must match the `iai-callgrind` dev-dependency in runtime/core/Cargo.toml.
   IAI_CALLGRIND_RUNNER_VERSION: 0.16.1
-  # A benchmark fails when its instruction count grows by more than this.
-  # Measured when the gate was set up: the same commit, run twice, differs by
-  # 0 instructions on every benchmark, and with one codegen unit
+  # A benchmark fails when its instruction count grows by more than this many
+  # percent, unless the ledger accepts it (see the top). Measured when the
+  # gate was set up: the same commit, run twice, differs by 0 instructions on
+  # every benchmark, and with one codegen unit
   # (`[profile.bench]` in Cargo.toml) a change to one function leaves the
   # others' counts alone. 1% is above that, and catches a few instructions on
   # the smallest benchmarks.
-  BENCH_LIMIT: ir=1%
+  BENCH_LIMIT_PERCENT: 1
+  # The ledger of accepted regressions (see the top).
+  LEDGER: runtime/core/benches/accepted-regressions.toml
   # Base and head build into separate target directories: in a shared one,
   # Cargo names a workspace's path packages the same from either checkout, and
   # the head's older source mtimes make it reuse the base's build. They share
@@ -71,49 +92,57 @@ jobs:
             exit 0
           fi
           cd "$RUNNER_TEMP/base"
-          CARGO_TARGET_DIR="$RUNNER_TEMP/base-target" cargo bench -p comline-runtime --bench runtime -- --save-baseline=base
+          CARGO_TARGET_DIR="$RUNNER_TEMP/base-target" cargo bench -p comline-runtime --bench runtime -- \
+            --save-baseline=base --save-summary=json
+          # The base's own summaries, kept apart from the head's: they say
+          # which benchmarks the base had, so one the head drops or renames
+          # is noticed, and give a renamed one its old count.
+          mkdir -p "$RUNNER_TEMP/base-iai"
+          (cd "$IAI_CALLGRIND_HOME" && find . -name summary.json -exec cp --parents {} "$RUNNER_TEMP/base-iai" \;)
           echo "compare=true" >> "$GITHUB_OUTPUT"
 
       - name: Bench the head
-        id: head
         run: |
           find "$IAI_CALLGRIND_HOME" -name summary.json -delete 2>/dev/null || true
+          # No --callgrind-limits: the gate is the Report step's, which knows
+          # the ledger. So this step fails only when a benchmark can't run.
           if [ "${{ steps.base.outputs.compare }}" = "true" ]; then
-            # No --regression-fail-fast: it stops at the first regression and
-            # prints no summary. Without it every benchmark is compared, and
-            # the run still exits non-zero if any exceeded the limit.
-            set +e
             cargo bench -p comline-runtime --bench runtime -- \
-              --baseline=base --callgrind-limits="$BENCH_LIMIT" --save-summary=json
-            echo "status=$?" >> "$GITHUB_OUTPUT"
+              --baseline=base --save-summary=json
           else
             cargo bench -p comline-runtime --bench runtime -- --save-summary=json
-            echo "status=0" >> "$GITHUB_OUTPUT"
           fi
 
-      - name: Report
-        if: always() && steps.head.outputs.status != ''
+      - name: Report and gate
         env:
           HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+          PR: ${{ github.event.pull_request.number }}
           TOOLCHAIN: ${{ steps.toolchain.outputs.version }}
         run: |
+          # The base's ledger tells this pull request's entries from history;
+          # a base without one has none. The script's exit status is the
+          # verdict, given after the summary is written.
+          set +e
           python3 .github/scripts/bench-report.py \
             --home "$IAI_CALLGRIND_HOME" \
             --commit "$HEAD_SHA" \
             --toolchain "$TOOLCHAIN" \
-            --limit "${BENCH_LIMIT#ir=}" \
+            --limit "$BENCH_LIMIT_PERCENT" \
+            --pr "$PR" \
+            --base-home "$RUNNER_TEMP/base-iai" \
+            --ledger "$LEDGER" \
+            --base-ledger "$RUNNER_TEMP/base/$LEDGER" \
             --report runtime/conformance/reports/rust.bench.json \
             --markdown "$RUNNER_TEMP/bench.md"
+          verdict=$?
           cat "$RUNNER_TEMP/bench.md" >> "$GITHUB_STEP_SUMMARY"
+          if [ "$verdict" != 0 ]; then
+            echo "::error::The instruction-count gate failed; see the job summary."
+          fi
+          exit "$verdict"
 
       - uses: actions/upload-artifact@v4
-        if: always() && steps.head.outputs.status != ''
+        if: always() && hashFiles('runtime/conformance/reports/rust.bench.json') != ''
         with:
           name: rust.bench.json
           path: runtime/conformance/reports/rust.bench.json
-
-      - name: Gate
-        if: steps.head.outputs.status != '0'
-        run: |
-          echo "::error::A benchmark's instruction count grew beyond $BENCH_LIMIT; see the job summary."
-          exit 1

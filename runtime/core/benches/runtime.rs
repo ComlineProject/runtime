@@ -8,7 +8,9 @@
 //!
 //! Run them with `cargo bench -p comline-runtime`. They need Valgrind and
 //! `iai-callgrind-runner` at the same version as the `iai-callgrind`
-//! dev-dependency.
+//! dev-dependency. CI fails a pull request when one grows by more than 1%,
+//! unless it accepts the cost in `accepted-regressions.toml`; see
+//! `CONTRIBUTING.md` at the repository's root.
 //!
 //! Each benchmark's inputs (values, buffers, encoded bytes) are built by a
 //! setup function, which isn't measured, and handed back in the result, so
