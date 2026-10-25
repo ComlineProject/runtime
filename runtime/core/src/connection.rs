@@ -35,8 +35,8 @@ use core::time::Duration;
 use serde::Serialize;
 
 use crate::contract::{
-    Call, ConnectionFraming, ConnectionId, Datagram2Framing, Dispatch, Envelope, Frame, Kind,
-    Outcome, Peer, ProtocolNumber, Reply, Request, RequestCall, RuntimeError, WireFormat,
+    BufMut, Call, ConnectionFraming, ConnectionId, Datagram2Framing, Dispatch, Envelope, Frame,
+    Kind, Outcome, Peer, ProtocolNumber, Reply, Request, RequestCall, RuntimeError, WireFormat,
 };
 use crate::handshake::{ComlineHandshake, Facts, Handshake};
 use crate::transport::Transport;
@@ -73,11 +73,27 @@ pub enum Event<'f> {
 /// can't answer an outer call while it is still waiting on its own nested
 /// call to this side. The async driver has several calls in flight at once,
 /// answered in any order ([`unordered`](Self::unordered)).
-#[derive(Debug, Default)]
+///
+/// Either way it makes room for waiting calls as they come, unless it was
+/// given a fixed room ([`with_capacity`](Self::with_capacity)).
+#[derive(Debug)]
 pub struct State {
     next_id: u64,
     waiting: Vec<u64>,
+    /// How many calls may wait at once; `usize::MAX` grows as needed.
+    capacity: usize,
     unordered: bool,
+}
+
+impl Default for State {
+    fn default() -> Self {
+        Self {
+            next_id: 0,
+            waiting: Vec::new(),
+            capacity: usize::MAX,
+            unordered: false,
+        }
+    }
 }
 
 impl State {
@@ -89,9 +105,35 @@ impl State {
         }
     }
 
+    /// A state with room for `capacity` waiting calls, reserved now, for a
+    /// caller that mustn't allocate once it's set up (a binding through the
+    /// C ABI). A call that would wait past that is [`RuntimeError::Busy`].
+    pub fn with_capacity(capacity: usize) -> Self {
+        Self {
+            waiting: Vec::with_capacity(capacity),
+            capacity,
+            ..Self::default()
+        }
+    }
+
+    /// [`with_capacity`](Self::with_capacity), answered in any order.
+    pub fn unordered_with_capacity(capacity: usize) -> Self {
+        Self {
+            unordered: true,
+            ..Self::with_capacity(capacity)
+        }
+    }
+
+    /// Whether a call that expects a reply would find no room to wait.
+    fn full(&self, expects_reply: bool) -> bool {
+        expects_reply && self.waiting.len() >= self.capacity
+    }
+
     /// Frame a call into `out` and return its request id. A call that
     /// `expects_reply` is waited on until [`receive`](Self::receive) sees its
-    /// reply or [`abandon`](Self::abandon) gives up on it.
+    /// reply or [`abandon`](Self::abandon) gives up on it. With no room for it
+    /// to wait it's [`RuntimeError::Busy`], and nothing is spent; a failed
+    /// encode spends its id.
     #[allow(clippy::too_many_arguments)]
     pub fn encode_request<F, W, P>(
         &mut self,
@@ -108,10 +150,56 @@ impl State {
         W: WireFormat,
         P: Serialize + ?Sized,
     {
+        if self.full(expects_reply) {
+            return Err(RuntimeError::Busy);
+        }
         let request_id = self.next_id;
         self.next_id = self.next_id.wrapping_add(1);
         out.clear();
         framing.encode_request(protocol, call, request_id, !expects_reply, params, format, out)?;
+        if expects_reply {
+            self.waiting.push(request_id);
+        }
+        Ok(request_id)
+    }
+
+    /// Frame a call around `params` already serialised in the connection's
+    /// wire format ([`ConnectionFraming::encode_request_body`]), appending to
+    /// `out`, and return its request id.
+    ///
+    /// Nothing is committed unless the whole frame was written: when `out`
+    /// dropped a write ([`BufMut::overflowed`]) it's
+    /// [`RuntimeError::BufferTooSmall`], no id is spent and nothing waits, so
+    /// the caller can retry with more room. With no room for the call to wait
+    /// it's [`RuntimeError::Busy`], before anything is written.
+    #[allow(clippy::too_many_arguments)]
+    pub fn encode_request_body<F: ConnectionFraming>(
+        &mut self,
+        framing: &F,
+        protocol: ProtocolNumber,
+        call_id: u16,
+        name: &str,
+        params: &[u8],
+        expects_reply: bool,
+        out: &mut dyn BufMut,
+    ) -> Result<u64, RuntimeError> {
+        if self.full(expects_reply) {
+            return Err(RuntimeError::Busy);
+        }
+        let request_id = self.next_id;
+        framing.encode_request_body(
+            protocol,
+            call_id,
+            name,
+            request_id,
+            !expects_reply,
+            params,
+            out,
+        );
+        if out.overflowed() {
+            return Err(RuntimeError::BufferTooSmall);
+        }
+        self.next_id = request_id.wrapping_add(1);
         if expects_reply {
             self.waiting.push(request_id);
         }

@@ -201,6 +201,8 @@ fn error_name(error: RuntimeError) -> &'static str {
         RuntimeError::Provider => "provider",
         RuntimeError::Handshake => "handshake",
         RuntimeError::FrameTooLarge => "frame_too_large",
+        RuntimeError::Busy => "busy",
+        RuntimeError::BufferTooSmall => "buffer_too_small",
         // `RuntimeError` is `#[non_exhaustive]`: a variant added later gets
         // its name here.
         _ => "other",

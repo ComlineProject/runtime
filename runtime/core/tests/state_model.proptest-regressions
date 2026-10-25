@@ -1,0 +1,14 @@
+# Seeds for failure cases proptest has generated in the past. It is
+# automatically read and these particular cases re-run before any
+# novel cases are generated.
+#
+# It is recommended to check this file in to source control so that
+# everyone who runs the test benefits from these saved cases.
+cc 6dde50447d9f3f8dd6b0106a1910b39d927c1de878351ec32a36f5cb7fc6b7f6 # shrinks to capacity = None, steps = [Call { protocol: 0, call_id: 0, method: Index(0), one_way: false, params: Body { raw: [], json: Index(0) }, how: Short(Index(0)) }, Call { protocol: 0, call_id: 0, method: Index(0), one_way: false, params: Body { raw: [], json: Index(0) }, how: Serialized }]
+cc 9ff1e331ee066936b18f75340f0e44888fe7941fa7cb51a611234802f01519e6 # shrinks to capacity = None, steps = [Call { protocol: 0, call_id: 0, method: Index(0), one_way: false, params: Body { raw: [], json: Index(0) }, how: Short(Index(0)) }, Call { protocol: 0, call_id: 0, method: Index(0), one_way: false, params: Body { raw: [], json: Index(0) }, how: Body }]
+cc 3329fdce41640f8572549926320d002c53604732a2f20af9429746bff972cd7e # shrinks to capacity = None, steps = [Call { protocol: 0, call_id: 0, method: Index(0), one_way: false, params: Body { raw: [], json: Index(0) }, how: Short(Index(0)) }, Call { protocol: 0, call_id: 0, method: Index(0), one_way: false, params: Body { raw: [], json: Index(0) }, how: Body }]
+cc e94faad658fe7f9ae40f6340e9aff1578b96ccf70bf4d31f10e43c6ce723e840 # shrinks to capacity = None, steps = [Call { protocol: 0, call_id: 0, method: Index(0), one_way: false, params: Body { raw: [], json: Index(0) }, how: Short(Index(0)) }, Call { protocol: 0, call_id: 0, method: Index(0), one_way: false, params: Body { raw: [], json: Index(0) }, how: Body }]
+cc 18f65a5c5933c93bb1252e54944e99b5191b5273da1d4bdd2fd10ffdef135eeb # shrinks to capacity = Some(0), steps = [Call { protocol: 0, call_id: 0, method: Index(0), one_way: false, params: Body { raw: [], json: Index(0) }, how: Body }]
+cc bebbe0d86fcd0b2dbb140e1a2d170384e50b4044f7fa1c4bc4193dc63701b41b # shrinks to capacity = Some(0), steps = [Call { protocol: 0, call_id: 0, method: Index(0), one_way: false, params: Body { raw: [], json: Index(0) }, how: Body }]
+cc 5c0d03055cbfc6b13d8b67109683c4bf8c3f7e4263ced1665fa37a8552f4b31c # shrinks to capacity = Some(0), steps = [Call { protocol: 0, call_id: 0, method: Index(0), one_way: false, params: Body { raw: [], json: Index(0) }, how: Body }]
+cc 4d5c722d215e54f21dc657deb18331fa23d50ff7870bdc2ff435a6792d83e54d # shrinks to capacity = Some(0), steps = [Call { protocol: 0, call_id: 0, method: Index(0), one_way: false, params: Body { raw: [], json: Index(0) }, how: Body }]

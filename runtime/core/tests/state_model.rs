@@ -16,6 +16,11 @@
 //!   abandoned, or one-way) is `Stale`;
 //! - a one-way call is never waited on;
 //! - a call's request id is spent even when encoding its params fails;
+//! - with no room left to wait (`State::with_capacity`), a call that expects
+//!   a reply is `Err(Busy)` and spends nothing; a one-way call needs no room;
+//! - `encode_request_body` writes the frame `encode_request` writes, and a
+//!   frame too big for its fixed buffer is `Err(BufferTooSmall)` and changes
+//!   nothing;
 //! - a malformed frame is `Err(Framing)` and changes nothing.
 //!
 //! Request-id wrap at `u64::MAX` isn't covered: `State` starts at id 0 and
@@ -30,7 +35,7 @@ use std::collections::BTreeSet;
 use comline_runtime::connection::{Event, State};
 use comline_runtime::contract::{
     BufMut, Call, ConnectionFraming, Datagram2Framing, Envelope, Frame, ProtocolNumber, Request,
-    RequestCall, RuntimeError, WireFormat,
+    RequestCall, RuntimeError, SliceBuf, WireFormat,
 };
 use comline_runtime::framing::JsonRpcFraming;
 use proptest::prelude::*;
@@ -118,16 +123,29 @@ enum ReplyTo {
     Never(u64),
 }
 
+/// How a local call is made.
+#[derive(Debug, Clone)]
+enum How {
+    /// `encode_request`, with a format that writes the params.
+    Serialized,
+    /// `encode_request`, with a format whose encode fails.
+    Failing,
+    /// `encode_request_body`, into a fixed buffer with room for the frame.
+    Body,
+    /// `encode_request_body`, into a fixed buffer at least a byte short.
+    Short(Index),
+}
+
 #[derive(Debug, Clone)]
 enum Step {
-    /// A local call; `fails` makes encoding its params fail.
+    /// A local call, made `how`.
     Call {
         protocol: ProtocolNumber,
         call_id: u16,
         method: Index,
         one_way: bool,
         params: Body,
-        fails: bool,
+        how: How,
     },
     /// The peer calls this side.
     Request {
@@ -184,15 +202,30 @@ fn reply_to() -> impl Strategy<Value = ReplyTo> {
     ]
 }
 
+fn how() -> impl Strategy<Value = How> {
+    prop_oneof![
+        8 => Just(How::Serialized),
+        1 => Just(How::Failing),
+        8 => Just(How::Body),
+        2 => any::<Index>().prop_map(How::Short),
+    ]
+}
+
+/// Room for waiting calls: as many as needed, or a few (none at all
+/// included), so `Busy` comes up.
+fn capacity() -> impl Strategy<Value = Option<usize>> {
+    prop_oneof![2 => Just(None), 1 => (0..4usize).prop_map(Some)]
+}
+
 fn protocol() -> impl Strategy<Value = ProtocolNumber> {
     prop_oneof![0..4u16, any::<u16>()]
 }
 
 fn step() -> impl Strategy<Value = Step> {
     prop_oneof![
-        6 => (protocol(), any::<u16>(), any::<Index>(), prop::bool::weighted(0.25), body(), prop::bool::weighted(0.1))
-            .prop_map(|(protocol, call_id, method, one_way, params, fails)| Step::Call {
-                protocol, call_id, method, one_way, params, fails,
+        6 => (protocol(), any::<u16>(), any::<Index>(), prop::bool::weighted(0.25), body(), how())
+            .prop_map(|(protocol, call_id, method, one_way, params, how)| Step::Call {
+                protocol, call_id, method, one_way, params, how,
             }),
         2 => (protocol(), any::<u16>(), any::<Index>(), any::<u64>(), any::<bool>(), body())
             .prop_map(|(protocol, call_id, method, request_id, one_way, params)| Step::Request {
@@ -212,9 +245,11 @@ fn step() -> impl Strategy<Value = Step> {
 }
 
 /// The reference implementation.
-#[derive(Debug, Default)]
+#[derive(Debug)]
 struct Model {
     ordered: bool,
+    /// How many calls may wait at once.
+    capacity: usize,
     next_id: u64,
     /// Waiting ids, innermost last (ordered) or in issue order (unordered,
     /// where the order means nothing).
@@ -232,15 +267,28 @@ enum Expected {
 }
 
 impl Model {
-    fn call(&mut self, expects_reply: bool, fails: bool) -> u64 {
+    /// What a call made `how` gives: `Busy` before anything else, then a
+    /// short buffer (nothing spent), then a failed encode (its id spent).
+    fn call(&mut self, expects_reply: bool, how: &How) -> Result<u64, RuntimeError> {
+        if expects_reply && self.waiting.len() >= self.capacity {
+            return Err(RuntimeError::Busy);
+        }
+        if let How::Short(_) = how {
+            return Err(RuntimeError::BufferTooSmall);
+        }
         let id = self.next_id;
         self.next_id += 1;
-        if expects_reply && !fails {
+        let failing = matches!(how, How::Failing);
+        if expects_reply && !failing {
             self.waiting.push(id);
         } else {
             self.spent.insert(id);
         }
-        id
+        if failing {
+            Err(RuntimeError::Serialization)
+        } else {
+            Ok(id)
+        }
     }
 
     fn receive_reply(&mut self, id: u64) -> Expected {
@@ -298,17 +346,25 @@ fn envelope_of<'a>(kind: &EnvelopeKind, bytes: &'a [u8]) -> Envelope<'a> {
     }
 }
 
-fn run<F: ConnectionFraming>(ordered: bool, steps: &[Step]) -> Result<(), TestCaseError> {
+fn run<F: ConnectionFraming>(
+    ordered: bool,
+    capacity: Option<usize>,
+    steps: &[Step],
+) -> Result<(), TestCaseError> {
     let framing = F::default();
     let json = framing.name() == comline_runtime::contract::FRAMING_JSONRPC;
-    let mut state = if ordered {
-        State::default()
-    } else {
-        State::unordered()
+    let mut state = match (ordered, capacity) {
+        (true, None) => State::default(),
+        (false, None) => State::unordered(),
+        (true, Some(n)) => State::with_capacity(n),
+        (false, Some(n)) => State::unordered_with_capacity(n),
     };
     let mut model = Model {
         ordered,
-        ..Model::default()
+        capacity: capacity.unwrap_or(usize::MAX),
+        next_id: 0,
+        waiting: Vec::new(),
+        spent: BTreeSet::new(),
     };
     let mut out = Vec::new();
     // Valid reply frames sent so far, for `Malformed::Truncated`.
@@ -322,22 +378,12 @@ fn run<F: ConnectionFraming>(ordered: bool, steps: &[Step]) -> Result<(), TestCa
                 method,
                 one_way,
                 params,
-                fails,
+                how,
             } => {
                 let params = params.bytes(json);
                 let call = Call::new(*call_id, method.get(&METHODS));
-                let got = if *fails {
-                    state.encode_request(
-                        &framing,
-                        *protocol,
-                        call,
-                        &(),
-                        &Failing,
-                        !one_way,
-                        &mut out,
-                    )
-                } else {
-                    state.encode_request(
+                let got = match how {
+                    How::Serialized => state.encode_request(
                         &framing,
                         *protocol,
                         call,
@@ -345,13 +391,62 @@ fn run<F: ConnectionFraming>(ordered: bool, steps: &[Step]) -> Result<(), TestCa
                         &Preencoded(&params),
                         !one_way,
                         &mut out,
-                    )
+                    ),
+                    How::Failing => state.encode_request(
+                        &framing,
+                        *protocol,
+                        call,
+                        &(),
+                        &Failing,
+                        !one_way,
+                        &mut out,
+                    ),
+                    How::Body | How::Short(_) => {
+                        // The frame's size, so the fixed buffer can be cut
+                        // short of it: the id it would get is the model's next.
+                        let mut whole = Vec::new();
+                        framing.encode_request_body(
+                            *protocol,
+                            *call_id,
+                            call.name,
+                            model.next_id,
+                            *one_way,
+                            &params,
+                            &mut whole,
+                        );
+                        let room = match how {
+                            How::Short(cut) => cut.index(whole.len()),
+                            _ => whole.len(),
+                        };
+                        let mut buf = vec![0u8; room];
+                        let mut fixed = SliceBuf::new(&mut buf);
+                        let got = state.encode_request_body(
+                            &framing, *protocol, *call_id, call.name, &params, !one_way, &mut fixed,
+                        );
+                        if let Ok(id) = got {
+                            // Byte for byte what `encode_request` writes.
+                            let mut serialized = Vec::new();
+                            framing
+                                .encode_request(
+                                    *protocol,
+                                    call,
+                                    id,
+                                    *one_way,
+                                    &(),
+                                    &Preencoded(&params),
+                                    &mut serialized,
+                                )
+                                .unwrap();
+                            prop_assert_eq!(fixed.written(), &serialized[..], "step {}", n);
+                        }
+                        out.clear();
+                        out.extend_from_slice(fixed.written());
+                        got
+                    }
                 };
-                let id = model.call(!one_way, *fails);
-                if *fails {
-                    prop_assert_eq!(got, Err(RuntimeError::Serialization), "step {}", n);
-                } else {
-                    prop_assert_eq!(got, Ok(id), "step {}: the request id", n);
+                let expected = model.call(!one_way, how);
+                prop_assert_eq!(got, expected, "step {}: {:?}", n, how);
+                if let Ok(id) = expected {
                     // The frame is the framing's request, with that id.
                     let (expect_protocol, expect_call, expect_id, expect_one_way) = if json {
                         (
@@ -558,23 +653,23 @@ fn steps() -> impl Strategy<Value = Vec<Step>> {
 
 proptest! {
     #[test]
-    fn ordered_datagram2_agrees_with_the_model(steps in steps()) {
-        run::<Datagram2Framing>(true, &steps)?;
+    fn ordered_datagram2_agrees_with_the_model(capacity in capacity(), steps in steps()) {
+        run::<Datagram2Framing>(true, capacity, &steps)?;
     }
 
     #[test]
-    fn unordered_datagram2_agrees_with_the_model(steps in steps()) {
-        run::<Datagram2Framing>(false, &steps)?;
+    fn unordered_datagram2_agrees_with_the_model(capacity in capacity(), steps in steps()) {
+        run::<Datagram2Framing>(false, capacity, &steps)?;
     }
 
     #[test]
-    fn ordered_jsonrpc_agrees_with_the_model(steps in steps()) {
-        run::<JsonRpcFraming>(true, &steps)?;
+    fn ordered_jsonrpc_agrees_with_the_model(capacity in capacity(), steps in steps()) {
+        run::<JsonRpcFraming>(true, capacity, &steps)?;
     }
 
     #[test]
-    fn unordered_jsonrpc_agrees_with_the_model(steps in steps()) {
-        run::<JsonRpcFraming>(false, &steps)?;
+    fn unordered_jsonrpc_agrees_with_the_model(capacity in capacity(), steps in steps()) {
+        run::<JsonRpcFraming>(false, capacity, &steps)?;
     }
 }
 
@@ -635,6 +730,45 @@ mod rules {
                 state.receive(&Datagram2Framing, &reply(0)),
                 Ok(Event::Stale)
             );
+        }
+    }
+
+    #[test]
+    fn a_full_state_is_busy_and_spends_nothing() {
+        for mut state in [State::with_capacity(1), State::unordered_with_capacity(1)] {
+            assert_eq!(call(&mut state, true), 0);
+            let mut out = Vec::new();
+            let busy = state.encode_request(
+                &Datagram2Framing,
+                0,
+                Call::from(0),
+                &(),
+                &Preencoded(b""),
+                true,
+                &mut out,
+            );
+            assert_eq!(busy, Err(RuntimeError::Busy));
+            assert!(out.is_empty());
+            // A one-way call needs no room.
+            assert_eq!(call(&mut state, false), 1);
+            assert!(matches!(
+                state.receive(&Datagram2Framing, &reply(0)),
+                Ok(Event::Reply { request_id: 0, .. })
+            ));
+            assert_eq!(call(&mut state, true), 2);
+        }
+    }
+
+    #[test]
+    fn a_frame_too_big_for_its_buffer_commits_nothing() {
+        for mut state in [State::default(), State::unordered()] {
+            let mut room = [0u8; 12];
+            let mut fixed = SliceBuf::new(&mut room);
+            let short =
+                state.encode_request_body(&Datagram2Framing, 0, 0, "", b"params", true, &mut fixed);
+            assert_eq!(short, Err(RuntimeError::BufferTooSmall));
+            assert!(!state.is_waiting());
+            assert_eq!(call(&mut state, true), 0);
         }
     }
 

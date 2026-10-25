@@ -50,6 +50,14 @@ pub enum RuntimeError {
     /// [`Transport`](Self::Transport) is how a caller knows the connection
     /// closed.
     FrameTooLarge,
+    /// The call wasn't made: this side already waits on as many calls as its
+    /// [`State`](crate::connection::State) has room for. Nothing was written
+    /// and no request id was spent.
+    Busy,
+    /// The frame didn't fit the fixed buffer it was written into
+    /// ([`BufMut::overflowed`](crate::contract::BufMut::overflowed)). Nothing
+    /// was committed; the caller can retry with more room.
+    BufferTooSmall,
 }
 
 impl fmt::Display for RuntimeError {
@@ -64,6 +72,8 @@ impl fmt::Display for RuntimeError {
             RuntimeError::Provider => f.write_str("provider failure"),
             RuntimeError::Handshake => f.write_str("connection handshake mismatch"),
             RuntimeError::FrameTooLarge => f.write_str("frame larger than the limit"),
+            RuntimeError::Busy => f.write_str("too many calls waiting"),
+            RuntimeError::BufferTooSmall => f.write_str("frame larger than its buffer"),
         }
     }
 }
