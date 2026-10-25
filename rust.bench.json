@@ -1,6 +1,6 @@
 {
   "runtime": "rust",
-  "commit": "e3b9d77d3913e005d8ee24dbd445d8958cb49f6a",
+  "commit": "43af5699a6e0d1433d242085c643b2855eba0f80",
   "toolchain": "rustc 1.98.0 (88d9e12ae 2026-08-18)",
   "metric": "instructions",
   "benches": {
@@ -158,16 +158,16 @@
       "ir": 65807
     },
     "framing/encode/jsonrpc@1/16": {
-      "ir": 514
+      "ir": 317
     },
     "framing/encode/jsonrpc@1/256": {
-      "ir": 533
+      "ir": 336
     },
     "framing/encode/jsonrpc@1/4096": {
-      "ir": 914
+      "ir": 717
     },
     "framing/encode/jsonrpc@1/65536": {
-      "ir": 66007
+      "ir": 65810
     },
     "handshake/check": {
       "ir": 19
