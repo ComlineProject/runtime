@@ -63,8 +63,8 @@ input:
   in the corpus: a `decode` needs `format` and `type`, a rejection needs only
   the framing, a datagram request takes its method name from the input.
 - `decode` is decode-only: with no `bytes` it gets an `error`. `name_hash` and
-  `encode` are encode-only: given `bytes`, they reply `"accept": false`, so
-  don't ask them to decode.
+  `encode` are encode-only: given `bytes`, they get an `error`
+  (`"name_hash is encode-only: send it without bytes"`), never a refusal.
 
 ### Other replies
 

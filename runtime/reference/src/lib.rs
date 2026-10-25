@@ -113,9 +113,14 @@ fn respond(fields: &Map<String, Json>) -> Result<Map<String, Json>, String> {
                 Err(why) => json!({ "ok": false, "why": why }),
             }
         }
-        _ => {
-            let op = Op::deserialize(&Json::String(op.into()))
+        name => {
+            let op = Op::deserialize(&Json::String(name.into()))
                 .map_err(|_| format!("unknown op `{op}`"))?;
+            // `answer` reports a decode it can't do as a refusal; a fuzzer
+            // would count that as a real reject.
+            if bytes.is_some() && matches!(op, Op::NameHash | Op::Encode) {
+                return Err(format!("{name} is encode-only: send it without bytes"));
+            }
             match answer(op, input, bytes.as_deref()) {
                 Answer::Bytes(bytes) => json!({ "bytes": Hex(bytes) }),
                 Answer::Accept(input) => json!({ "accept": true, "input": input }),
@@ -218,6 +223,24 @@ mod tests {
         assert!(
             reply(r#"{"id": 7, "op": "decode", "input": {}, "bytes": "zz"}"#)["error"].is_string()
         );
+    }
+
+    #[test]
+    fn encode_only_ops_refuse_bytes() {
+        for (op, input) in [
+            ("name_hash", json!({ "name": "x" })),
+            (
+                "encode",
+                json!({ "format": "json@1", "value": { "u8": 1 } }),
+            ),
+        ] {
+            let got =
+                reply(&json!({ "id": 9, "op": op, "input": input, "bytes": "00" }).to_string());
+            assert_eq!(
+                got,
+                json!({ "id": 9, "error": format!("{op} is encode-only: send it without bytes") })
+            );
+        }
     }
 
     #[test]
