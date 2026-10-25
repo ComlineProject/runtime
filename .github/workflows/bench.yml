@@ -1,0 +1,119 @@
+name: Benchmarks
+
+# The instruction-count gate: the runtime's benches (runtime/core/benches),
+# run on the pull request's base and then on its head in the same job, on the
+# same machine. Instruction counts are deterministic, so a fine limit holds
+# without flaking. The comparison goes to the job summary, and the head's
+# counts to the `rust.bench.json` artifact.
+
+on:
+  pull_request:
+
+permissions:
+  contents: read
+
+env:
+  CARGO_TERM_COLOR: always
+  # Must match the `iai-callgrind` dev-dependency in runtime/core/Cargo.toml.
+  IAI_CALLGRIND_RUNNER_VERSION: 0.16.1
+  # A benchmark fails when its instruction count grows by more than this.
+  # Measured when the gate was set up: the same commit, run twice, differs by
+  # 0 instructions on every benchmark, and with one codegen unit
+  # (`[profile.bench]` in Cargo.toml) a change to one function leaves the
+  # others' counts alone. 1% is above that, and catches a few instructions on
+  # the smallest benchmarks.
+  BENCH_LIMIT: ir=1%
+  # Base and head build into separate target directories: in a shared one,
+  # Cargo names a workspace's path packages the same from either checkout, and
+  # the head's older source mtimes make it reuse the base's build. They share
+  # iai-callgrind's output directory, where it keeps the base's counts for the
+  # head to compare with.
+  CARGO_TARGET_DIR: ${{ github.workspace }}/target
+  IAI_CALLGRIND_HOME: ${{ github.workspace }}/target-iai
+
+jobs:
+  instructions:
+    name: instruction counts
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Install Valgrind
+        run: sudo apt-get update && sudo apt-get install -y valgrind
+
+      - name: Toolchain
+        id: toolchain
+        # `rust-toolchain` picks it; base and head build with the same one.
+        run: echo "version=$(rustc --version)" >> "$GITHUB_OUTPUT"
+
+      - name: Cache iai-callgrind-runner
+        id: runner-cache
+        uses: actions/cache@v4
+        with:
+          path: ~/.cargo/bin/iai-callgrind-runner
+          key: iai-callgrind-runner-${{ env.IAI_CALLGRIND_RUNNER_VERSION }}-${{ runner.os }}
+
+      - name: Install iai-callgrind-runner
+        if: steps.runner-cache.outputs.cache-hit != 'true'
+        run: cargo install iai-callgrind-runner --version "$IAI_CALLGRIND_RUNNER_VERSION" --locked
+
+      - name: Bench the base
+        id: base
+        env:
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+        run: |
+          git worktree add "$RUNNER_TEMP/base" "$BASE_SHA"
+          if [ ! -f "$RUNNER_TEMP/base/runtime/core/benches/runtime.rs" ]; then
+            echo "The base ($BASE_SHA) has no benches; recording head only."
+            echo "compare=false" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          cd "$RUNNER_TEMP/base"
+          CARGO_TARGET_DIR="$RUNNER_TEMP/base-target" cargo bench -p comline-runtime --bench runtime -- --save-baseline=base
+          echo "compare=true" >> "$GITHUB_OUTPUT"
+
+      - name: Bench the head
+        id: head
+        run: |
+          find "$IAI_CALLGRIND_HOME" -name summary.json -delete 2>/dev/null || true
+          if [ "${{ steps.base.outputs.compare }}" = "true" ]; then
+            # No --regression-fail-fast: it stops at the first regression and
+            # prints no summary. Without it every benchmark is compared, and
+            # the run still exits non-zero if any exceeded the limit.
+            set +e
+            cargo bench -p comline-runtime --bench runtime -- \
+              --baseline=base --callgrind-limits="$BENCH_LIMIT" --save-summary=json
+            echo "status=$?" >> "$GITHUB_OUTPUT"
+          else
+            cargo bench -p comline-runtime --bench runtime -- --save-summary=json
+            echo "status=0" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Report
+        if: always() && steps.head.outputs.status != ''
+        env:
+          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+          TOOLCHAIN: ${{ steps.toolchain.outputs.version }}
+        run: |
+          python3 .github/scripts/bench-report.py \
+            --home "$IAI_CALLGRIND_HOME" \
+            --commit "$HEAD_SHA" \
+            --toolchain "$TOOLCHAIN" \
+            --limit "${BENCH_LIMIT#ir=}" \
+            --report runtime/conformance/reports/rust.bench.json \
+            --markdown "$RUNNER_TEMP/bench.md"
+          cat "$RUNNER_TEMP/bench.md" >> "$GITHUB_STEP_SUMMARY"
+
+      - uses: actions/upload-artifact@v4
+        if: always() && steps.head.outputs.status != ''
+        with:
+          name: rust.bench.json
+          path: runtime/conformance/reports/rust.bench.json
+
+      - name: Gate
+        if: steps.head.outputs.status != '0'
+        run: |
+          echo "::error::A benchmark's instruction count grew beyond $BENCH_LIMIT; see the job summary."
+          exit 1

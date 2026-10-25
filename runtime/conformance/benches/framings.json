@@ -1,0 +1,10 @@
+{
+  "framings": ["datagram@1", "datagram@2", "jsonrpc@1"],
+  "payload_sizes": [16, 256, 4096, 65536],
+  "frame": {
+    "kind": "ok",
+    "request_id": "42",
+    "protocol": 1,
+    "payload_fill": "a"
+  }
+}

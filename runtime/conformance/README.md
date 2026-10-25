@@ -9,6 +9,8 @@ reproduce, and the Rust runtime's proof that it does.
   `name-hash`, `handshake`, `envelope`, `framing-datagram`, `framing-datagram2`,
   `framing-jsonrpc`, `format-json`, `format-msgpack` and `format-packed`.
 - `vectors/<feature>.json`: that feature's cases.
+- [`benches/`](benches/README.md): the benchmarks every runtime runs, in the
+  same value encoding.
 
 A case is one operation and the bytes it must produce:
 
