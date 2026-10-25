@@ -54,3 +54,12 @@ tokio-util = { version = "0.7.16", optional = true, features = ["codec"] }
 [dev-dependencies]
 serde = { version = "1.0.190", features = ["derive"] }
 tokio = { version = "1.47.0", features = ["macros", "rt-multi-thread", "time", "net"] }
+# Instruction-count benches (`benches/runtime.rs`). The `iai-callgrind-runner`
+# binary that runs them must be this exact version too:
+#   cargo install iai-callgrind-runner --version 0.16.1 --locked
+iai-callgrind = "=0.16.1"
+
+
+[[bench]]
+name = "runtime"
+harness = false
