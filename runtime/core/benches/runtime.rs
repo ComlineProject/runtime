@@ -329,14 +329,18 @@ fn handshake_decode(bytes: Vec<u8>) -> (Option<HandshakeFrame>, Vec<u8>) {
 
 #[library_benchmark]
 #[bench::frame(setup = handshake_pair)]
-fn handshake_check(pair: (HandshakeFrame, HandshakeFrame)) {
+fn handshake_verify(pair: (HandshakeFrame, HandshakeFrame)) {
     let (ours, theirs) = pair;
+    // TEST ONLY: a planted slowdown.
+    for i in 0..black_box(64u32) {
+        black_box(i);
+    }
     black_box(ours.check(&theirs)).expect("the frames agree");
 }
 
 library_benchmark_group!(
     name = handshake;
-    benchmarks = handshake_encode, handshake_decode, handshake_check
+    benchmarks = handshake_encode, handshake_decode, handshake_verify
 );
 
 // ── the connection step ─────────────────────────────────────────────────────
