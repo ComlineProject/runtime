@@ -23,6 +23,7 @@
 //!
 //! Both connection framings run: `datagram@2` and `jsonrpc@1`.
 //! `PROPTEST_CASES` raises the number of sequences per property.
+#![cfg(feature = "std")]
 
 use std::collections::BTreeSet;
 
