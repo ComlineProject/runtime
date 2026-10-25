@@ -16,9 +16,10 @@ mod framing;
 mod handshake;
 mod method_name;
 mod peer;
+pub mod stream;
 mod wire;
 
-pub use buf::{BufMut, SliceBuf};
+pub use buf::{BufMut, CountBuf, SliceBuf};
 pub use call::{CallError, Fault};
 pub use connection_framing::{ConnectionFraming, Datagram2Framing, Frame, ProtocolNumber};
 pub use dispatch::{Dispatch, Kind, Outcome, Reply};

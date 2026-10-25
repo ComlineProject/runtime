@@ -840,14 +840,13 @@ pub mod tokio {
     use tokio_util::codec::{Framed, LengthDelimitedCodec};
 
     use super::Timer;
+    use crate::contract::stream::{MAX_FRAME, PREFIX_LEN};
     use crate::contract::RuntimeError;
-
-    /// The same ceiling as the blocking [`Tcp`](crate::transport::Tcp).
-    const MAX_FRAME: usize = 16 * 1024 * 1024;
 
     /// An [`AsyncTransport`](super::AsyncTransport) over a tokio TCP stream,
     /// framed as the blocking [`Tcp`](crate::transport::Tcp) is (`[len: u32
-    /// LE][frame]`), so the two talk to each other.
+    /// LE][frame]`, [`contract::stream`](crate::contract::stream)), so the two
+    /// talk to each other.
     pub struct Tcp {
         framed: Framed<TcpStream, LengthDelimitedCodec>,
     }
@@ -856,7 +855,7 @@ pub mod tokio {
         /// Wrap an established stream (e.g. from `TcpListener::accept`).
         pub fn new(stream: TcpStream) -> Self {
             let codec = LengthDelimitedCodec::builder()
-                .length_field_length(4)
+                .length_field_length(PREFIX_LEN)
                 .little_endian()
                 .max_frame_length(MAX_FRAME)
                 .new_codec();

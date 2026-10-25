@@ -116,18 +116,17 @@ mod tcp {
     use std::net::{TcpStream, ToSocketAddrs};
 
     use super::{Duration, Transport, Vec};
+    use crate::contract::stream::{self, MAX_FRAME, PREFIX_LEN};
     use crate::contract::RuntimeError;
 
-    /// Reject a length prefix larger than this before allocating for it — a
-    /// peer claiming a 4 GiB frame should not cost 4 GiB. Frames are datagrams
-    /// (one call), so the ceiling is generous.
-    const MAX_FRAME: usize = 16 * 1024 * 1024;
-
     /// A [`Transport`] over a TCP byte stream. Each frame is `[len: u32 LE]
-    /// [frame bytes]`; `recv` reads exactly one.
+    /// [frame bytes]` ([`contract::stream`](crate::contract::stream)); `recv`
+    /// reads exactly one, and refuses a length prefix above
+    /// [`MAX_FRAME`](crate::contract::stream::MAX_FRAME) before allocating
+    /// for it.
     pub struct Tcp {
         stream: TcpStream,
-        len: [u8; 4],
+        len: [u8; PREFIX_LEN],
     }
 
     impl Tcp {
@@ -135,7 +134,7 @@ mod tcp {
         pub fn new(stream: TcpStream) -> Self {
             Self {
                 stream,
-                len: [0; 4],
+                len: [0; PREFIX_LEN],
             }
         }
 
@@ -166,10 +165,7 @@ mod tcp {
             self.stream
                 .read_exact(&mut self.len)
                 .map_err(|_| RuntimeError::Transport)?;
-            let len = u32::from_le_bytes(self.len) as usize;
-            if len > MAX_FRAME {
-                return Err(RuntimeError::Framing);
-            }
+            let len = stream::frame_len(self.len, MAX_FRAME).ok_or(RuntimeError::Framing)?;
             buf.clear();
             buf.resize(len, 0);
             self.stream
@@ -207,10 +203,7 @@ mod tcp {
                     Err(RuntimeError::Transport)
                 };
             }
-            let len = u32::from_le_bytes(self.len) as usize;
-            if len > MAX_FRAME {
-                return Err(RuntimeError::Framing);
-            }
+            let len = stream::frame_len(self.len, MAX_FRAME).ok_or(RuntimeError::Framing)?;
             buf.clear();
             buf.resize(len, 0);
             match self.stream.read_exact(buf) {
