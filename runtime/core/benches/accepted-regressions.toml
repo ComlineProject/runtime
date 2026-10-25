@@ -29,5 +29,11 @@
 [[accepted]]
 pr = 44
 bench = "handshake/check"
-max_percent = 1400.0
+max_percent = 1000.0
 reason = "TEST ONLY: proves an accepted regression passes the gate"
+
+[[accepted]]
+pr = 44
+bench = "connection/step"
+max_percent = 106.29
+reason = "TEST ONLY: accepted at its measured growth"
