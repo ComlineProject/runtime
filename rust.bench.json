@@ -1,11 +1,11 @@
 {
   "runtime": "rust",
-  "commit": "286e5cf8e402ed3f190285c0007d4c1f668c674a",
+  "commit": "47933427dc4f842d50e6db395353a0bd05005dfd",
   "toolchain": "rustc 1.98.0 (88d9e12ae 2026-08-18)",
   "metric": "instructions",
   "benches": {
     "connection/step": {
-      "ir": 970
+      "ir": 972
     },
     "format/decode/enum-heavy/json@1": {
       "ir": 13246
