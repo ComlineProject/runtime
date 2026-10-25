@@ -161,6 +161,7 @@
         "format-packed/reject-overlong-length",
         "format-packed/reject-length-past-input",
         "format-packed/reject-invalid-utf8",
+        "format-packed/reject-count-past-input",
         "format-packed/decode-fields-reordered",
         "format-packed/decode-unknown-field",
         "format-packed/decode-missing-optional",

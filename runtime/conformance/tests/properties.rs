@@ -28,6 +28,12 @@
 //!   both as `null` (`nil`), as for any `serde` type. Their generated types
 //!   never put an option or unit straight in an option, so for them the
 //!   generator wraps such an inner type in an array.
+//! - **No format has arrays of data-less elements.** Core refuses `T[]`
+//!   when `T` carries no data (unit, `T[0]`, a struct of only such fields),
+//!   at schema build, so no generated type has one; runtime#29. The
+//!   generator gives such an element a `bool` field beside it. `packed@1`
+//!   refuses a count past the bytes left even then, which the vector
+//!   `format-packed/reject-count-past-input` pins.
 
 mod common;
 
@@ -87,6 +93,34 @@ fn carries(format: &str) -> Carries {
     }
 }
 
+/// Whether a value of `ty` takes any bytes: unit, `T[0]`, a fixed array of
+/// such, and a struct of only such fields (or none) don't. An option does.
+fn carries_data(ty: &Type) -> bool {
+    match ty {
+        Type::Unit => false,
+        Type::Fixed { of, len } => *len > 0 && carries_data(of),
+        Type::Struct { fields, .. } => fields.iter().any(|(_, t)| carries_data(t)),
+        _ => true,
+    }
+}
+
+/// `T[]`, or, when `T` carries no data, an array of a struct holding a
+/// `bool` and `T`: core refuses arrays of data-less types, runtime#29.
+fn array_of(t: Type) -> Type {
+    let element = if carries_data(&t) {
+        t
+    } else {
+        Type::Struct {
+            name: STRUCT_NAMES[2].into(),
+            fields: vec![
+                (FIELD_NAMES[0].into(), Type::Bool),
+                (FIELD_NAMES[1].into(), t),
+            ],
+        }
+    };
+    Type::Array(Box::new(element))
+}
+
 fn scalar(ty: &Type) -> bool {
     !matches!(
         ty,
@@ -122,12 +156,12 @@ fn type_strategy(c: Carries) -> impl Strategy<Value = Type> {
         prop_oneof![
             inner.clone().prop_map(move |t| {
                 let t = match t {
-                    Type::Option(_) | Type::Unit if !c.nested_null => Type::Array(Box::new(t)),
+                    Type::Option(_) | Type::Unit if !c.nested_null => array_of(t),
                     t => t,
                 };
                 Type::Option(Box::new(t))
             }),
-            inner.clone().prop_map(|t| Type::Array(Box::new(t))),
+            inner.clone().prop_map(array_of),
             inner.clone().prop_flat_map(|t| {
                 let max = if scalar(&t) {
                     MAX_FIXED

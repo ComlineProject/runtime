@@ -5,4 +5,3 @@
 # It is recommended to check this file in to source control so that
 # everyone who runs the test benefits from these saved cases.
 cc 7ade71feebddc2ab2abebe61b9709d846bc7dfea7db5a8974af731efd81a52c3 # shrinks to (ty, value) = (Struct { name: "Point", fields: [("id", F64)] }, Struct { name: "Point", fields: [("id", F64(4.520618856987477e-279))] })
-cc 367f05a99b2dcdc4c86d68f92c8a613e4cfd1d7bc37821bab4e83b5c55bdcc84 # shrinks to (ty, value) = (Array(Array(Struct { name: "Point", fields: [] })), Array([Array([Struct { name: "Point", fields: [] }])]))

@@ -1686,6 +1686,19 @@ fn rejections(feature: &str) -> Vec<Case> {
                 r("reject-overlong-length", Type::String, &[0x80, 0x00]),
                 r("reject-length-past-input", Type::String, &[5, b'a', b'b']),
                 r("reject-invalid-utf8", Type::String, &[2, 0xc3, 0x28]),
+                // Found by tests/properties.rs (as a `found-*` case would be):
+                // a count is never more than the bytes left, even for
+                // elements that take none, so `[Empty {}]`'s `01` is refused.
+                // Schemas can't declare such an array: core refuses arrays
+                // of data-less types (runtime#29).
+                r(
+                    "reject-count-past-input",
+                    Type::Array(Box::new(Type::Struct {
+                        name: "Empty".into(),
+                        fields: vec![],
+                    })),
+                    &[1],
+                ),
             ]
         }
         "framing-jsonrpc" => vec![
