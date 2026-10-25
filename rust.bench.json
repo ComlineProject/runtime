@@ -1,0 +1,182 @@
+{
+  "runtime": "rust",
+  "commit": "e3b9d77d3913e005d8ee24dbd445d8958cb49f6a",
+  "toolchain": "rustc 1.98.0 (88d9e12ae 2026-08-18)",
+  "metric": "instructions",
+  "benches": {
+    "connection/step": {
+      "ir": 970
+    },
+    "format/decode/enum-heavy/json@1": {
+      "ir": 13246
+    },
+    "format/decode/enum-heavy/msgpack@1": {
+      "ir": 7215
+    },
+    "format/decode/enum-heavy/packed@1": {
+      "ir": 2187
+    },
+    "format/decode/large-array/json@1": {
+      "ir": 1888552
+    },
+    "format/decode/large-array/msgpack@1": {
+      "ir": 327250
+    },
+    "format/decode/large-array/packed@1": {
+      "ir": 37342
+    },
+    "format/decode/nested/json@1": {
+      "ir": 12999
+    },
+    "format/decode/nested/msgpack@1": {
+      "ir": 3579
+    },
+    "format/decode/nested/packed@1": {
+      "ir": 2490
+    },
+    "format/decode/small-scalar/json@1": {
+      "ir": 2451
+    },
+    "format/decode/small-scalar/msgpack@1": {
+      "ir": 453
+    },
+    "format/decode/small-scalar/packed@1": {
+      "ir": 93
+    },
+    "format/decode/string-heavy/json@1": {
+      "ir": 10551
+    },
+    "format/decode/string-heavy/msgpack@1": {
+      "ir": 4052
+    },
+    "format/decode/string-heavy/packed@1": {
+      "ir": 3881
+    },
+    "format/encode/enum-heavy/json@1": {
+      "ir": 18340
+    },
+    "format/encode/enum-heavy/msgpack@1": {
+      "ir": 8985
+    },
+    "format/encode/enum-heavy/packed@1": {
+      "ir": 3102
+    },
+    "format/encode/large-array/json@1": {
+      "ir": 3124720
+    },
+    "format/encode/large-array/msgpack@1": {
+      "ir": 1209687
+    },
+    "format/encode/large-array/packed@1": {
+      "ir": 239200
+    },
+    "format/encode/nested/json@1": {
+      "ir": 19981
+    },
+    "format/encode/nested/msgpack@1": {
+      "ir": 5135
+    },
+    "format/encode/nested/packed@1": {
+      "ir": 2075
+    },
+    "format/encode/small-scalar/json@1": {
+      "ir": 3954
+    },
+    "format/encode/small-scalar/msgpack@1": {
+      "ir": 1198
+    },
+    "format/encode/small-scalar/packed@1": {
+      "ir": 328
+    },
+    "format/encode/string-heavy/json@1": {
+      "ir": 11748
+    },
+    "format/encode/string-heavy/msgpack@1": {
+      "ir": 3809
+    },
+    "format/encode/string-heavy/packed@1": {
+      "ir": 1670
+    },
+    "framing/decode/datagram@1/16": {
+      "ir": 54
+    },
+    "framing/decode/datagram@1/256": {
+      "ir": 54
+    },
+    "framing/decode/datagram@1/4096": {
+      "ir": 54
+    },
+    "framing/decode/datagram@1/65536": {
+      "ir": 54
+    },
+    "framing/decode/datagram@2/16": {
+      "ir": 98
+    },
+    "framing/decode/datagram@2/256": {
+      "ir": 98
+    },
+    "framing/decode/datagram@2/4096": {
+      "ir": 98
+    },
+    "framing/decode/datagram@2/65536": {
+      "ir": 98
+    },
+    "framing/decode/jsonrpc@1/16": {
+      "ir": 1471
+    },
+    "framing/decode/jsonrpc@1/256": {
+      "ir": 2146
+    },
+    "framing/decode/jsonrpc@1/4096": {
+      "ir": 12946
+    },
+    "framing/decode/jsonrpc@1/65536": {
+      "ir": 185746
+    },
+    "framing/encode/datagram@1/16": {
+      "ir": 190
+    },
+    "framing/encode/datagram@1/256": {
+      "ir": 209
+    },
+    "framing/encode/datagram@1/4096": {
+      "ir": 590
+    },
+    "framing/encode/datagram@1/65536": {
+      "ir": 65683
+    },
+    "framing/encode/datagram@2/16": {
+      "ir": 314
+    },
+    "framing/encode/datagram@2/256": {
+      "ir": 333
+    },
+    "framing/encode/datagram@2/4096": {
+      "ir": 714
+    },
+    "framing/encode/datagram@2/65536": {
+      "ir": 65807
+    },
+    "framing/encode/jsonrpc@1/16": {
+      "ir": 514
+    },
+    "framing/encode/jsonrpc@1/256": {
+      "ir": 533
+    },
+    "framing/encode/jsonrpc@1/4096": {
+      "ir": 914
+    },
+    "framing/encode/jsonrpc@1/65536": {
+      "ir": 66007
+    },
+    "handshake/check": {
+      "ir": 19
+    },
+    "handshake/decode": {
+      "ir": 46
+    },
+    "handshake/encode": {
+      "ir": 336
+    }
+  }
+}
