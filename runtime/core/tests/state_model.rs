@@ -324,7 +324,7 @@ fn run<F: ConnectionFraming>(ordered: bool, steps: &[Step]) -> Result<(), TestCa
                 fails,
             } => {
                 let params = params.bytes(json);
-                let call = Call::new(*call_id, *method.get(&METHODS));
+                let call = Call::new(*call_id, method.get(&METHODS));
                 let got = if *fails {
                     state.encode_request(
                         &framing,
@@ -387,7 +387,7 @@ fn run<F: ConnectionFraming>(ordered: bool, steps: &[Step]) -> Result<(), TestCa
                 params,
             } => {
                 let params = params.bytes(json);
-                let call = Call::new(*call_id, *method.get(&METHODS));
+                let call = Call::new(*call_id, method.get(&METHODS));
                 let mut frame = Vec::new();
                 framing
                     .encode_request(
