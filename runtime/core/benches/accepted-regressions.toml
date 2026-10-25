@@ -42,3 +42,8 @@
 # counts, and each removal or rename; each entry is annotated on the pull
 # request's diff.
 
+[[removed]]
+pr = 46
+bench = "handshake/check"
+renamed_to = "handshake/verify"
+reason = "TEST ONLY: proves a rename is still gated"
