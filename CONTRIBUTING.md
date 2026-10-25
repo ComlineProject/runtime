@@ -72,5 +72,5 @@ recorded only.
 
 The accepted regressions are listed, with their base and head counts, in the
 job summary, as are removals and renames, and each entry is annotated in the
-pull request's diff. Nothing
-else accepts a regression: no label, setting or default.
+pull request's diff. Nothing else accepts a regression: no label, setting or
+default.
