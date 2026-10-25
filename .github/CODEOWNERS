@@ -1,0 +1,7 @@
+# Changes to these files need the code owner's review (see the branch rules
+# in the docs' Conduct section). They decide what the instruction-count gate
+# lets through, so loosening the gate is reviewed like accepting a regression.
+/runtime/core/benches/accepted-regressions.toml @Kinflou
+/.github/scripts/bench-report.py @Kinflou
+/.github/workflows/bench.yml @Kinflou
+/.github/CODEOWNERS @Kinflou
