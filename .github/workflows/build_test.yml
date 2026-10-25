@@ -28,3 +28,19 @@ jobs:
       - run: cargo build --verbose
       - run: cargo test --verbose
       - run: cargo test --verbose -p comline-runtime --features tokio
+
+  # `comline-runtime` without `std`: the `alloc` tier, and `alloc` plus the
+  # JSON-RPC framing, built for wasm32 (no `std` there to lean on) and tested
+  # on the host.
+  wasm32_core:
+    name: wasm32 core
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      # The toolchain is the root rust-toolchain.toml's.
+      - run: rustup target add wasm32-unknown-unknown
+      - uses: Swatinem/rust-cache@v2
+      - run: cargo build --verbose -p comline-runtime --no-default-features --features alloc,jsonrpc --target wasm32-unknown-unknown
+      - run: cargo test --verbose -p comline-runtime --no-default-features --features alloc,jsonrpc
+      - run: cargo build --verbose -p comline-runtime --no-default-features --features alloc --target wasm32-unknown-unknown
+      - run: cargo test --verbose -p comline-runtime --no-default-features --features alloc

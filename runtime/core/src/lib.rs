@@ -17,9 +17,9 @@ pub mod contract;
 // MessagePack need `std`.
 pub mod format;
 
-// Alternative `Framing` implementations that need `std` / extra deps
-// (JSON-RPC). The datagram framing is in `contract`.
-#[cfg(feature = "std")]
+// Alternative `Framing` implementations that need `alloc` and extra deps
+// (JSON-RPC, behind `jsonrpc`). The datagram framing is in `contract`.
+#[cfg(feature = "jsonrpc")]
 pub mod framing;
 
 // The frame transport, the connection handshake, the provider serve loop, the
