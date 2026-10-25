@@ -6,11 +6,12 @@
 """Turns iai-callgrind's summaries into `reports/rust.bench.json` and a
 Markdown comparison against the base.
 
-Reads every `summary.json` that `cargo bench -p comline-runtime -- --save-summary=json`
-wrote under `<target>/iai/comline-runtime/runtime/`, and names each benchmark
-by its id from `runtime/conformance/benches/README.md`.
+Reads every `summary.json` that `cargo bench -p comline-runtime --bench runtime
+-- --save-summary=json` wrote under `<home>/comline-runtime/runtime/`, where
+`<home>` is iai-callgrind's output directory (`target/iai` unless moved), and
+names each benchmark by its id from `runtime/conformance/benches/README.md`.
 
-    bench-report.py --target DIR --commit SHA --toolchain TEXT \
+    bench-report.py --home DIR --commit SHA --toolchain TEXT \
         --report OUT.json [--limit PCT] [--markdown OUT.md]
 """
 
@@ -58,7 +59,7 @@ def regressed(summary):
 
 def main():
     args = argparse.ArgumentParser()
-    args.add_argument("--target", required=True, type=pathlib.Path)
+    args.add_argument("--home", required=True, type=pathlib.Path)
     args.add_argument("--commit", required=True)
     args.add_argument("--toolchain", required=True)
     args.add_argument("--report", required=True, type=pathlib.Path)
@@ -66,7 +67,7 @@ def main():
     args.add_argument("--limit", help="the regression limit, for the Markdown")
     a = args.parse_args()
 
-    root = a.target / "iai" / "comline-runtime" / "runtime"
+    root = a.home / "comline-runtime" / "runtime"
     rows = []
     for path in sorted(root.glob("**/summary.json")):
         summary = json.loads(path.read_text())

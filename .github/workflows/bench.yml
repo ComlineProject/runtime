@@ -23,9 +23,13 @@ env:
   # others' counts alone. 1% is above that, and catches a few instructions on
   # the smallest benchmarks.
   BENCH_LIMIT: ir=1%
-  # Base and head share one target directory, where iai-callgrind keeps the
-  # base's counts for head to compare with.
+  # Base and head build into separate target directories: in a shared one,
+  # Cargo names a workspace's path packages the same from either checkout, and
+  # the head's older source mtimes make it reuse the base's build. They share
+  # iai-callgrind's output directory, where it keeps the base's counts for the
+  # head to compare with.
   CARGO_TARGET_DIR: ${{ github.workspace }}/target
+  IAI_CALLGRIND_HOME: ${{ github.workspace }}/target-iai
 
 jobs:
   instructions:
@@ -67,13 +71,13 @@ jobs:
             exit 0
           fi
           cd "$RUNNER_TEMP/base"
-          cargo bench -p comline-runtime --bench runtime -- --save-baseline=base
+          CARGO_TARGET_DIR="$RUNNER_TEMP/base-target" cargo bench -p comline-runtime --bench runtime -- --save-baseline=base
           echo "compare=true" >> "$GITHUB_OUTPUT"
 
       - name: Bench the head
         id: head
         run: |
-          find "$CARGO_TARGET_DIR/iai" -name summary.json -delete 2>/dev/null || true
+          find "$IAI_CALLGRIND_HOME" -name summary.json -delete 2>/dev/null || true
           if [ "${{ steps.base.outputs.compare }}" = "true" ]; then
             # No --regression-fail-fast: it stops at the first regression and
             # prints no summary. Without it every benchmark is compared, and
@@ -94,7 +98,7 @@ jobs:
           TOOLCHAIN: ${{ steps.toolchain.outputs.version }}
         run: |
           python3 .github/scripts/bench-report.py \
-            --target "$CARGO_TARGET_DIR" \
+            --home "$IAI_CALLGRIND_HOME" \
             --commit "$HEAD_SHA" \
             --toolchain "$TOOLCHAIN" \
             --limit "${BENCH_LIMIT#ir=}" \
