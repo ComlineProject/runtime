@@ -90,6 +90,53 @@ are `artifacts/`.
   unless one with that title is already open. It doesn't block anyone's pull
   request.
 
+Every run writes [`rust.fuzz.json`](#the-report) as an artifact and to its
+summary. The nightly run, or a manual one from `main`, also commits it to the
+[`reports`](https://github.com/ComlineProject/runtime/tree/reports) branch,
+where the docs read it:
+`https://raw.githubusercontent.com/ComlineProject/runtime/reports/rust.fuzz.json`.
+Runs elsewhere, pull requests included, do a dry run of that publish.
+
+## The report
+
+`rust.fuzz.json`, written by
+[`.github/scripts/fuzz-report.py`](../../.github/scripts/fuzz-report.py):
+
+```json
+{
+  "runtime": "rust",
+  "commit": "<the commit fuzzed>",
+  "toolchain": "rustc 1.100.0-nightly (787af2b8c 2026-08-25)",
+  "date": "2026-10-26T03:41:07Z",
+  "run": "https://github.com/ComlineProject/runtime/actions/runs/<id>",
+  "targets": {
+    "decode_no_panic": { "seconds": 600, "executions": 18734210, "corpus": 2841, "findings": 0 }
+  },
+  "proptest": {
+    "cases": 100000,
+    "properties": { "json_round_trips": "pass" }
+  }
+}
+```
+
+- `commit`: on `main`, the commit the run checked out; on a pull request, its
+  head. `date` is when the report was written, in UTC.
+- `targets`: one entry per cargo-fuzz target.
+  - `seconds`: how long it fuzzed, from libFuzzer's `Done N runs in S
+    second(s)`. A run that stops on a finding doesn't print that, so it's the
+    step's wall-clock time then.
+  - `executions`: `stat::number_of_executed_units` (`-print_final_stats=1`).
+  - `corpus`: the number of inputs in its corpus after the run.
+  - `findings`: the inputs libFuzzer saved (`crash-`, `leak-`, `timeout-`,
+    `oom-`, `slow-unit-`). libFuzzer stops at the first, so it's 0 or 1.
+  - `error`, only when the target didn't run (it didn't build, or its job
+    left no stats); the numbers are `null` then.
+- `proptest`: the property tests' long run, or `null` when the run had none (a
+  pull request's).
+  - `cases`: `PROPTEST_CASES`, which every property runs.
+  - `properties`: each test's verdict, `pass` or `fail`.
+  - `error`, only when the harness reported no tests.
+
 ## A finding becomes a vector
 
 1. **Minimize it.**

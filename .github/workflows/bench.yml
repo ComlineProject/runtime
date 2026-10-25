@@ -23,9 +23,18 @@ name: Benchmarks
 # Plain `pull_request`, not `pull_request_target`: a fork's pull request runs
 # with a read-only token and no secrets, and the acceptance it can carry is
 # its own diff, which a maintainer reviews before merging.
+#
+# Publishing: on every push to `main`, the `main` job benches the new head
+# alone (nothing to gate) and commits its `rust.bench.json` to the `reports`
+# branch, which the docs fetch from; see .github/scripts/publish-report.py.
+# Only that job can write, and only from `main`: a manual run from another
+# branch builds the report and does a dry run of the publish.
 
 on:
   pull_request:
+  push:
+    branches: [main]
+  workflow_dispatch:
 
 permissions:
   contents: read
@@ -55,6 +64,7 @@ env:
 jobs:
   instructions:
     name: instruction counts
+    if: github.event_name == 'pull_request'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -146,3 +156,65 @@ jobs:
         with:
           name: rust.bench.json
           path: runtime/conformance/reports/rust.bench.json
+
+  main:
+    name: publish instruction counts
+    if: github.event_name != 'pull_request'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    # A newer push to `main` supersedes this one's numbers.
+    concurrency:
+      group: bench-publish-${{ github.ref }}
+      cancel-in-progress: true
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          # The publish checks the report is newer than the published one.
+          fetch-depth: 0
+
+      - name: Install Valgrind
+        run: sudo apt-get update && sudo apt-get install -y valgrind
+
+      - name: Toolchain
+        id: toolchain
+        run: echo "version=$(rustc --version)" >> "$GITHUB_OUTPUT"
+
+      - name: Cache iai-callgrind-runner
+        id: runner-cache
+        uses: actions/cache@v4
+        with:
+          path: ~/.cargo/bin/iai-callgrind-runner
+          key: iai-callgrind-runner-${{ env.IAI_CALLGRIND_RUNNER_VERSION }}-${{ runner.os }}
+
+      - name: Install iai-callgrind-runner
+        if: steps.runner-cache.outputs.cache-hit != 'true'
+        run: cargo install iai-callgrind-runner --version "$IAI_CALLGRIND_RUNNER_VERSION" --locked
+
+      - name: Bench
+        run: cargo bench -p comline-runtime --bench runtime -- --save-summary=json
+
+      - name: Report
+        env:
+          TOOLCHAIN: ${{ steps.toolchain.outputs.version }}
+        run: |
+          python3 .github/scripts/bench-report.py \
+            --home "$IAI_CALLGRIND_HOME" \
+            --commit "$GITHUB_SHA" \
+            --toolchain "$TOOLCHAIN" \
+            --report runtime/conformance/reports/rust.bench.json \
+            --markdown "$RUNNER_TEMP/bench.md"
+          cat "$RUNNER_TEMP/bench.md" >> "$GITHUB_STEP_SUMMARY"
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: rust.bench.json
+          path: runtime/conformance/reports/rust.bench.json
+
+      - name: Publish to the reports branch
+        env:
+          DRY_RUN: ${{ github.ref != 'refs/heads/main' && '--dry-run' || '' }}
+        run: |
+          python3 .github/scripts/publish-report.py $DRY_RUN \
+            --readme .github/reports-branch.md \
+            runtime/conformance/reports/rust.bench.json
