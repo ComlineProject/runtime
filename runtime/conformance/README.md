@@ -78,6 +78,11 @@ generated code, not a hand-written decoder.
 [`tests/seed_vs_derive.rs`](tests/seed_vs_derive.rs) holds it to real
 derives, on valid and mutated bytes in every format.
 
+[`tests/properties.rs`](tests/properties.rs) checks the reference's properties
+over random types and values with `proptest`, and
+[`runtime/fuzz`](../fuzz/README.md) fuzzes it with `cargo-fuzz`. Cases they
+find become `found-*` vectors; the fuzz README says how.
+
 A value is typed, so a runtime knows which width and shape to encode:
 `{"u8": 255}`, `{"u64": "18446744073709551615"}` (and `u128`, `i128`, also as
 decimal strings), `{"string": "x"}`, `{"tuple": [...]}` for `T[N]`,

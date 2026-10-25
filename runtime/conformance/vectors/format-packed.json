@@ -1669,6 +1669,23 @@
       "expect": "reject"
     },
     {
+      "id": "format-packed/reject-count-past-input",
+      "op": "decode",
+      "input": {
+        "format": "packed@1",
+        "type": {
+          "array": {
+            "struct": {
+              "fields": [],
+              "name": "Empty"
+            }
+          }
+        }
+      },
+      "bytes": "01",
+      "expect": "reject"
+    },
+    {
       "id": "format-packed/decode-fields-reordered",
       "op": "decode",
       "input": {
