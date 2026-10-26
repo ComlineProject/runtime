@@ -1,14 +1,28 @@
 name: Benchmarks
 
-# The instruction-count gate: the runtime's benches (runtime/core/benches),
-# run on the pull request's base and then on its head in the same job, on the
-# same machine. Instruction counts are deterministic, so a fine limit holds
-# without flaking. The comparison goes to the job summary, and the head's
-# counts to the `rust.bench.json` artifact.
+# The instruction-count gate: every bench target, run on the pull request's
+# base and then on its head in the same job, on the same machine. Instruction
+# counts are deterministic, so a fine limit holds without flaking. The
+# comparison goes to the job summary, and the head's counts to the
+# `rust.bench.json` artifact.
+#
+# The targets are listed in one place, `TARGETS` in
+# .github/scripts/bench-report.py (`bench-report.py --targets` prints them):
+# the runtime's (runtime/core/benches/runtime.rs) and the C ABI's
+# (runtime/ffi/bench/benches/ffi.rs). Every one is gated alike, against the
+# same limit and ledger, and its benchmark ids are qualified by the target's
+# name (`ffi/...`), except the runtime's, which are the shared definitions'.
+# The base runs the targets its own script lists, so a target the head drops
+# is noticed like any benchmark it stops running; a target the base doesn't
+# have yet (the pull request that adds it) is recorded only, as is everything
+# when the base has no benches at all. The job summary also pairs each C ABI
+# call with the same work on the core directly: the crossing cost, which
+# informs and isn't gated on its own.
 #
 # Accepting a regression: a benchmark that grows past the limit fails, unless
 # the pull request appends an `[[accepted]]` entry for it to the ledger,
-# runtime/core/benches/accepted-regressions.toml, naming the benchmark, the
+# runtime/core/benches/accepted-regressions.toml (one for every target),
+# naming the benchmark, the
 # most it may grow, and why. Likewise a benchmark the base had and the head
 # doesn't run fails, unless the pull request appends a `[[removed]]` entry;
 # one with `renamed_to` is compared under its new id against its old count,
@@ -24,8 +38,8 @@ name: Benchmarks
 # with a read-only token and no secrets, and the acceptance it can carry is
 # its own diff, which a maintainer reviews before merging.
 #
-# Publishing: on every push to `main`, the `main` job benches the new head
-# alone (nothing to gate) and commits its `rust.bench.json` to the `reports`
+# Publishing: on every push to `main`, the `main` job benches the new head's
+# targets alone (nothing to gate) and commits its `rust.bench.json` to the `reports`
 # branch, which the docs fetch from; see .github/scripts/publish-report.py.
 # Only that job can write, and only from `main`: a manual run from another
 # branch builds the report and does a dry run of the publish.
@@ -41,7 +55,8 @@ permissions:
 
 env:
   CARGO_TERM_COLOR: always
-  # Must match the `iai-callgrind` dev-dependency in runtime/core/Cargo.toml.
+  # Must match the `iai-callgrind` dev-dependency of every bench target
+  # (runtime/core/Cargo.toml, runtime/ffi/bench/Cargo.toml).
   IAI_CALLGRIND_RUNNER_VERSION: 0.16.1
   # A benchmark fails when its instruction count grows by more than this many
   # percent, unless the ledger accepts it (see the top). Measured when the
@@ -96,14 +111,29 @@ jobs:
           BASE_SHA: ${{ github.event.pull_request.base.sha }}
         run: |
           git worktree add "$RUNNER_TEMP/base" "$BASE_SHA"
-          if [ ! -f "$RUNNER_TEMP/base/runtime/core/benches/runtime.rs" ]; then
+          cd "$RUNNER_TEMP/base"
+          # The base's own targets. A base from before the list had the
+          # runtime's alone, or, earlier still, no benches.
+          if ! python3 .github/scripts/bench-report.py --targets > "$RUNNER_TEMP/base-targets" 2>/dev/null; then
+            if [ -f runtime/core/benches/runtime.rs ]; then
+              echo "comline-runtime runtime" > "$RUNNER_TEMP/base-targets"
+            else
+              : > "$RUNNER_TEMP/base-targets"
+            fi
+          fi
+          if [ ! -s "$RUNNER_TEMP/base-targets" ]; then
             echo "The base ($BASE_SHA) has no benches; recording head only."
             echo "compare=false" >> "$GITHUB_OUTPUT"
             exit 0
           fi
-          cd "$RUNNER_TEMP/base"
-          CARGO_TARGET_DIR="$RUNNER_TEMP/base-target" cargo bench -p comline-runtime --bench runtime -- \
-            --save-baseline=base --save-summary=json
+          mapfile -t targets < "$RUNNER_TEMP/base-targets"
+          for target in "${targets[@]}"; do
+            read -r package bench <<< "$target"
+            echo "::group::Base: $package --bench $bench"
+            CARGO_TARGET_DIR="$RUNNER_TEMP/base-target" cargo bench -p "$package" --bench "$bench" -- \
+              --save-baseline=base --save-summary=json
+            echo "::endgroup::"
+          done
           # The base's own summaries, kept apart from the head's: they say
           # which benchmarks the base had, so one the head drops or renames
           # is noticed, and give a renamed one its old count.
@@ -112,16 +142,27 @@ jobs:
           echo "compare=true" >> "$GITHUB_OUTPUT"
 
       - name: Bench the head
+        env:
+          COMPARE: ${{ steps.base.outputs.compare }}
         run: |
           find "$IAI_CALLGRIND_HOME" -name summary.json -delete 2>/dev/null || true
           # No --callgrind-limits: the gate is the Report step's, which knows
           # the ledger. So this step fails only when a benchmark can't run.
-          if [ "${{ steps.base.outputs.compare }}" = "true" ]; then
-            cargo bench -p comline-runtime --bench runtime -- \
-              --baseline=base --save-summary=json
-          else
-            cargo bench -p comline-runtime --bench runtime -- --save-summary=json
-          fi
+          # A target the base ran is compared with its baseline; one the base
+          # doesn't have is recorded only.
+          listed=$(python3 .github/scripts/bench-report.py --targets)
+          mapfile -t targets <<< "$listed"
+          for target in "${targets[@]}"; do
+            read -r package bench <<< "$target"
+            echo "::group::Head: $package --bench $bench"
+            if [ "$COMPARE" = "true" ] && grep -qxF "$target" "$RUNNER_TEMP/base-targets"; then
+              cargo bench -p "$package" --bench "$bench" -- --baseline=base --save-summary=json
+            else
+              echo "The base doesn't have this target; recording head only."
+              cargo bench -p "$package" --bench "$bench" -- --save-summary=json
+            fi
+            echo "::endgroup::"
+          done
 
       - name: Report and gate
         env:
@@ -192,7 +233,15 @@ jobs:
         run: cargo install iai-callgrind-runner --version "$IAI_CALLGRIND_RUNNER_VERSION" --locked
 
       - name: Bench
-        run: cargo bench -p comline-runtime --bench runtime -- --save-summary=json
+        run: |
+          listed=$(python3 .github/scripts/bench-report.py --targets)
+          mapfile -t targets <<< "$listed"
+          for target in "${targets[@]}"; do
+            read -r package bench <<< "$target"
+            echo "::group::$package --bench $bench"
+            cargo bench -p "$package" --bench "$bench" -- --save-summary=json
+            echo "::endgroup::"
+          done
 
       - name: Report
         env:

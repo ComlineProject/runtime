@@ -6,30 +6,42 @@
 """Turns iai-callgrind's summaries into `reports/rust.bench.json` and a
 Markdown comparison against the base, and decides the instruction-count gate.
 
-Reads every `summary.json` that `cargo bench -p comline-runtime --bench runtime
--- --save-summary=json` wrote under `<home>/comline-runtime/runtime/`, where
-`<home>` is iai-callgrind's output directory (`target/iai` unless moved), and
-names each benchmark by its id from `runtime/conformance/benches/README.md`.
+The bench targets it covers are `TARGETS`, the one list of them: CI runs
+each with `cargo bench -p <package> --bench <bench> -- --save-summary=json`
+(`bench-report.py --targets` prints them), and this reads every
+`summary.json` under `<home>/<package>/<bench>/`, where `<home>` is
+iai-callgrind's output directory (`target/iai` unless moved). Each benchmark
+is named by an id unique across targets: the runtime's (`runtime`) by its id
+from `runtime/conformance/benches/README.md`, and every other target's
+qualified by the target's name (`ffi/...`).
 
+    bench-report.py --targets
     bench-report.py --home DIR --commit SHA --toolchain TEXT \
         --report OUT.json [--markdown OUT.md] \
         [--limit PCT --pr N --base-home DIR \
          --ledger HEAD.toml --base-ledger BASE.toml]
 
-With `--limit`, it's the gate. `--base-home` holds the base's own summaries,
-which say what benchmarks the base had and their counts. Then:
+With `--limit`, it's the gate, over every target at once. `--base-home`
+holds the base's own summaries, which say what benchmarks the base had and
+their counts. Then:
 
 - a benchmark whose count grew by more than `--limit` percent over the base
   fails, unless this pull request accepts it (`[[accepted]]`);
 - a benchmark the base had and the head doesn't run fails, unless this pull
   request removes it (`[[removed]]`). One removed with `renamed_to` is
   compared under its new id against its old count, like any other;
-- a benchmark that's new, and not a rename, is recorded only.
+- a benchmark that's new, and not a rename, is recorded only. So is every
+  benchmark of a target the base doesn't have yet.
 
 The ledger is `runtime/core/benches/accepted-regressions.toml` (see its
-header). Only entries the pull request adds count: entries already on the base
-are history, and loosen nothing. The exit status is the verdict: 0 passes, 1
-fails.
+header), one for every target. Only entries the pull request adds count:
+entries already on the base are history, and loosen nothing. The exit status
+is the verdict: 0 passes, 1 fails.
+
+The Markdown also pairs each C ABI call (`ffi/abi/...`) with the same work
+done on the core directly (`ffi/core/...`): what crossing the boundary
+costs. That table informs; it's not a gate of its own, as each of its
+benchmarks is gated like any other.
 """
 
 import argparse
@@ -38,6 +50,19 @@ import math
 import pathlib
 import sys
 import tomllib
+
+# The bench targets, `(package, bench)`: what CI runs and this reads. A target
+# that's added is recorded only on the pull request that adds it (the base
+# hasn't got it); one that's dropped fails the gate like any other benchmark
+# the head stops running, unless the ledger removes its benchmarks.
+TARGETS = [
+    ("comline-runtime", "runtime"),
+    ("comline-runtime-ffi-bench", "ffi"),
+]
+# The target whose ids are the shared definitions', unqualified.
+DEFINITIONS_TARGET = ("comline-runtime", "runtime")
+# The crossing-cost pairs: an ABI call's id, and its core counterpart's.
+ABI_PREFIX, CORE_PREFIX = "ffi/abi/", "ffi/core/"
 
 FORMATS = {"json": "json@1", "msgpack": "msgpack@1", "packed": "packed@1"}
 FRAMINGS = {"datagram1": "datagram@1", "datagram2": "datagram@2", "jsonrpc1": "jsonrpc@1"}
@@ -49,7 +74,7 @@ TABLES = {
 
 
 def bench_id(summary):
-    """The definitions' id for one iai-callgrind benchmark."""
+    """The definitions' id for one benchmark of the runtime's target."""
     group = summary["module_path"].split("::")[-2]
     function = summary["function_name"]
     case = summary.get("id") or ""
@@ -65,6 +90,29 @@ def bench_id(summary):
     return "/".join(p for p in (group, function, case) if p)
 
 
+def target_bench_id(bench, summary):
+    """The id for one benchmark of another target, qualified by its name.
+
+    A function is named `<group>_<call>`, with the framing last when it has
+    one (`abi_encode_request_jsonrpc1`) and then cases `<mode>_b<size>`
+    (`stream_b4096`): `ffi/abi/encode-request/jsonrpc@1/stream/4096`. A call
+    without a framing has one case, which the id leaves out
+    (`ffi/abi/name-hash`); a second would repeat the id, which `summaries`
+    refuses.
+    """
+    group = summary["module_path"].split("::")[-2]
+    function = summary["function_name"]
+    case = summary.get("id") or ""
+    call = function.removeprefix(f"{group}_")
+    op, _, framing = call.rpartition("_")
+    mode, _, size = case.partition("_b")
+    if framing in FRAMINGS and mode and size:
+        return f"{bench}/{group}/{op.replace('_', '-')}/{FRAMINGS[framing]}/{mode}/{size}"
+    if call != function:
+        return f"{bench}/{group}/{call.replace('_', '-')}"
+    return "/".join(p for p in (bench, group, function, case) if p)
+
+
 def instructions(summary):
     """`(head, base)` instruction counts; `base` is None with no baseline."""
     total = summary["profiles"][0]["summaries"]["total"]
@@ -78,12 +126,22 @@ def instructions(summary):
 
 
 def summaries(home):
-    """`{id: (count, baseline count or None)}` for every summary under `home`."""
-    root = home / "comline-runtime" / "runtime"
-    found = {}
-    for path in sorted(root.glob("**/summary.json")):
-        summary = json.loads(path.read_text())
-        found[bench_id(summary)] = instructions(summary)
+    """`{id: (count, baseline count or None)}` for every summary under `home`,
+    of every target there."""
+    found, where = {}, {}
+    for target in sorted(p for p in home.glob("*/*") if p.is_dir()):
+        package, bench = target.parts[-2:]
+        for path in sorted(target.glob("**/summary.json")):
+            summary = json.loads(path.read_text())
+            if (package, bench) == DEFINITIONS_TARGET:
+                bench_name = bench_id(summary)
+            else:
+                bench_name = target_bench_id(bench, summary)
+            if bench_name in found:
+                sys.exit(f"two benchmarks have the id {bench_name}: "
+                         f"{where[bench_name]} and {path}")
+            found[bench_name] = instructions(summary)
+            where[bench_name] = path
     return found
 
 
@@ -265,7 +323,13 @@ def judge(rows, accepted, limit, problems):
 
 
 def main():
+    if sys.argv[1:] == ["--targets"]:
+        print("\n".join(f"{package} {bench}" for package, bench in TARGETS))
+        return 0
+
     args = argparse.ArgumentParser()
+    args.add_argument("--targets", action="store_true",
+                      help="print the bench targets, `<package> <bench>` per line, and exit")
     args.add_argument("--home", required=True, type=pathlib.Path)
     args.add_argument("--commit", required=True)
     args.add_argument("--toolchain", required=True)
@@ -362,6 +426,34 @@ def cell(text):
     return " ".join(text.split()).replace("|", "\\|")
 
 
+def crossing(rows):
+    """The crossing-cost table: each C ABI call's head count against its core
+    counterpart's. Not a gate; empty when no pair ran."""
+    counts = {bench: head for bench, head, _, _ in rows}
+    pairs = [(bench[len(ABI_PREFIX):], counts[CORE_PREFIX + bench[len(ABI_PREFIX):]], head)
+             for bench, head in sorted(counts.items())
+             if bench.startswith(ABI_PREFIX) and CORE_PREFIX + bench[len(ABI_PREFIX):] in counts]
+    if not pairs:
+        return []
+    lines = [
+        "",
+        "### Crossing cost",
+        "",
+        f"Each C ABI call (`{ABI_PREFIX}...`) against the same work done on the core "
+        f"directly (`{CORE_PREFIX}...`), at the head: what the boundary costs (the "
+        "pointer and overlap checks, the handle, `catch_unwind`, the framing chosen "
+        "at run time, the event as spans). Not a gate: each side is gated on its own.",
+        "",
+        "| Call | Core | ABI | Crossing | |",
+        "|---|---:|---:|---:|---:|",
+    ]
+    for call, core, abi in pairs:
+        delta = abi - core
+        pct = change(abi, core)
+        lines.append(f"| `{call}` | {core:,} | {abi:,} | {delta:+,} | {pct:+.1f}% |")
+    return lines
+
+
 def markdown(rows, gone, verdicts, accepted, problems, a):
     compared = [r for r in rows if r[2] is not None]
     lines = ["## Instruction counts", ""]
@@ -369,6 +461,7 @@ def markdown(rows, gone, verdicts, accepted, problems, a):
         lines += [
             "The base has no benchmarks to compare with, so these are recorded only."
             if a.limit is not None else "The head alone, with nothing to compare with.",
+            *crossing(rows),
             "",
             "| Benchmark | Instructions |",
             "|---|---:|",
@@ -454,6 +547,7 @@ def markdown(rows, gone, verdicts, accepted, problems, a):
             ]
         lines[-1] = "```"
 
+    lines += crossing(rows)
     lines += ["", "### All benchmarks", "",
               "| Benchmark | Base | Head | Change |", "|---|---:|---:|---:|"]
 
