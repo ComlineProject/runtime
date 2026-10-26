@@ -44,3 +44,36 @@ jobs:
       - run: cargo test --verbose -p comline-runtime --no-default-features --features alloc,jsonrpc
       - run: cargo build --verbose -p comline-runtime --no-default-features --features alloc --target wasm32-unknown-unknown
       - run: cargo test --verbose -p comline-runtime --no-default-features --features alloc
+
+  # `comline-runtime-ffi`, the C ABI: `include/comline.h` matches what the
+  # pinned cbindgen generates from the source, and the crate builds as a
+  # cdylib and a staticlib natively and as a wasm32 module.
+  ffi:
+    name: ffi
+    runs-on: ubuntu-latest
+    env:
+      # Keep in step with runtime/ffi/cbindgen.toml.
+      CBINDGEN_VERSION: 0.29.2
+    steps:
+      - uses: actions/checkout@v4
+      # The toolchain is the root rust-toolchain.toml's.
+      - run: rustup target add wasm32-unknown-unknown
+      - uses: Swatinem/rust-cache@v2
+      - run: cargo install cbindgen --version "$CBINDGEN_VERSION" --locked
+      - name: comline.h matches the source
+        working-directory: runtime/ffi
+        run: |
+          cbindgen --config cbindgen.toml --output include/comline.h
+          git diff --exit-code -- include/comline.h || {
+            echo "::error file=runtime/ffi/include/comline.h::comline.h is out of date: run cbindgen --config cbindgen.toml --output include/comline.h in runtime/ffi (cbindgen $CBINDGEN_VERSION)"
+            exit 1
+          }
+      - name: cdylib and staticlib
+        run: |
+          cargo build --verbose -p comline-runtime-ffi --release
+          ls -l target/release/libcomline_runtime_ffi.so target/release/libcomline_runtime_ffi.a
+      - name: wasm32
+        run: |
+          cargo build --verbose -p comline-runtime-ffi --release --target wasm32-unknown-unknown
+          ls -l target/wasm32-unknown-unknown/release/comline_runtime_ffi.wasm
+      - run: cargo test --verbose -p comline-runtime-ffi

@@ -259,9 +259,9 @@ pub const COMLINE_EVENT_ONE_WAY: u8 = 1 << 1;
 /// `comline_event.flags`: the request names its call by `call_name`
 /// (`jsonrpc@1`), not by `call_id`.
 pub const COMLINE_EVENT_CALL_BY_NAME: u8 = 1 << 2;
-/// `comline_event.flags`: the frame has no body (absent JSON-RPC `params`,
-/// `result` or `error.data`). `body` is empty, and a JSON codec reads it as
-/// `null`.
+/// `comline_event.flags`: the frame has no body: JSON-RPC `params`,
+/// `result` or `error.data` absent, or `null` (the framing can't tell the
+/// two apart). `body` is empty, and a JSON codec reads it as `null`.
 pub const COMLINE_EVENT_BODY_ABSENT: u8 = 1 << 3;
 /// `comline_event.flags`: `call_name` is JSON string text with escapes in
 /// it, as the frame spelled it (`app.Chat\/count`). Read it with
