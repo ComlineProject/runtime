@@ -6,7 +6,8 @@ license = "MPL-2.0"
 publish = false
 
 # cargo-fuzz targets against the reference (`comline-runtime` and the
-# conformance crate's `TypeSeed`). Outside the workspace: they need nightly,
+# conformance crate's `TypeSeed`), and against the C ABI over it
+# (`comline-runtime-ffi`). Outside the workspace: they need nightly,
 # `cargo +nightly fuzz run <target>`. See README.md.
 
 [package.metadata]
@@ -17,6 +18,8 @@ libfuzzer-sys = "0.4"
 arbitrary = "1"
 comline-runtime = { path = "../core" }
 comline-runtime-conformance = { path = "../conformance" }
+# The C ABI, for `ffi_feed` and `ffi_vs_core`.
+comline-runtime-ffi = { path = "../ffi" }
 serde = { version = "1.0.190", features = ["derive"] }
 # The seed-vs-derive mirrors (`conformance/tests/common`) need it.
 serde-big-array = "0.5"
@@ -52,6 +55,20 @@ bench = false
 [[bin]]
 name = "stream_split"
 path = "fuzz_targets/stream_split.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "ffi_feed"
+path = "fuzz_targets/ffi_feed.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "ffi_vs_core"
+path = "fuzz_targets/ffi_vs_core.rs"
 test = false
 doc = false
 bench = false

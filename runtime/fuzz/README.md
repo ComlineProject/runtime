@@ -3,7 +3,8 @@
 Coverage-guided fuzz targets (`cargo-fuzz`, libFuzzer) against
 `comline-runtime` and the conformance crate's `TypeSeed`: the Rust runtime is
 the reference every other runtime is checked against, so its decoders must be
-strict, canonical and panic-free.
+strict, canonical and panic-free. Two more fuzz the C ABI over it
+(`comline-runtime-ffi`), which every non-Rust runtime is built on.
 [`conformance/tests/properties.rs`](../conformance/tests/properties.rs)
 covers the structured side with `proptest` (round trips over random types and
 values), and runs on stable with `cargo test`.
@@ -27,7 +28,9 @@ cargo +nightly fuzz run --fuzz-dir runtime/fuzz decode_no_panic -- \
   part of what `decode_no_panic` checks: a single allocation past
   `-malloc_limit_mb` is a crash, and so is the process passing `-rss_limit_mb`.
 - `PROPTEST_CASES=100000 cargo test --release -p comline-runtime-conformance --test properties`
-  is the property tests' long run.
+  is the property tests' long run, and
+  `PROPTEST_CASES=100000 cargo test --release -p comline-runtime-ffi --test differential`
+  the C ABI's.
 
 ## Targets
 
@@ -38,6 +41,8 @@ cargo +nightly fuzz run --fuzz-dir runtime/fuzz decode_no_panic -- \
 | `framing_decode` | bytes | through `datagram@1` request and response decode, `datagram@2`, JSON-RPC request, response and connection decode, `Envelope::decode` and `HandshakeFrame::decode`; no panic, and see below |
 | `seed_vs_derive` | a format, a mirror, bytes | `TypeSeed` accepts and refuses what the mirror's `serde` derive does, and reads the same value; the mirrors are [`conformance/tests/common`](../conformance/tests/common/mod.rs) |
 | `stream_split` | a limit (`u32` LE), bytes | stream framing: `split_frame` never panics and reports exactly what the prefix declares (a frame within the limit and the buffer, `NeedMore` counting the prefix in, `TooLarge` only over the limit); splitting the whole buffer consumes it in order; `put_prefix` refuses only a length over the limit, and what it writes splits back to the same frame |
+| `ffi_feed` | a config, then operations (see below) | the C ABI on its own rules: no panic crosses and no handle is poisoned, every status is one the function documents, every span lies inside the frame and the frame inside that `feed`'s input, `NEED_MORE` and `BUFFER_TOO_SMALL` report sizes a retry succeeds with, refusals spend no request id, and nothing allocates after `comline_connection_new` |
+| `ffi_vs_core` | the same | `ffi_feed`'s checks, and each call made again through `State`, the connection framings and `HandshakeFrame` directly, which must give the same status, bytes, request id, `*consumed` and event (spans at the same offsets) |
 
 **What `framing_decode` checks.**
 - The binary frames are canonical, so what decodes re-encodes to exactly the
@@ -49,6 +54,17 @@ cargo +nightly fuzz run --fuzz-dir runtime/fuzz decode_no_panic -- \
   response or reply is re-encoded and decoded again, and must decode the same.
   JSON-RPC requests are only decoded, since encoding needs a `'static` method
   name.
+
+**What the C ABI targets run.** A `comline_config`, any value allowed (the
+supported framings, other names, any handshake, mode, ordering, limit and
+room), then operations: this side's `start`, `encode_request`,
+`encode_reply`, `abandon` and `is_waiting`; frames the peer sends (its
+handshake, agreeing or not, and requests and replies the core's framings
+write, or raw bytes); flipped bytes; and deliveries, which feed what arrived
+in arbitrary chunks (stream mode) or a message at a time. The checks are
+[`ffi/tests/common/drive.rs`](../ffi/tests/common/drive.rs), which
+[`ffi/tests/differential.rs`](../ffi/tests/differential.rs) also runs on
+proptest's sequences; the input grammar is [`src/ffi.rs`](src/ffi.rs).
 
 **The input grammar.** A type is read from the front of the input, one byte
 per choice (see [`src/lib.rs`](src/lib.rs)). This is deliberately not a derived
@@ -73,7 +89,12 @@ refuses a count past the bytes left even for such an element, and the vector
 `corpus/<target>/`, prefixed as each target reads them:
 - every conformance vector's bytes, from `reference_cases()` (the `stream`
   vectors, behind their limit, seed `stream_split`);
-- every mirror's samples, in every format.
+- every mirror's samples, in every format;
+- for `ffi_feed` and `ffi_vs_core`: the `framing-datagram2` and
+  `framing-jsonrpc` frames fed to a connection of that framing, in both
+  modes; the `handshake` frames fed to a connection they name; and a whole
+  exchange under every framing, mode, handshake and ordering, so the fuzzer
+  starts past the handshake.
 
 The corpora are generated, so they aren't committed (`.gitignore`), and neither
 are `artifacts/`.
@@ -86,7 +107,8 @@ are `artifacts/`.
   vectors.
 - **Nightly:**
   - each target runs for 10 minutes on a corpus cached between runs;
-  - the property tests run with `PROPTEST_CASES=100000`.
+  - the property tests run with `PROPTEST_CASES=100000`: the conformance
+    crate's, and the C ABI's differential test.
 
   A failure uploads the crash and opens an issue titled after the target,
   unless one with that title is already open. It doesn't block anyone's pull
@@ -184,3 +206,14 @@ Runs elsewhere, pull requests included, do a dry run of that publish.
   (runtime#42): serde_json skips a member it doesn't read without checking its
   UTF-8, so `jsonrpc@1` accepted invalid bytes in `jsonrpc`, `error.message`
   or an unknown member. It now checks the whole frame first.
+
+### Open
+
+- **`jsonrpc@1` decode allocates**, found by
+  [`ffi/tests/differential.rs`](../ffi/tests/differential.rs). The C ABI
+  promises that nothing allocates after `comline_connection_new`, but the
+  framing parses with serde_json, which allocates for any error (every
+  refused frame), to unescape a member name, and to skip or borrow a value
+  with brackets inside brackets (`"params":[[1]]`, an everyday frame).
+  `ffi/tests/rules.rs` pins it (`jsonrpc_decode_allocates_nothing`, ignored
+  until it's fixed), and the C ABI targets allow exactly those cases.

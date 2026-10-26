@@ -33,3 +33,5 @@ comline-runtime-ffi = { path = ".", features = ["test-hooks"] }
 # are the host's side of the boundary, not the ABI's).
 comline-runtime-conformance = { path = "../conformance" }
 serde_json = "1.0.108"
+# `tests/differential.rs`: the ABI against `State` and the framings.
+proptest = "1.5"
