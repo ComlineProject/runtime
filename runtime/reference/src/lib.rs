@@ -37,6 +37,8 @@ pub const CORPUS_OPS: &[&str] = &[
     "response",
     "encode",
     "decode",
+    "stream_prefix",
+    "stream_split",
 ];
 
 /// Every op this reference answers: the corpus's, then its own.

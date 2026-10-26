@@ -260,6 +260,35 @@
         "name-hash/jsonrpc@1",
         "name-hash/com.acme.custom-format"
       ]
+    },
+    "stream": {
+      "state": "supported",
+      "proven_by": [
+        "stream/prefix-zero",
+        "stream/prefix-small",
+        "stream/prefix-le",
+        "stream/prefix-default-max",
+        "stream/prefix-small-max",
+        "stream/prefix-u32-max",
+        "stream/split-empty",
+        "stream/split-partial-prefix-1",
+        "stream/split-partial-prefix-3",
+        "stream/split-prefix-only",
+        "stream/split-partial-body",
+        "stream/split-one-frame",
+        "stream/split-zero-length",
+        "stream/split-two-frames",
+        "stream/split-frame-then-partial",
+        "stream/split-small-max",
+        "stream/split-default-max-prefix",
+        "stream/reject-prefix-over-default-max",
+        "stream/reject-prefix-over-small-max",
+        "stream/reject-prefix-u32-max-over-default-max",
+        "stream/reject-split-over-default-max",
+        "stream/reject-split-u32-max",
+        "stream/reject-split-over-small-max",
+        "stream/reject-split-frame-then-over-max"
+      ]
     }
   }
 }

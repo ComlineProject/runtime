@@ -31,7 +31,8 @@ A request is `{"id": ..., "op": ..., "input": {...}, "bytes": "..."}`:
 
 - `id` is any JSON value, echoed in the reply;
 - `op` is a corpus op (`name_hash`, `handshake`, `envelope`, `request`,
-  `response`, `encode`, `decode`), `check`, `version` or `session`;
+  `response`, `encode`, `decode`, `stream_prefix`, `stream_split`), `check`,
+  `version` or `session`;
 - `input` is the op's input, as a vector case states it;
 - `bytes`, lowercase hex, is optional.
 
@@ -95,7 +96,8 @@ it:
 ```json
 {"id": 6, "op": "version"}
 → {"id": 6, "version": {"protocol": 1, "crate": "0.1.0",
-     "ops": ["name_hash", "handshake", "envelope", "request", "response", "encode", "decode", "check", "version", "session"],
+     "ops": ["name_hash", "handshake", "envelope", "request", "response", "encode", "decode",
+             "stream_prefix", "stream_split", "check", "version", "session"],
      "formats": ["json@1", "msgpack@1", "packed@1"],
      "framings": ["datagram@1", "datagram@2", "jsonrpc@1"]}}
 ```
