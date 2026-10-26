@@ -77,3 +77,18 @@ jobs:
           cargo build --verbose -p comline-runtime-ffi --release --target wasm32-unknown-unknown
           ls -l target/wasm32-unknown-unknown/release/comline_runtime_ffi.wasm
       - run: cargo test --verbose -p comline-runtime-ffi
+
+  # The C ABI under Miri: the replay and the rule tests, checked for
+  # undefined behaviour at the `extern "C"` boundary (aliasing, bounds,
+  # leaks, panics caught at the boundary).
+  ffi_miri:
+    name: ffi miri
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - run: rustup toolchain install nightly --profile minimal --component miri
+      - uses: Swatinem/rust-cache@v2
+        with:
+          key: miri
+      - run: cargo +nightly miri setup
+      - run: cargo +nightly miri test -p comline-runtime-ffi --features test-hooks

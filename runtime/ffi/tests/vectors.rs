@@ -37,7 +37,6 @@
 mod common;
 
 use std::collections::BTreeMap;
-use std::path::Path;
 
 use comline_runtime_conformance::{json_equal, Case, Compare, Expect, Op, Value, Vectors, Wire};
 use comline_runtime_ffi::*;
@@ -55,12 +54,30 @@ const FILES: [&str; 6] = [
 /// The largest request id a connection is driven to by spending ids.
 const DRIVABLE: u64 = 1_000;
 
+/// The vectors, compiled in rather than read at run time, so the replay
+/// also runs under Miri's isolation (no file system).
 fn vectors(feature: &str) -> Vectors {
-    let path = Path::new(env!("CARGO_MANIFEST_DIR"))
-        .join("../conformance/vectors")
-        .join(format!("{feature}.json"));
-    let text = std::fs::read_to_string(&path).unwrap_or_else(|e| panic!("{path:?}: {e}"));
-    serde_json::from_str(&text).unwrap_or_else(|e| panic!("{path:?}: {e}"))
+    macro_rules! file {
+        ($name:literal) => {
+            (
+                $name,
+                include_str!(concat!("../../conformance/vectors/", $name, ".json")),
+            )
+        };
+    }
+    const FILES_TEXT: [(&str, &str); 6] = [
+        file!("name-hash"),
+        file!("handshake"),
+        file!("envelope"),
+        file!("framing-datagram"),
+        file!("framing-datagram2"),
+        file!("framing-jsonrpc"),
+    ];
+    let (_, text) = FILES_TEXT
+        .iter()
+        .find(|(name, _)| *name == feature)
+        .unwrap_or_else(|| panic!("no vectors for {feature}"));
+    serde_json::from_str(text).unwrap_or_else(|e| panic!("{feature}: {e}"))
 }
 
 /// How a case went through the ABI.
@@ -299,7 +316,10 @@ fn handshake_case(case: &Case) -> Result<Ran, String> {
         let mut setup = Setup::plain(leak(framing));
         setup.handshake = COMLINE_HANDSHAKE_COMLINE;
         setup.ir_hash = ir_hash;
-        setup.wire_format = Box::leak(wire_format.to_owned().into_boxed_str());
+        setup.wire_format = ["json@1", "msgpack@1", "packed@1"]
+            .into_iter()
+            .find(|name| *name == wire_format)
+            .ok_or_else(|| format!("no static name for {wire_format}"))?;
         setup.capabilities = capabilities;
         let mut conn = Conn::new(&setup).map_err(|s| format!("new: {s}"))?;
         let started = conn.start(64);
