@@ -32,6 +32,8 @@ pub const PREFIX_CEILING: usize = if usize::BITS >= u32::BITS {
     usize::MAX
 };
 
+const _: () = assert!(DEFAULT_MAX_FRAME <= PREFIX_CEILING);
+
 /// Write the length prefix for a frame of `len` bytes. Refuses a `len` above
 /// `max` (normally [`DEFAULT_MAX_FRAME`]), or one a `u32` can't hold, with
 /// [`RuntimeError::FrameTooLarge`], writing nothing.
@@ -103,7 +105,6 @@ mod tests {
     #[test]
     fn max_frame_fits_the_prefix() {
         assert!(u32::try_from(DEFAULT_MAX_FRAME).is_ok());
-        assert!(DEFAULT_MAX_FRAME <= PREFIX_CEILING);
     }
 
     #[test]
