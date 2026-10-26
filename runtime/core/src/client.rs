@@ -99,6 +99,11 @@ impl<T: Transport, W: WireFormat, F: Framing> Client<T, W, F> {
     ///
     /// Borrows `self` mutably for as long as the result is held: the previous
     /// response must be decoded (or dropped) before the next call.
+    ///
+    /// A request over the transport's [`max_frame`](Transport::max_frame) is
+    /// [`RuntimeError::FrameTooLarge`], and nothing is sent. A *reply* over
+    /// the limit is refused by the transport with the same error, and closes
+    /// it: the next call then returns [`RuntimeError::Transport`].
     pub fn call<C, P>(&mut self, call: C, params: &P) -> Result<(Envelope<'_>, &W), RuntimeError>
     where
         C: Into<Call>,
@@ -139,6 +144,7 @@ impl<T: Transport, W: WireFormat, F: Framing> Client<T, W, F> {
         self.request.clear();
         self.framing
             .encode_request(call, request_id, params, &self.format, &mut self.request)?;
+        self.check_size(request_id)?;
         self.transport.send(&self.request)?;
 
         self.response.clear();
@@ -183,7 +189,18 @@ impl<T: Transport, W: WireFormat, F: Framing> Client<T, W, F> {
             &self.format,
             &mut self.request,
         )?;
+        self.check_size(request_id)?;
         self.transport.send(&self.request)
+    }
+
+    /// Refuse the framed request if it's over the transport's limit, giving
+    /// its request id back: nothing was sent, and the client keeps working.
+    fn check_size(&mut self, request_id: u64) -> Result<(), RuntimeError> {
+        if self.request.len() > self.transport.max_frame() {
+            self.next_id = request_id;
+            return Err(RuntimeError::FrameTooLarge);
+        }
+        Ok(())
     }
 
     /// The underlying transport, e.g. to close it or read its peer address.

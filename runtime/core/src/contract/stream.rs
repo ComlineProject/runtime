@@ -23,6 +23,15 @@ pub const DEFAULT_MAX_FRAME: usize = 16 * 1024 * 1024;
 /// The length prefix's size in bytes: a `u32`, little-endian.
 pub const PREFIX_LEN: usize = 4;
 
+/// The largest frame the length prefix can declare: `u32::MAX` bytes (on a
+/// target whose `usize` holds it). A stream transport's limit can be raised
+/// up to this, and no further.
+pub const PREFIX_CEILING: usize = if usize::BITS >= u32::BITS {
+    u32::MAX as usize
+} else {
+    usize::MAX
+};
+
 /// Write the length prefix for a frame of `len` bytes. Refuses a `len` above
 /// `max` (normally [`DEFAULT_MAX_FRAME`]), or one a `u32` can't hold, with
 /// [`RuntimeError::FrameTooLarge`], writing nothing.
