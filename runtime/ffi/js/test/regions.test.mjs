@@ -7,13 +7,23 @@
 // enters the module once per call.
 //
 //     node --test runtime/ffi/js/test/regions.test.mjs
+//
+// `COMLINE_WASM` is the module; it defaults to the `wasm` profile's wasm32
+// build under `CARGO_TARGET_DIR` (or the repository's `target`).
 
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
+import { join } from "node:path";
+import { fileURLToPath } from "node:url";
 
 import { Comline, Envelope, EventKind, Handshake, Status } from "../comline.mjs";
-import { WASM } from "./env.mjs";
+
+const ROOT = fileURLToPath(new URL("../../../../", import.meta.url));
+const TARGET = process.env.CARGO_TARGET_DIR || join(ROOT, "target");
+const WASM =
+  process.env.COMLINE_WASM ||
+  join(TARGET, "wasm32-unknown-unknown", "wasm", "comline_runtime_ffi.wasm");
 
 const module = new WebAssembly.Module(readFileSync(WASM));
 const utf8 = new TextEncoder();

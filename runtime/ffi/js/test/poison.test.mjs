@@ -3,22 +3,33 @@
 // file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
 // The wasm32 poisoning rule: a trap poisons the whole instance. Against the
-// `test-hooks` build (`env.mjs`), whose `comline_test_panic_next` makes the
-// next call on a handle panic inside its guard, as `tests/rules.rs` does
-// natively. On wasm32 that panic is a trap the guard can't catch, so the
+// `test-hooks` build, whose `comline_test_panic_next` makes the next call
+// on a handle panic inside its guard, as `tests/rules.rs` does natively. On wasm32 that panic is a trap the guard can't catch, so the
 // glue must mark the instance dead: the call that trapped and every later
 // call on the instance and on each of its connections return
 // `ERR_POISONED`, without entering the module, while a fresh instance
 // works.
 //
 //     node --test runtime/ffi/js/test/poison.test.mjs
+//
+// `COMLINE_WASM_TEST_HOOKS` is the module; it defaults to the `wasm`
+// profile's wasm32 build with `--features test-hooks`, built into
+// `test-hooks` under `CARGO_TARGET_DIR` (or the repository's `target`) so
+// it doesn't replace the build without them.
 
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
+import { join } from "node:path";
+import { fileURLToPath } from "node:url";
 
 import { Comline, Envelope, EventKind, Handshake, Status, instantiateSync } from "../comline.mjs";
-import { WASM_TEST_HOOKS } from "./env.mjs";
+
+const ROOT = fileURLToPath(new URL("../../../../", import.meta.url));
+const TARGET = process.env.CARGO_TARGET_DIR || join(ROOT, "target");
+const WASM_TEST_HOOKS =
+  process.env.COMLINE_WASM_TEST_HOOKS ||
+  join(TARGET, "test-hooks", "wasm32-unknown-unknown", "wasm", "comline_runtime_ffi.wasm");
 
 const bytes = readFileSync(WASM_TEST_HOOKS);
 const module = new WebAssembly.Module(bytes);

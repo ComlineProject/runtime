@@ -17,14 +17,16 @@
 // ABI writes, so the encode never needs a retry; with only the lengths, it
 // must be no smaller.
 //
-// `env.mjs` says where the export and the module are. Each file fails on
-// any mismatch, a malformed line, or a number of cases other than its
-// header's.
+// `COMLINE_VECTORS` is the export's directory and `COMLINE_WASM` the module;
+// they default to `ffi-vectors` and the `wasm` profile's wasm32 build under
+// `CARGO_TARGET_DIR` (or the repository's `target`). Each file fails on any
+// mismatch, a malformed line, or a number of cases other than its header's.
 
 import { after, before, describe, test } from "node:test";
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
+import { fileURLToPath } from "node:url";
 
 import {
   instantiate,
@@ -36,7 +38,13 @@ import {
   Handshake,
   Status,
 } from "../comline.mjs";
-import { VECTORS, WASM } from "./env.mjs";
+
+const ROOT = fileURLToPath(new URL("../../../../", import.meta.url));
+const TARGET = process.env.CARGO_TARGET_DIR || join(ROOT, "target");
+const VECTORS = process.env.COMLINE_VECTORS || join(TARGET, "ffi-vectors");
+const WASM =
+  process.env.COMLINE_WASM ||
+  join(TARGET, "wasm32-unknown-unknown", "wasm", "comline_runtime_ffi.wasm");
 
 const FILES = [
   "name-hash",
