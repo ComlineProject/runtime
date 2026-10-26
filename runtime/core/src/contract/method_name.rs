@@ -100,6 +100,17 @@ impl<'f> MethodName<'f> {
         }
     }
 
+    /// The name as the frame wrote it, escapes and all, and whether it has
+    /// any. For a caller that hands the text on as it is, such as a binding
+    /// through the C ABI pointing into the frame, and unescapes it only if it
+    /// must. A name made by [`new`](Self::new) has none.
+    pub fn as_written(&self) -> (&'f str, bool) {
+        match self.spelling() {
+            Spelling::Plain(name) => (name, false),
+            Spelling::Json(text) => (text, true),
+        }
+    }
+
     /// The name's characters, unescaped.
     pub fn chars(&self) -> Chars<'f> {
         match self.spelling() {
@@ -267,6 +278,18 @@ mod tests {
             size_of::<crate::contract::RequestCall<'_>>(),
             size_of::<&str>()
         );
+    }
+
+    #[test]
+    fn as_written_is_the_frame_s_text_and_whether_it_has_escapes() {
+        let frame = r#"app.Chat\/count"#;
+        let escaped = MethodName::from_json(frame).unwrap();
+        assert_eq!(escaped.as_written(), (frame, true));
+        assert!(core::ptr::eq(escaped.as_written().0, frame));
+
+        let plain = MethodName::from_json("greet").unwrap();
+        assert_eq!(plain.as_written(), ("greet", false));
+        assert_eq!(MethodName::new("a\\b").as_written(), ("a\\b", false));
     }
 
     #[test]
