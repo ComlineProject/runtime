@@ -26,7 +26,13 @@
 //!   `comline_connection_free` frees it.
 //! - **Null pointers.** A data pointer (`in`, `body`, `name`, `out`, …) may
 //!   be null only when its length or capacity is 0. Any other null pointer
-//!   is `COMLINE_ERR_INVALID_ARGUMENT`.
+//!   is `COMLINE_ERR_INVALID_ARGUMENT`, and so is a length or capacity above
+//!   `PTRDIFF_MAX` (no object is that large).
+//! - **Inputs and outputs must not overlap.** No buffer a call writes (`out`,
+//!   `*written`, `*ev`, the handle, …) may share a byte with any buffer or
+//!   out-pointer the same call takes; a call given overlapping ones returns
+//!   `COMLINE_ERR_INVALID_ARGUMENT` and touches nothing. Inputs may overlap
+//!   each other.
 //! - **Panics never cross.** Every function runs inside `catch_unwind`. A
 //!   panic is a bug: the call returns `COMLINE_ERR_POISONED`, the handle is
 //!   marked poisoned and every later call on it returns the same, so the
@@ -534,7 +540,9 @@ unsafe fn with_conn(
 /// Unless null, `ptr` points to `len` readable bytes that stay unchanged
 /// for `'a`.
 unsafe fn input<'a>(ptr: *const u8, len: usize) -> Option<&'a [u8]> {
-    if len == 0 {
+    if len > isize::MAX as usize {
+        None
+    } else if len == 0 {
         Some(&[])
     } else if ptr.is_null() {
         None
@@ -550,7 +558,9 @@ unsafe fn input<'a>(ptr: *const u8, len: usize) -> Option<&'a [u8]> {
 /// Unless null, `ptr` points to `cap` writable bytes nothing else uses for
 /// `'a`.
 unsafe fn output<'a>(ptr: *mut u8, cap: usize) -> Option<&'a mut [u8]> {
-    if cap == 0 {
+    if cap > isize::MAX as usize {
+        None
+    } else if cap == 0 {
         Some(&mut [])
     } else if ptr.is_null() {
         None
@@ -558,6 +568,57 @@ unsafe fn output<'a>(ptr: *mut u8, cap: usize) -> Option<&'a mut [u8]> {
         // SAFETY: the caller's contract.
         Some(unsafe { slice::from_raw_parts_mut(ptr, cap) })
     }
+}
+
+/// Memory one call reads or writes: its address, its length in bytes, and
+/// whether the call writes it.
+#[derive(Clone, Copy)]
+struct Region {
+    start: usize,
+    len: usize,
+    written: bool,
+}
+
+/// `len` bytes the call reads at `ptr`.
+fn reads<T>(ptr: *const T, len: usize) -> Region {
+    region(
+        ptr as usize,
+        len.saturating_mul(core::mem::size_of::<T>()),
+        false,
+    )
+}
+
+/// `len` bytes the call writes at `ptr`.
+fn writes<T>(ptr: *mut T, len: usize) -> Region {
+    region(
+        ptr as usize,
+        len.saturating_mul(core::mem::size_of::<T>()),
+        true,
+    )
+}
+
+/// A null pointer is no memory: the call refuses it on its own.
+fn region(start: usize, len: usize, written: bool) -> Region {
+    Region {
+        start,
+        len: if start == 0 { 0 } else { len },
+        written,
+    }
+}
+
+/// Whether no memory a call writes shares a byte with any other memory it
+/// takes. A `&mut` that aliases another reference is undefined behaviour,
+/// so this is checked on addresses alone, before any reference is made.
+fn disjoint(regions: &[Region]) -> bool {
+    regions.iter().enumerate().all(|(i, a)| {
+        regions[i + 1..].iter().all(|b| {
+            !(a.written || b.written)
+                || a.len == 0
+                || b.len == 0
+                || a.start.saturating_add(a.len) <= b.start
+                || b.start.saturating_add(b.len) <= a.start
+        })
+    })
 }
 
 /// UTF-8 text of `len` bytes at `ptr`.
@@ -624,8 +685,10 @@ fn name_span(base: &[u8], frame: &[u8], name: MethodName<'_>) -> (comline_span, 
 /// makes: the handle, with room for `max_waiting` waiting calls.
 ///
 /// Errors: `COMLINE_ERR_INVALID_ARGUMENT` (a null pointer, a name that isn't
-/// UTF-8, a field outside its values, `max_frame` above the ceiling) or
-/// `COMLINE_ERR_UNKNOWN_FRAMING`. `*out` is null on any error.
+/// UTF-8, a field outside its values, `max_frame` above the ceiling,
+/// `*out` overlapping the config or its names) or
+/// `COMLINE_ERR_UNKNOWN_FRAMING`. `*out` is null on any error, unless it
+/// overlaps an input, when it is left as it was.
 ///
 /// # Safety
 /// `cfg` is null or a valid `comline_config` whose name pointers satisfy
@@ -639,13 +702,25 @@ pub unsafe extern "C" fn comline_connection_new(
         if out.is_null() {
             return COMLINE_ERR_INVALID_ARGUMENT;
         }
-        // SAFETY: checked non-null; the caller's contract.
-        unsafe { out.write(ptr::null_mut()) };
         if cfg.is_null() {
+            // SAFETY: checked non-null; the caller's contract.
+            unsafe { out.write(ptr::null_mut()) };
             return COMLINE_ERR_INVALID_ARGUMENT;
         }
-        // SAFETY: checked non-null; the caller's contract.
+        if !disjoint(&[writes(out, 1), reads(cfg, 1)]) {
+            return COMLINE_ERR_INVALID_ARGUMENT;
+        }
+        // SAFETY: checked non-null and apart; the caller's contract.
         let cfg = unsafe { &*cfg };
+        let names = [
+            reads(cfg.framing, cfg.framing_len),
+            reads(cfg.wire_format, cfg.wire_format_len),
+        ];
+        if !disjoint(&[writes(out, 1), names[0], names[1]]) {
+            return COMLINE_ERR_INVALID_ARGUMENT;
+        }
+        // SAFETY: checked non-null and apart; the caller's contract.
+        unsafe { out.write(ptr::null_mut()) };
         // SAFETY: the caller's contract.
         let (Some(framing_name), Some(wire_format)) = (unsafe {
             (
@@ -718,6 +793,10 @@ pub unsafe extern "C" fn comline_connection_new(
 /// before, with no other call on it running. It is invalid afterwards.
 #[no_mangle]
 pub unsafe extern "C" fn comline_connection_free(conn: *mut comline_connection) {
+    // Not through `with_conn`, which refuses a poisoned or closed handle:
+    // those are exactly the ones a binding frees. Freeing one is sound. A
+    // panic unwinds out of safe code only, which leaves every field (plain
+    // integers, flags, a `Vec<u64>`) valid, so it drops like any other.
     if conn.is_null() {
         return;
     }
@@ -751,6 +830,9 @@ pub unsafe extern "C" fn comline_connection_start(
     cap: usize,
     written: *mut usize,
 ) -> comline_status {
+    if !disjoint(&[writes(conn, 1), writes(out, cap), writes(written, 1)]) {
+        return COMLINE_ERR_INVALID_ARGUMENT;
+    }
     // SAFETY: the caller's contract.
     unsafe {
         with_conn(conn, |conn| {
@@ -822,6 +904,15 @@ pub unsafe extern "C" fn comline_connection_feed(
     consumed: *mut usize,
     ev: *mut comline_event,
 ) -> comline_status {
+    let regions = [
+        writes(conn, 1),
+        reads(in_, in_len),
+        writes(consumed, 1),
+        writes(ev, 1),
+    ];
+    if !disjoint(&regions) {
+        return COMLINE_ERR_INVALID_ARGUMENT;
+    }
     // SAFETY: the caller's contract.
     unsafe {
         with_conn(conn, |conn| {
@@ -989,6 +1080,17 @@ pub unsafe extern "C" fn comline_connection_encode_request(
     written: *mut usize,
     request_id: *mut u64,
 ) -> comline_status {
+    let regions = [
+        writes(conn, 1),
+        reads(name, name_len),
+        reads(body, body_len),
+        writes(out, cap),
+        writes(written, 1),
+        writes(request_id, 1),
+    ];
+    if !disjoint(&regions) {
+        return COMLINE_ERR_INVALID_ARGUMENT;
+    }
     // SAFETY: the caller's contract.
     unsafe {
         with_conn(conn, |conn| {
@@ -1085,6 +1187,15 @@ pub unsafe extern "C" fn comline_connection_encode_reply(
     cap: usize,
     written: *mut usize,
 ) -> comline_status {
+    let regions = [
+        writes(conn, 1),
+        reads(body, body_len),
+        writes(out, cap),
+        writes(written, 1),
+    ];
+    if !disjoint(&regions) {
+        return COMLINE_ERR_INVALID_ARGUMENT;
+    }
     // SAFETY: the caller's contract.
     unsafe {
         with_conn(conn, |conn| {
@@ -1151,6 +1262,9 @@ pub unsafe extern "C" fn comline_connection_is_waiting(
     conn: *mut comline_connection,
     waiting: *mut u8,
 ) -> comline_status {
+    if !disjoint(&[writes(conn, 1), writes(waiting, 1)]) {
+        return COMLINE_ERR_INVALID_ARGUMENT;
+    }
     // SAFETY: the caller's contract.
     unsafe {
         with_conn(conn, |conn| {
@@ -1177,6 +1291,9 @@ pub unsafe extern "C" fn comline_name_hash(
     hash: *mut u64,
 ) -> comline_status {
     guarded(|| {
+        if !disjoint(&[reads(name, len), writes(hash, 1)]) {
+            return COMLINE_ERR_INVALID_ARGUMENT;
+        }
         // SAFETY: the caller's contract.
         let (Some(name), Some(hash)) = (unsafe { text(name, len) }, unsafe { hash.as_mut() })
         else {
@@ -1211,6 +1328,15 @@ pub unsafe extern "C" fn comline_handshake_encode(
     written: *mut usize,
 ) -> comline_status {
     guarded(|| {
+        let regions = [
+            reads(wire_format, wire_format_len),
+            reads(framing, framing_len),
+            writes(out, cap),
+            writes(written, 1),
+        ];
+        if !disjoint(&regions) {
+            return COMLINE_ERR_INVALID_ARGUMENT;
+        }
         // SAFETY: the caller's contract.
         let (Some(wire_format), Some(framing), Some(out), Some(written)) = (unsafe {
             (
@@ -1258,6 +1384,14 @@ pub unsafe extern "C" fn comline_handshake_check(
     peer_out: *mut comline_handshake,
 ) -> comline_status {
     guarded(|| {
+        let regions = [
+            reads(ours, ours_len),
+            reads(peer, peer_len),
+            writes(peer_out, 1),
+        ];
+        if !disjoint(&regions) {
+            return COMLINE_ERR_INVALID_ARGUMENT;
+        }
         // SAFETY: the caller's contract.
         let (Some(ours), Some(peer)) = (unsafe { input(ours, ours_len) }, unsafe {
             input(peer, peer_len)
@@ -1326,6 +1460,9 @@ pub unsafe extern "C" fn comline_method_name_unescape(
     written: *mut usize,
 ) -> comline_status {
     guarded(|| {
+        if !disjoint(&[reads(in_, len), writes(out, cap), writes(written, 1)]) {
+            return COMLINE_ERR_INVALID_ARGUMENT;
+        }
         // SAFETY: the caller's contract.
         let (Some(spelled), Some(out), Some(written)) = (
             unsafe { text(in_, len) },

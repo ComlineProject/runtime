@@ -381,8 +381,10 @@ uint32_t comline_abi_version(void);
  makes: the handle, with room for `max_waiting` waiting calls.
 
  Errors: `COMLINE_ERR_INVALID_ARGUMENT` (a null pointer, a name that isn't
- UTF-8, a field outside its values, `max_frame` above the ceiling) or
- `COMLINE_ERR_UNKNOWN_FRAMING`. `*out` is null on any error.
+ UTF-8, a field outside its values, `max_frame` above the ceiling,
+ `*out` overlapping the config or its names) or
+ `COMLINE_ERR_UNKNOWN_FRAMING`. `*out` is null on any error, unless it
+ overlaps an input, when it is left as it was.
 
  # Safety
  `cfg` is null or a valid `comline_config` whose name pointers satisfy

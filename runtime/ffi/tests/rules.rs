@@ -941,3 +941,246 @@ fn the_counter_counts() {
     assert_eq!(allocations() - before, 2, "the handle and its waiting room");
     drop(conn);
 }
+
+// ── overlapping buffers and oversized lengths ──────────────────────────────
+
+#[test]
+fn overlapping_inputs_and_outputs_are_refused() {
+    let invalid = COMLINE_ERR_INVALID_ARGUMENT;
+    let conn = Conn::new(&Setup::plain("jsonrpc@1")).unwrap();
+    let mut buf = [b'x'; 256];
+    let p = buf.as_mut_ptr();
+    let (mut written, mut id) = (0usize, 0u64);
+    unsafe {
+        // `body` is `out` exactly, then partly.
+        for (body, out) in [(0, 0), (8, 0), (0, 8)] {
+            let status = comline_connection_encode_request(
+                conn.0,
+                0,
+                0,
+                b"m".as_ptr(),
+                1,
+                1,
+                p.add(body),
+                16,
+                p.add(out),
+                64,
+                &mut written,
+                &mut id,
+            );
+            assert_eq!(status, invalid, "body at {body}, out at {out}");
+        }
+        // The name inside `out`.
+        let status = comline_connection_encode_request(
+            conn.0,
+            0,
+            0,
+            p.add(40),
+            4,
+            1,
+            ptr::null(),
+            0,
+            p,
+            64,
+            &mut written,
+            &mut id,
+        );
+        assert_eq!(status, invalid);
+        // `*written` inside `out`.
+        let status = comline_connection_encode_request(
+            conn.0,
+            0,
+            0,
+            ptr::null(),
+            0,
+            1,
+            ptr::null(),
+            0,
+            p.add(16),
+            64,
+            p.add(32).cast(),
+            &mut id,
+        );
+        assert_eq!(status, invalid);
+        // `out` over the handle itself.
+        let status = comline_connection_encode_request(
+            conn.0,
+            0,
+            0,
+            ptr::null(),
+            0,
+            1,
+            ptr::null(),
+            0,
+            conn.0.cast(),
+            8,
+            &mut written,
+            &mut id,
+        );
+        assert_eq!(status, invalid);
+        let mut waiting = 0u8;
+        assert_eq!(
+            comline_connection_is_waiting(conn.0, &mut waiting),
+            COMLINE_OK
+        );
+        assert_eq!(waiting, 0, "nothing was made or spent");
+
+        // A reply's body over its `out`.
+        let status = comline_connection_encode_reply(
+            conn.0,
+            0,
+            1,
+            COMLINE_ENVELOPE_OK,
+            0,
+            p.add(4),
+            8,
+            p,
+            64,
+            &mut written,
+        );
+        assert_eq!(status, invalid);
+
+        // Feed: the event over the input, exactly and partly.
+        let ev: *mut comline_event = p.cast();
+        let mut consumed = 0;
+        assert_eq!(
+            comline_connection_feed(conn.0, p, 64, &mut consumed, ev),
+            invalid
+        );
+        assert_eq!(
+            comline_connection_feed(conn.0, p.add(40), 64, &mut consumed, ev),
+            invalid
+        );
+        assert_eq!(
+            comline_connection_feed(
+                conn.0,
+                p.add(48),
+                8,
+                p.add(50).cast(),
+                &mut comline_event::default()
+            ),
+            invalid
+        );
+
+        // The handshake: names inside `out`.
+        let status = comline_handshake_encode(
+            0,
+            p.add(10),
+            6,
+            b"datagram@2".as_ptr(),
+            10,
+            0,
+            p,
+            64,
+            &mut written,
+        );
+        assert_eq!(status, invalid);
+        let peer: *mut comline_handshake = p.cast();
+        assert_eq!(
+            comline_handshake_check(p.add(8), 31, b"x".as_ptr(), 1, peer),
+            invalid
+        );
+
+        // Unescape in place, exactly and partly.
+        assert_eq!(
+            comline_method_name_unescape(p, 8, p, 8, &mut written),
+            invalid
+        );
+        assert_eq!(
+            comline_method_name_unescape(p, 8, p.add(7), 8, &mut written),
+            invalid
+        );
+        assert_eq!(
+            comline_method_name_unescape(p, 8, p.add(8), 8, &mut written),
+            COMLINE_OK,
+            "adjacent is apart"
+        );
+
+        // The name hash written over its name.
+        assert_eq!(comline_name_hash(p, 8, p.add(4).cast()), invalid);
+
+        // `connection_new`'s out-pointer over its config.
+        let mut config = Setup::plain("datagram@2").config();
+        let cfg = &mut config as *mut comline_config;
+        assert_eq!(comline_connection_new(cfg, cfg.cast()), invalid);
+    }
+    // Inputs may overlap each other: a name that is also the body.
+    let name_and_body = b"[1]";
+    let mut out = [0u8; 128];
+    let status = unsafe {
+        comline_connection_encode_request(
+            conn.0,
+            0,
+            0,
+            name_and_body.as_ptr(),
+            3,
+            1,
+            name_and_body.as_ptr(),
+            3,
+            out.as_mut_ptr(),
+            128,
+            &mut written,
+            &mut id,
+        )
+    };
+    assert_eq!(status, COMLINE_OK);
+}
+
+#[test]
+fn lengths_above_isize_max_are_refused() {
+    let huge = isize::MAX as usize + 1;
+    let frame = handshake_encode(1, "json@1", "datagram@2", 0, 64).bytes;
+    let byte = [0u8; 1];
+    let mut written = 0;
+    unsafe {
+        assert_eq!(
+            comline_handshake_check(
+                frame.as_ptr(),
+                frame.len(),
+                byte.as_ptr(),
+                huge,
+                ptr::null_mut()
+            ),
+            COMLINE_ERR_INVALID_ARGUMENT
+        );
+        assert_eq!(comline_supports(byte.as_ptr(), huge), 0);
+        // A null `out` with a huge capacity: refused for the length, not
+        // the null.
+        assert_eq!(
+            comline_method_name_unescape(b"a".as_ptr(), 1, ptr::null_mut(), huge, &mut written),
+            COMLINE_ERR_INVALID_ARGUMENT
+        );
+        let mut conn = Conn::new(&Setup::plain("datagram@2")).unwrap();
+        let mut id = 0;
+        let status = comline_connection_encode_request(
+            conn.0,
+            0,
+            0,
+            ptr::null(),
+            0,
+            1,
+            ptr::null(),
+            0,
+            ptr::null_mut(),
+            huge,
+            &mut written,
+            &mut id,
+        );
+        assert_eq!(status, COMLINE_ERR_INVALID_ARGUMENT);
+        assert_eq!(conn.is_waiting(), Ok(false));
+    }
+}
+
+#[test]
+fn a_poisoned_handle_is_freed() {
+    let conn = Conn::new(&Setup::plain("datagram@2")).unwrap();
+    unsafe { comline_test_panic_next(conn.0) };
+    let mut waiting = 0;
+    assert_eq!(
+        unsafe { comline_connection_is_waiting(conn.0, &mut waiting) },
+        COMLINE_ERR_POISONED
+    );
+    let before = allocations();
+    drop(conn); // comline_connection_free
+    assert_eq!(allocations(), before, "freeing allocates nothing");
+}
