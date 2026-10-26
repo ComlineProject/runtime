@@ -64,29 +64,13 @@ fn allocations() -> usize {
 
 // ── the generator ──────────────────────────────────────────────────────────
 
-/// Method names: `state_model.rs`'s, and some that need escapes in JSON.
-const METHODS: [&str; 7] = [
-    "ping",
-    "send",
-    "chat.Chat/send",
-    "a",
-    "app.Chat\"quote",
-    "tab\there",
-    "é/\u{1}",
-];
-
-/// JSON texts, as `state_model.rs` has them, for bodies under `jsonrpc@1`.
-const JSON_TEXTS: [&str; 6] = ["null", "1", "\"x\"", "[1,2]", "{\"a\":true}", "-3.5"];
-
-const WIRE_FORMATS: [&str; 3] = ["packed@1", "json@1", "msgpack@1"];
-
 /// A body: raw bytes under `datagram@2`, mostly a JSON text under
 /// `jsonrpc@1` (and sometimes not, which it frames all the same).
 fn body(json: bool) -> BoxedStrategy<Vec<u8>> {
     let raw = prop::collection::vec(any::<u8>(), 0..12);
     if json {
         prop_oneof![
-            6 => prop::sample::select(&JSON_TEXTS[..]).prop_map(|t| t.as_bytes().to_vec()),
+            6 => prop::sample::select(&drive::JSON_TEXTS[..]).prop_map(|t| t.as_bytes().to_vec()),
             1 => Just(Vec::new()),
             1 => raw,
         ]
@@ -97,7 +81,7 @@ fn body(json: bool) -> BoxedStrategy<Vec<u8>> {
 }
 
 fn method() -> impl Strategy<Value = String> {
-    prop::sample::select(&METHODS[..]).prop_map(str::to_owned)
+    prop::sample::select(&drive::METHODS[..]).prop_map(str::to_owned)
 }
 
 /// A name as `encode_request` takes it: mostly a method, sometimes not
@@ -352,7 +336,7 @@ fn config() -> impl Strategy<Value = Config> {
     let odd = prop_oneof![30 => Just(None), 1 => (2..=u8::MAX).prop_map(Some)];
     (
         framing,
-        prop::sample::select(&WIRE_FORMATS[..]),
+        prop::sample::select(&drive::WIRE_FORMATS[..]),
         any::<u64>(),
         any::<u32>(),
         max_frame,
@@ -435,88 +419,20 @@ proptest! {
     }
 }
 
-/// The driver on a fixed sequence through every event kind, under both
-/// framings and both modes, apart from the generator.
+/// The driver on [`drive::exchange`], under both framings and both modes,
+/// apart from the generator.
 #[test]
 fn a_whole_exchange_runs() {
     for framing in ["datagram@2", "jsonrpc@1"] {
         for stream in [0, 1] {
-            let config = Config {
-                framing: framing.as_bytes().to_vec(),
-                wire_format: b"json@1".to_vec(),
-                ir_hash: 7,
-                capabilities: 3,
-                max_frame: 0,
-                max_waiting: 2,
-                handshake: COMLINE_HANDSHAKE_COMLINE,
-                stream,
-                unordered: 0,
-                reserved: 0,
-            };
-            let ops = [
-                Op::Start(Cap::Exact),
-                Op::PeerHello {
-                    hello: Hello::Agree,
-                    capabilities: 9,
-                },
-                Op::Deliver(3),
-                Op::Deliver(0),
-                Op::Call {
-                    protocol: 1,
-                    call_id: 2,
-                    name: b"chat.Chat/send".to_vec(),
-                    expects_reply: 1,
-                    body: b"[1]".to_vec(),
-                    cap: Cap::Short(0),
-                },
-                Op::Call {
-                    protocol: 1,
-                    call_id: 2,
-                    name: b"chat.Chat/send".to_vec(),
-                    expects_reply: 1,
-                    body: b"[1]".to_vec(),
-                    cap: Cap::Exact,
-                },
-                Op::PeerRequest {
-                    protocol: 0,
-                    call_id: 4,
-                    name: "app.Chat\"quote".into(),
-                    request_id: 11,
-                    one_way: false,
-                    body: b"{}".to_vec(),
-                },
-                Op::Deliver(0),
-                Op::Answer {
-                    protocol: 0,
-                    to: Theirs::Received(0),
-                    envelope: COMLINE_ENVELOPE_ERR,
-                    error_id: 5,
-                    body: b"{}".to_vec(),
-                    cap: Cap::Plenty,
-                },
-                Op::PeerReply {
-                    to: Ours::Waiting(0),
-                    protocol: 1,
-                    envelope: PeerEnvelope::Ok,
-                    body: b"true".to_vec(),
-                },
-                Op::PeerReply {
-                    to: Ours::Spent(0),
-                    protocol: 1,
-                    envelope: PeerEnvelope::Fault,
-                    body: Vec::new(),
-                },
-                Op::Deliver(0),
-                Op::IsWaiting,
-                Op::Abandon(Ours::Never(0)),
-                Op::PeerRaw {
-                    framed: true,
-                    bytes: b"!".to_vec(),
-                },
-                Op::Deliver(0),
-            ];
-            drive::run(&config, &ops, Mode::Differential, Some(allocations))
-                .unwrap_or_else(|e| panic!("{framing}, stream {stream}: {e}"));
+            let config = drive::exchange_config(framing, stream);
+            drive::run(
+                &config,
+                &drive::exchange(),
+                Mode::Differential,
+                Some(allocations),
+            )
+            .unwrap_or_else(|e| panic!("{framing}, stream {stream}: {e}"));
         }
     }
 }

@@ -29,6 +29,11 @@
 //! (ComlineProject/core#141, `validation::array-of-dataless-type`). Its
 //! element becomes a struct of a `bool` and that element, as in
 //! `conformance/tests/properties.rs`.
+//!
+//! The C ABI's targets (`ffi_feed`, `ffi_vs_core`) read a grammar of their
+//! own, in [`ffi`].
+
+pub mod ffi;
 
 use arbitrary::Unstructured;
 use comline_runtime::contract::{WireFormat, FORMAT_JSON, FORMAT_MSGPACK, FORMAT_PACKED};

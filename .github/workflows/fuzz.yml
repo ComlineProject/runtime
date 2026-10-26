@@ -1,7 +1,8 @@
 name: Fuzz
 
-# The cargo-fuzz targets in runtime/fuzz, and the property tests at a high
-# case count. A pull request runs each target for a minute, seeded from the
+# The cargo-fuzz targets in runtime/fuzz, and the property tests (the
+# conformance crate's, and the C ABI's differential test) at a high case
+# count. A pull request runs each target for a minute, seeded from the
 # conformance vectors. The nightly run gives each target ten minutes from a
 # corpus cached between runs, runs proptest with 100000 cases, and opens an
 # issue on a failure instead of blocking anyone's pull request.
@@ -42,6 +43,8 @@ jobs:
           - framing_decode
           - seed_vs_derive
           - stream_split
+          - ffi_feed
+          - ffi_vs_core
     env:
       NIGHTLY: ${{ github.event_name != 'pull_request' }}
       SECONDS_PER_TARGET: ${{ github.event_name == 'pull_request' && 60 || 600 }}
@@ -163,10 +166,15 @@ jobs:
         shell: bash
         env:
           PROPTEST_CASES: "100000"
+        # Both run, whichever fails, so the report has every verdict.
         run: |
           set -o pipefail
+          status=0
           cargo test --release -p comline-runtime-conformance --test properties \
-            2>&1 | tee "$RUNNER_TEMP/proptest.log"
+            2>&1 | tee "$RUNNER_TEMP/proptest.log" || status=1
+          cargo test --release -p comline-runtime-ffi --test differential the_abi_agrees_with_the_core \
+            2>&1 | tee -a "$RUNNER_TEMP/proptest.log" || status=1
+          exit $status
       - name: Record the run
         if: always()
         run: >
@@ -183,7 +191,9 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: proptest-regressions
-          path: runtime/conformance/tests/properties.proptest-regressions
+          path: |
+            runtime/conformance/tests/properties.proptest-regressions
+            runtime/ffi/tests/differential.proptest-regressions
           if-no-files-found: ignore
       - name: Open an issue
         if: failure()
@@ -225,7 +235,7 @@ jobs:
           python3 .github/scripts/fuzz-report.py combine \
             --commit "$COMMIT" --run "$RUN" \
             --fragments "$RUNNER_TEMP/stats" \
-            --expect decode_no_panic packed_canonical framing_decode seed_vs_derive stream_split \
+            --expect decode_no_panic packed_canonical framing_decode seed_vs_derive stream_split ffi_feed ffi_vs_core \
             --report runtime/conformance/reports/rust.fuzz.json \
             --markdown "$RUNNER_TEMP/fuzz.md"
           cat "$RUNNER_TEMP/fuzz.md" >> "$GITHUB_STEP_SUMMARY"

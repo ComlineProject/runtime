@@ -53,3 +53,20 @@ node --test runtime/ffi/js/test/vectors.test.mjs
 The C and Node harnesses look under `CARGO_TARGET_DIR` (or `target`);
 `COMLINE_VECTORS` and `COMLINE_WASM` point Node elsewhere, and `VECTORS`
 does the same for `make`.
+
+**Against the core, on random sequences.** Beyond the vectors, the ABI is
+run against `comline-runtime` itself: random configs and sequences (calls,
+replies, abandons, peer frames, chunked deliveries, flipped bytes) go
+through a `comline_connection` and through `State` and the framings
+directly, which must give the same frames, events and refusals, while every
+call is held to the ABI's rules (documented statuses, spans inside the
+input, retry sizes, no request id spent on a refusal, no allocation after
+`comline_connection_new`). The driver is `tests/common/drive.rs`; it runs on
+proptest's sequences in `tests/differential.rs`, and on fuzzer input in the
+`ffi_feed` (rules only) and `ffi_vs_core` targets in
+[`runtime/fuzz`](../fuzz/README.md).
+
+```sh
+PROPTEST_CASES=100000 cargo test --release -p comline-runtime-ffi --test differential
+cargo +nightly fuzz run --fuzz-dir runtime/fuzz ffi_vs_core
+```

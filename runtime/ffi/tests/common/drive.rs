@@ -272,6 +272,109 @@ pub fn run(
     Ok(())
 }
 
+// ── what sequences are made of ─────────────────────────────────────────────
+
+/// Method names: `state_model.rs`'s, and some that need escapes in JSON.
+pub const METHODS: [&str; 7] = [
+    "ping",
+    "send",
+    "chat.Chat/send",
+    "a",
+    "app.Chat\"quote",
+    "tab\there",
+    "é/\u{1}",
+];
+
+/// JSON texts, as `state_model.rs` has them, for bodies under `jsonrpc@1`.
+pub const JSON_TEXTS: [&str; 6] = ["null", "1", "\"x\"", "[1,2]", "{\"a\":true}", "-3.5"];
+
+pub const WIRE_FORMATS: [&str; 3] = ["packed@1", "json@1", "msgpack@1"];
+
+/// A connection for [`exchange`]: a handshake, room for two waiting calls.
+pub fn exchange_config(framing: &str, stream: u8) -> Config {
+    Config {
+        framing: framing.as_bytes().to_vec(),
+        wire_format: b"json@1".to_vec(),
+        ir_hash: 7,
+        capabilities: 3,
+        max_frame: 0,
+        max_waiting: 2,
+        handshake: COMLINE_HANDSHAKE_COMLINE,
+        stream,
+        unordered: 0,
+        reserved: 0,
+    }
+}
+
+/// A fixed exchange through every event kind: both handshake frames (the
+/// peer's in two chunks), a call short of room then with exactly enough, a
+/// request from the peer and its answer, a reply and a stale one, and a
+/// malformed frame.
+pub fn exchange() -> Vec<Op> {
+    vec![
+        Op::Start(Cap::Exact),
+        Op::PeerHello {
+            hello: Hello::Agree,
+            capabilities: 9,
+        },
+        Op::Deliver(3),
+        Op::Deliver(0),
+        Op::Call {
+            protocol: 1,
+            call_id: 2,
+            name: b"chat.Chat/send".to_vec(),
+            expects_reply: 1,
+            body: b"[1]".to_vec(),
+            cap: Cap::Short(0),
+        },
+        Op::Call {
+            protocol: 1,
+            call_id: 2,
+            name: b"chat.Chat/send".to_vec(),
+            expects_reply: 1,
+            body: b"[1]".to_vec(),
+            cap: Cap::Exact,
+        },
+        Op::PeerRequest {
+            protocol: 0,
+            call_id: 4,
+            name: "app.Chat\"quote".into(),
+            request_id: 11,
+            one_way: false,
+            body: b"{}".to_vec(),
+        },
+        Op::Deliver(0),
+        Op::Answer {
+            protocol: 0,
+            to: Theirs::Received(0),
+            envelope: COMLINE_ENVELOPE_ERR,
+            error_id: 5,
+            body: b"{}".to_vec(),
+            cap: Cap::Plenty,
+        },
+        Op::PeerReply {
+            to: Ours::Waiting(0),
+            protocol: 1,
+            envelope: PeerEnvelope::Ok,
+            body: b"true".to_vec(),
+        },
+        Op::PeerReply {
+            to: Ours::Spent(0),
+            protocol: 1,
+            envelope: PeerEnvelope::Fault,
+            body: Vec::new(),
+        },
+        Op::Deliver(0),
+        Op::IsWaiting,
+        Op::Abandon(Ours::Never(0)),
+        Op::PeerRaw {
+            framed: true,
+            bytes: b"!".to_vec(),
+        },
+        Op::Deliver(0),
+    ]
+}
+
 // ── status codes ───────────────────────────────────────────────────────────
 
 /// What each function's doc comment says it returns.
@@ -601,13 +704,12 @@ impl Ffi {
         let (status, allocated) = self.counted(|| unsafe {
             comline_connection_feed(conn, input.as_ptr(), input.len(), &mut consumed, &mut ev)
         });
-        // The known breaches of the rule, both serde_json's under
-        // `jsonrpc@1`: refusing a frame (it boxes every error) and a member
-        // name with an escape (it unescapes into a scratch `Vec`). See
-        // `rules.rs`, `jsonrpc_decode_allocates_nothing`, ignored until
-        // they're fixed. Anything else that allocates fails.
+        // The known breaches of the rule, all serde_json's under
+        // `jsonrpc@1` (see `serde_json_allocates`, and `rules.rs`,
+        // `jsonrpc_decode_allocates_nothing`, ignored until they're fixed).
+        // Anything else that allocates fails.
         let frame = &input[..consumed.min(input.len())];
-        let known = self.jsonrpc && (status == COMLINE_ERR_FRAMING || frame.contains(&b'\\'));
+        let known = self.jsonrpc && serde_json_allocates(status, frame);
         ensure!(
             allocated == 0 || known,
             "feed allocated ({allocated} allocations)"
@@ -619,6 +721,36 @@ impl Ffi {
             ev,
         })
     }
+}
+
+/// Whether `jsonrpc@1`'s decode is known to allocate on `frame`, which fed
+/// with `status`. The framing parses with serde_json, which allocates:
+/// - for any error, which it boxes (so for every refused frame);
+/// - to unescape a member name (`"js\u006erpc"`) into its scratch `Vec`;
+/// - to skip or borrow a value with brackets inside brackets (`[[1]]` as
+///   `params`, or an unknown member's), which it does by pushing the
+///   enclosing ones onto that scratch `Vec`: brackets three deep in the frame.
+///
+/// These break the rule that nothing allocates after
+/// `comline_connection_new`; they are the core's bugs, not the rule's.
+fn serde_json_allocates(status: comline_status, frame: &[u8]) -> bool {
+    if status == COMLINE_ERR_FRAMING || frame.contains(&b'\\') {
+        return true;
+    }
+    // Without a backslash, a `"` always opens or closes a string.
+    let (mut depth, mut deepest, mut in_string) = (0usize, 0, false);
+    for &b in frame {
+        match b {
+            b'"' => in_string = !in_string,
+            b'[' | b'{' if !in_string => {
+                depth += 1;
+                deepest = deepest.max(depth);
+            }
+            b']' | b'}' if !in_string => depth = depth.saturating_sub(1),
+            _ => {}
+        }
+    }
+    deepest >= 3
 }
 
 // ── the reference ──────────────────────────────────────────────────────────
