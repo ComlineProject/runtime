@@ -23,7 +23,9 @@
 //!   spans are offsets into the caller's input, never pointers.
 //! - **No allocation after `comline_connection_new`.** The handle is the one
 //!   thing the library allocates, sized by `max_waiting`, and
-//!   `comline_connection_free` frees it.
+//!   `comline_connection_free` frees it. One known exception, a bug:
+//!   `comline_connection_feed` on a `jsonrpc@1` connection can allocate
+//!   (runtime#58).
 //! - **Null pointers.** A data pointer (`in`, `body`, `name`, `out`, …) may
 //!   be null only when its length or capacity is 0. Any other null pointer
 //!   is `COMLINE_ERR_INVALID_ARGUMENT`, and so is a length or capacity above
@@ -681,7 +683,8 @@ fn name_span(base: &[u8], name: MethodName<'_>) -> (comline_span, u8) {
 // ── making and freeing a connection ────────────────────────────────────────
 
 /// Make a connection from `cfg`, into `*out`. The one allocation the library
-/// makes: the handle, with room for `max_waiting` waiting calls.
+/// makes: the handle, with room for `max_waiting` waiting calls. (One known
+/// exception, a bug: `comline_connection_feed` on `jsonrpc@1`; see there.)
 ///
 /// Errors: `COMLINE_ERR_INVALID_ARGUMENT` (a null pointer, a name that isn't
 /// UTF-8, a field outside its values, `max_frame` above the ceiling,
@@ -893,6 +896,13 @@ pub unsafe extern "C" fn comline_connection_start(
 ///   the `id`. A notification is `COMLINE_EVENT_ONE_WAY` with request id 0.
 ///   Absent `params`, `result` or `error.data` is
 ///   `COMLINE_EVENT_BODY_ABSENT`.
+///
+/// **Known bug (runtime#58):** on `jsonrpc@1` this call can allocate, which
+/// breaks the rule that nothing allocates after `comline_connection_new`.
+/// The JSON parser allocates for any refused frame, for a member name
+/// written with escapes, and for brackets nested three deep in the frame
+/// (`"params":[[1]]`, counting the frame's own `{`). `datagram@2` never
+/// allocates here.
 ///
 /// # Safety
 /// `conn` is null or a live handle; `in` is null or `in_len` readable bytes;
