@@ -254,7 +254,9 @@ impl State {
     /// Take back the call [`encode_request`](Self::encode_request) just
     /// framed as `request_id`, before it was sent: it no longer waits, and,
     /// if no call was framed since, its request id is handed out again.
-    pub fn retract(&mut self, request_id: u64) {
+    /// Call it only before the frame is sent: on a sent call it would hand
+    /// that request id out a second time.
+    pub(crate) fn retract(&mut self, request_id: u64) {
         self.abandon(request_id);
         if self.next_id == request_id.wrapping_add(1) {
             self.next_id = request_id;
@@ -884,17 +886,25 @@ mod tests {
             .encode_request(&framing, 0, Call::from(0), &(), &Unit, true, &mut out)
             .unwrap();
         assert_eq!(again, id, "the id is handed out again");
+    }
 
-        // Once another call was framed, the id isn't reused.
+    #[test]
+    fn retract_after_a_later_call_does_not_rewind_the_ids() {
+        let framing = Datagram2Framing;
+        let mut state = State::default();
+        let mut out = Vec::new();
+        let first = state
+            .encode_request(&framing, 0, Call::from(0), &(), &Unit, true, &mut out)
+            .unwrap();
+        let later = state
+            .encode_request(&framing, 0, Call::from(0), &(), &Unit, false, &mut out)
+            .unwrap();
+        state.retract(first);
+        assert!(!state.is_waiting());
         let next = state
             .encode_request(&framing, 0, Call::from(0), &(), &Unit, false, &mut out)
             .unwrap();
-        state.retract(again);
-        assert!(!state.is_waiting());
-        let after = state
-            .encode_request(&framing, 0, Call::from(0), &(), &Unit, false, &mut out)
-            .unwrap();
-        assert_eq!(after, next + 1);
+        assert_eq!(next, later + 1, "neither id is handed out again");
     }
 
     #[test]
