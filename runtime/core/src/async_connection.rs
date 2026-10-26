@@ -950,8 +950,7 @@ pub mod tokio {
     /// LE][frame]`, [`contract::stream`](crate::contract::stream)), so the two
     /// talk to each other.
     ///
-    /// Frames are held to the same limit, by default
-    /// [`DEFAULT_MAX_FRAME`](crate::contract::stream::DEFAULT_MAX_FRAME)
+    /// Frames are held to the same limit, by default [`DEFAULT_MAX_FRAME`]
     /// ([`with_max_frame`](Self::with_max_frame) sets another):
     /// - a send over it is [`RuntimeError::FrameTooLarge`], and nothing is
     ///   queued or written;
@@ -989,11 +988,10 @@ pub mod tokio {
                 .map_err(|_| RuntimeError::Transport)
         }
 
-        /// Hold frames to `max_frame` bytes instead of
-        /// [`DEFAULT_MAX_FRAME`](crate::contract::stream::DEFAULT_MAX_FRAME),
+        /// Hold frames to `max_frame` bytes instead of [`DEFAULT_MAX_FRAME`],
         /// lower or higher. A limit above what the `u32` prefix can declare
-        /// ([`PREFIX_CEILING`](crate::contract::stream::PREFIX_CEILING)) is
-        /// refused with [`RuntimeError::FrameTooLarge`].
+        /// ([`PREFIX_CEILING`]) is refused with
+        /// [`RuntimeError::FrameTooLarge`].
         ///
         /// An [`AsyncConnection`](super::AsyncConnection) over it checks its
         /// own sends against
