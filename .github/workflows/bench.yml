@@ -70,7 +70,9 @@ env:
   LEDGER: runtime/core/benches/accepted-regressions.toml
   # Base and head build into separate target directories: in a shared one,
   # Cargo names a workspace's path packages the same from either checkout, and
-  # the head's older source mtimes make it reuse the base's build. They share
+  # the head's older source mtimes make it reuse the base's build. On a pull
+  # request both are in $RUNNER_TEMP, with paths of the same length (see
+  # "Bench the head"). They share
   # iai-callgrind's output directory, where it keeps the base's counts for the
   # head to compare with.
   CARGO_TARGET_DIR: ${{ github.workspace }}/target
@@ -146,6 +148,11 @@ jobs:
           COMPARE: ${{ steps.base.outputs.compare }}
         run: |
           find "$IAI_CALLGRIND_HOME" -name summary.json -delete 2>/dev/null || true
+          # Beside the base's, and as long a path: a bench binary's path is
+          # in its arguments, and its length moves the heap, which moves some
+          # counts by a few instructions (16 of the ffi target's 102, when
+          # measured with paths 16 bytes apart). Same length, same counts.
+          export CARGO_TARGET_DIR="$RUNNER_TEMP/head-target"
           # No --callgrind-limits: the gate is the Report step's, which knows
           # the ledger. So this step fails only when a benchmark can't run.
           # A target the base ran is compared with its baseline; one the base

@@ -7,13 +7,23 @@ go to `main` from a branch.
 
 The runtime's benchmarks are in [`runtime/core/benches`](runtime/core/benches),
 measuring the work [`runtime/conformance/benches`](runtime/conformance/benches/README.md)
-defines. They count instructions with Callgrind, through `iai-callgrind`; run
-them with `cargo bench -p comline-runtime` (they need Valgrind, and
-`iai-callgrind-runner` at the version the dev-dependency pins).
+defines. The C ABI's are in [`runtime/ffi/bench`](runtime/ffi/bench): each
+call through its `extern "C"` function, and the same work on the core
+directly, so the crossing's cost is measured. They count instructions with
+Callgrind, through `iai-callgrind`; run them with
+`cargo bench -p comline-runtime` and `cargo bench -p comline-runtime-ffi-bench`
+(they need Valgrind, and `iai-callgrind-runner` at the version the
+dev-dependency pins).
 
 On every pull request, CI ([`bench.yml`](.github/workflows/bench.yml)) runs
-them on the base and on the head, and **fails if any benchmark's instruction
-count grows by more than 1%**. The job summary has the full comparison.
+every bench target (`TARGETS` in
+[`bench-report.py`](.github/scripts/bench-report.py)) on the base and on the
+head, and **fails if any benchmark's instruction count grows by more than
+1%**. The job summary has the full comparison, and a table of what each C
+ABI call costs over the core. A benchmark is named by its id, unique across
+targets: the runtime's are the shared definitions' (`handshake/check`), and
+every other target's start with its name (`ffi/abi/feed/datagram@2/stream/16`).
+A target the base doesn't have yet is recorded only.
 
 ### When a fix costs instructions
 
@@ -21,7 +31,7 @@ No standard is lowered to let a change through: not the limit, and not the
 tests. But a correctness fix can legitimately cost instructions. When it does,
 the pull request accepts that cost explicitly, in
 [`runtime/core/benches/accepted-regressions.toml`](runtime/core/benches/accepted-regressions.toml),
-by appending one entry per benchmark:
+by appending one entry per benchmark (one ledger for every target):
 
 ```toml
 [[accepted]]

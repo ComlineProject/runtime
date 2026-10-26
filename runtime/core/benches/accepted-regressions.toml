@@ -1,7 +1,12 @@
 # Accepted instruction-count regressions: the ledger.
 #
 # CI's gate (.github/workflows/bench.yml) fails a pull request when any
-# benchmark's instruction count grows by more than 1% over its base. No
+# benchmark's instruction count grows by more than 1% over its base. This one
+# ledger covers every bench target (`TARGETS` in
+# .github/scripts/bench-report.py): the runtime's benchmarks by their shared
+# ids (`handshake/check`), every other target's by ids qualified with its
+# name (`ffi/abi/name-hash`, from runtime/ffi/bench). The job summary names
+# each one. No
 # standard is lowered to let a change through; but a fix can cost
 # instructions, and when that cost is the price of being right, a pull request
 # accepts it here, in the diff, where it's reviewed:
