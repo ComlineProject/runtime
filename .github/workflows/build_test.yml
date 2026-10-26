@@ -50,7 +50,9 @@ jobs:
   # cdylib and a staticlib natively and as a wasm32 module. The conformance
   # vectors are replayed through it from Rust (`cargo test`), from C against
   # the staticlib and the cdylib (gcc, and ASan + UBSan), and from Node
-  # against the wasm32 build, each on the same cases.
+  # against the wasm32 build, each on the same cases. The Node tests also
+  # hold the JS glue to its own rules: a trap poisons the instance (against
+  # a `test-hooks` wasm32 build), one crossing per call, and `encodeBound`.
   ffi:
     name: ffi
     runs-on: ubuntu-latest
@@ -77,8 +79,14 @@ jobs:
           ls -l target/release/libcomline_runtime_ffi.so target/release/libcomline_runtime_ffi.a
       - name: wasm32
         run: |
-          cargo build --verbose -p comline-runtime-ffi --release --target wasm32-unknown-unknown
-          ls -l target/wasm32-unknown-unknown/release/comline_runtime_ffi.wasm
+          cargo build --verbose -p comline-runtime-ffi --profile wasm --target wasm32-unknown-unknown
+          ls -l target/wasm32-unknown-unknown/wasm/comline_runtime_ffi.wasm
+      # Into a target directory of its own, so it doesn't replace the build
+      # above; js/test/poison.test.mjs looks for it there.
+      - name: wasm32 with test hooks
+        run: |
+          cargo build --verbose -p comline-runtime-ffi --profile wasm --target wasm32-unknown-unknown --features test-hooks --target-dir target/test-hooks
+          ls -l target/test-hooks/wasm32-unknown-unknown/wasm/comline_runtime_ffi.wasm
       - run: cargo test --verbose -p comline-runtime-ffi
       - name: export the vectors for C and Node
         run: cargo run -p comline-runtime-ffi --example export_vectors -- target/ffi-vectors
@@ -88,7 +96,7 @@ jobs:
         with:
           node-version: 22
       - name: Node harness (wasm32)
-        run: node --test runtime/ffi/js/test/vectors.test.mjs
+        run: node --test runtime/ffi/js/test/*.test.mjs
 
   # The C ABI under Miri: the replay and the rule tests, checked for
   # undefined behaviour at the `extern "C"` boundary (aliasing, bounds,
