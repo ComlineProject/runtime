@@ -570,55 +570,60 @@ unsafe fn output<'a>(ptr: *mut u8, cap: usize) -> Option<&'a mut [u8]> {
     }
 }
 
-/// Memory one call reads or writes: its address, its length in bytes, and
-/// whether the call writes it.
+/// Memory one call reads or writes: the addresses `start..end`. Empty when
+/// `end == start`.
 #[derive(Clone, Copy)]
 struct Region {
     start: usize,
-    len: usize,
-    written: bool,
+    end: usize,
 }
 
-/// `len` bytes the call reads at `ptr`.
-fn reads<T>(ptr: *const T, len: usize) -> Region {
-    region(
-        ptr as usize,
-        len.saturating_mul(core::mem::size_of::<T>()),
-        false,
-    )
-}
-
-/// `len` bytes the call writes at `ptr`.
-fn writes<T>(ptr: *mut T, len: usize) -> Region {
-    region(
-        ptr as usize,
-        len.saturating_mul(core::mem::size_of::<T>()),
-        true,
-    )
-}
-
-/// A null pointer is no memory: the call refuses it on its own.
-fn region(start: usize, len: usize, written: bool) -> Region {
+/// `len` values of `T` at `ptr`. A null pointer is no memory: the call
+/// refuses it on its own. A length past the address space ends at its top
+/// (the call refuses any length over `isize::MAX` on its own too).
+#[inline(always)]
+fn region<T>(ptr: *const T, len: usize) -> Region {
+    let start = ptr as usize;
+    let len = len.saturating_mul(core::mem::size_of::<T>());
     Region {
         start,
-        len: if start == 0 { 0 } else { len },
-        written,
+        end: if start == 0 {
+            0
+        } else {
+            start.saturating_add(len)
+        },
     }
+}
+
+/// Whether `a` and `b` share a byte: the later start is before the earlier
+/// end, which an empty region's never is.
+#[inline(always)]
+fn overlap(a: Region, b: Region) -> bool {
+    a.start.max(b.start) < a.end.min(b.end)
 }
 
 /// Whether no memory a call writes shares a byte with any other memory it
 /// takes. A `&mut` that aliases another reference is undefined behaviour,
 /// so this is checked on addresses alone, before any reference is made.
-fn disjoint(regions: &[Region]) -> bool {
-    regions.iter().enumerate().all(|(i, a)| {
-        regions[i + 1..].iter().all(|b| {
-            !(a.written || b.written)
-                || a.len == 0
-                || b.len == 0
-                || a.start.saturating_add(a.len) <= b.start
-                || b.start.saturating_add(b.len) <= a.start
-        })
-    })
+///
+/// `disjoint!(writes [(ptr, len), ...], reads [(ptr, len), ...])`, lengths
+/// counted in the pointer's type. Every call runs it, so it expands to the
+/// pairs themselves, without a loop: each written region against every
+/// region after it, and no pair of two reads.
+macro_rules! disjoint {
+    (writes [$($w:expr),+ $(,)?], reads [$($r:expr),* $(,)?]) => {
+        !disjoint!(@shared [$(region($w.0, $w.1)),+] [$(region($r.0, $r.1)),*])
+    };
+    (writes [$($w:expr),+ $(,)?]) => {
+        disjoint!(writes [$($w),+], reads [])
+    };
+    (@shared [$w:expr] [$($r:expr),*]) => {
+        false $(| overlap($w, $r))*
+    };
+    (@shared [$w:expr, $($ws:expr),+] [$($r:expr),*]) => {
+        false $(| overlap($w, $ws))* $(| overlap($w, $r))*
+            | disjoint!(@shared [$($ws),+] [$($r),*])
+    };
 }
 
 /// UTF-8 text of `len` bytes at `ptr`.
@@ -639,9 +644,14 @@ fn span_in(base: &[u8], part: &[u8]) -> Option<comline_span> {
     if end > base.len() {
         return None;
     }
+    // `start` and the length are each at most `end`, so one check covers
+    // both casts. It never fails: a frame starts at 0 or after its prefix
+    // and is at most `max_frame`, which is at most the ceiling, so anything
+    // in it ends by `PREFIX_LEN + COMLINE_MAX_FRAME_CEILING == u32::MAX`.
+    u32::try_from(end).expect("spans fit u32 under the frame ceiling");
     Some(comline_span {
-        offset: u32::try_from(start).expect("spans fit u32 under the frame ceiling"),
-        len: u32::try_from(part.len()).expect("spans fit u32 under the frame ceiling"),
+        offset: start as u32,
+        len: part.len() as u32,
     })
 }
 
@@ -696,16 +706,18 @@ pub unsafe extern "C" fn comline_connection_new(
             unsafe { out.write(ptr::null_mut()) };
             return COMLINE_ERR_INVALID_ARGUMENT;
         }
-        if !disjoint(&[writes(out, 1), reads(cfg, 1)]) {
+        if !disjoint!(writes[(out, 1)], reads[(cfg, 1)]) {
             return COMLINE_ERR_INVALID_ARGUMENT;
         }
         // SAFETY: checked non-null and apart; the caller's contract.
         let cfg = unsafe { &*cfg };
-        let names = [
-            reads(cfg.framing, cfg.framing_len),
-            reads(cfg.wire_format, cfg.wire_format_len),
-        ];
-        if !disjoint(&[writes(out, 1), names[0], names[1]]) {
+        if !disjoint!(
+            writes [(out, 1)],
+            reads [
+                (cfg.framing, cfg.framing_len),
+                (cfg.wire_format, cfg.wire_format_len),
+            ]
+        ) {
             return COMLINE_ERR_INVALID_ARGUMENT;
         }
         // SAFETY: checked non-null and apart; the caller's contract.
@@ -819,7 +831,7 @@ pub unsafe extern "C" fn comline_connection_start(
     cap: usize,
     written: *mut usize,
 ) -> comline_status {
-    if !disjoint(&[writes(conn, 1), writes(out, cap), writes(written, 1)]) {
+    if !disjoint!(writes [(conn, 1), (out, cap), (written, 1)]) {
         return COMLINE_ERR_INVALID_ARGUMENT;
     }
     // SAFETY: the caller's contract.
@@ -893,13 +905,10 @@ pub unsafe extern "C" fn comline_connection_feed(
     consumed: *mut usize,
     ev: *mut comline_event,
 ) -> comline_status {
-    let regions = [
-        writes(conn, 1),
-        reads(in_, in_len),
-        writes(consumed, 1),
-        writes(ev, 1),
-    ];
-    if !disjoint(&regions) {
+    if !disjoint!(
+        writes [(conn, 1), (consumed, 1), (ev, 1)],
+        reads [(in_, in_len)]
+    ) {
         return COMLINE_ERR_INVALID_ARGUMENT;
     }
     // SAFETY: the caller's contract.
@@ -1069,15 +1078,10 @@ pub unsafe extern "C" fn comline_connection_encode_request(
     written: *mut usize,
     request_id: *mut u64,
 ) -> comline_status {
-    let regions = [
-        writes(conn, 1),
-        reads(name, name_len),
-        reads(body, body_len),
-        writes(out, cap),
-        writes(written, 1),
-        writes(request_id, 1),
-    ];
-    if !disjoint(&regions) {
+    if !disjoint!(
+        writes [(conn, 1), (out, cap), (written, 1), (request_id, 1)],
+        reads [(name, name_len), (body, body_len)]
+    ) {
         return COMLINE_ERR_INVALID_ARGUMENT;
     }
     // SAFETY: the caller's contract.
@@ -1176,13 +1180,10 @@ pub unsafe extern "C" fn comline_connection_encode_reply(
     cap: usize,
     written: *mut usize,
 ) -> comline_status {
-    let regions = [
-        writes(conn, 1),
-        reads(body, body_len),
-        writes(out, cap),
-        writes(written, 1),
-    ];
-    if !disjoint(&regions) {
+    if !disjoint!(
+        writes [(conn, 1), (out, cap), (written, 1)],
+        reads [(body, body_len)]
+    ) {
         return COMLINE_ERR_INVALID_ARGUMENT;
     }
     // SAFETY: the caller's contract.
@@ -1251,7 +1252,7 @@ pub unsafe extern "C" fn comline_connection_is_waiting(
     conn: *mut comline_connection,
     waiting: *mut u8,
 ) -> comline_status {
-    if !disjoint(&[writes(conn, 1), writes(waiting, 1)]) {
+    if !disjoint!(writes [(conn, 1), (waiting, 1)]) {
         return COMLINE_ERR_INVALID_ARGUMENT;
     }
     // SAFETY: the caller's contract.
@@ -1280,7 +1281,7 @@ pub unsafe extern "C" fn comline_name_hash(
     hash: *mut u64,
 ) -> comline_status {
     guarded(|| {
-        if !disjoint(&[reads(name, len), writes(hash, 1)]) {
+        if !disjoint!(writes[(hash, 1)], reads[(name, len)]) {
             return COMLINE_ERR_INVALID_ARGUMENT;
         }
         // SAFETY: the caller's contract.
@@ -1317,13 +1318,10 @@ pub unsafe extern "C" fn comline_handshake_encode(
     written: *mut usize,
 ) -> comline_status {
     guarded(|| {
-        let regions = [
-            reads(wire_format, wire_format_len),
-            reads(framing, framing_len),
-            writes(out, cap),
-            writes(written, 1),
-        ];
-        if !disjoint(&regions) {
+        if !disjoint!(
+            writes [(out, cap), (written, 1)],
+            reads [(wire_format, wire_format_len), (framing, framing_len)]
+        ) {
             return COMLINE_ERR_INVALID_ARGUMENT;
         }
         // SAFETY: the caller's contract.
@@ -1373,12 +1371,14 @@ pub unsafe extern "C" fn comline_handshake_check(
     peer_out: *mut comline_handshake,
 ) -> comline_status {
     guarded(|| {
-        let regions = [
-            reads(ours, ours_len),
-            reads(peer, peer_len),
-            writes(peer_out, 1),
-        ];
-        if !disjoint(&regions) {
+        // `peer_out` is the only memory written, so only when it's given can
+        // anything overlap.
+        if !peer_out.is_null()
+            && !disjoint!(
+                writes [(peer_out, 1)],
+                reads [(ours, ours_len), (peer, peer_len)]
+            )
+        {
             return COMLINE_ERR_INVALID_ARGUMENT;
         }
         // SAFETY: the caller's contract.
@@ -1390,6 +1390,7 @@ pub unsafe extern "C" fn comline_handshake_check(
         let Some(ours) = HandshakeFrame::decode(ours) else {
             return COMLINE_ERR_INVALID_ARGUMENT;
         };
+        // SAFETY: checked apart from the inputs; the caller's contract.
         if let Some(out) = unsafe { peer_out.as_mut() } {
             if let Some(frame) = HandshakeFrame::decode(peer) {
                 *out = comline_handshake {
@@ -1449,7 +1450,7 @@ pub unsafe extern "C" fn comline_method_name_unescape(
     written: *mut usize,
 ) -> comline_status {
     guarded(|| {
-        if !disjoint(&[reads(in_, len), writes(out, cap), writes(written, 1)]) {
+        if !disjoint!(writes [(out, cap), (written, 1)], reads [(in_, len)]) {
             return COMLINE_ERR_INVALID_ARGUMENT;
         }
         // SAFETY: the caller's contract.
@@ -1541,5 +1542,65 @@ pub unsafe extern "C" fn comline_test_panic_next(conn: *mut comline_connection) 
     // SAFETY: the caller's contract.
     if let Some(conn) = unsafe { conn.as_mut() } {
         conn.panic_next = true;
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// The rule `disjoint!` checks, as plainly as it can be said: two
+    /// regions conflict when one is written, neither is empty, and each
+    /// starts before the other ends. A region is `(start, len, written)`.
+    fn conflict(a: (usize, usize, bool), b: (usize, usize, bool)) -> bool {
+        let len = |(start, len, _): (usize, usize, bool)| if start == 0 { 0 } else { len };
+        (a.2 || b.2)
+            && len(a) != 0
+            && len(b) != 0
+            && a.0 < b.0.saturating_add(len(b))
+            && b.0 < a.0.saturating_add(len(a))
+    }
+
+    /// Every three regions over a small address space (null included), and
+    /// lengths up to the end of the address space, against the plain rule,
+    /// with every split of the three into written and read. Not under Miri:
+    /// there's no `unsafe` to check, and too many cases.
+    #[test]
+    #[cfg_attr(miri, ignore)]
+    fn disjoint_is_the_plain_rule() {
+        let starts = [0, 1, 2, 3, 4, 5, usize::MAX - 1, usize::MAX];
+        let lens = [0, 1, 2, 3, usize::MAX];
+        let mut all = Vec::new();
+        for &start in &starts {
+            for &len in &lens {
+                all.push((start as *const u8, len));
+            }
+        }
+        let plain = |regions: [(*const u8, usize); 3], writes: usize| {
+            let r = |i: usize| (regions[i].0 as usize, regions[i].1, i < writes);
+            !(conflict(r(0), r(1)) || conflict(r(0), r(2)) || conflict(r(1), r(2)))
+        };
+        for &a in &all {
+            for &b in &all {
+                for &c in &all {
+                    let at = [a, b, c];
+                    assert_eq!(
+                        disjoint!(writes [a, b, c]),
+                        plain(at, 3),
+                        "{at:?}, 3 written"
+                    );
+                    assert_eq!(
+                        disjoint!(writes [a, b], reads [c]),
+                        plain(at, 2),
+                        "{at:?}, 2 written"
+                    );
+                    assert_eq!(
+                        disjoint!(writes [a], reads [b, c]),
+                        plain(at, 1),
+                        "{at:?}, 1 written"
+                    );
+                }
+            }
+        }
     }
 }
