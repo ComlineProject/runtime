@@ -1,11 +1,317 @@
 {
   "runtime": "rust",
-  "commit": "b77305733199604d5c3938a064543ff9c3b04af9",
+  "commit": "bc711af9edf40c8c534ee2ca08ff3e9267b0a439",
   "toolchain": "rustc 1.98.0 (88d9e12ae 2026-08-18)",
   "metric": "instructions",
   "benches": {
     "connection/step": {
       "ir": 972
+    },
+    "ffi/abi/encode-reply/datagram@2/message/16": {
+      "ir": 466
+    },
+    "ffi/abi/encode-reply/datagram@2/message/256": {
+      "ir": 482
+    },
+    "ffi/abi/encode-reply/datagram@2/message/4096": {
+      "ir": 863
+    },
+    "ffi/abi/encode-reply/datagram@2/message/65536": {
+      "ir": 66004
+    },
+    "ffi/abi/encode-reply/datagram@2/stream/16": {
+      "ir": 537
+    },
+    "ffi/abi/encode-reply/datagram@2/stream/256": {
+      "ir": 553
+    },
+    "ffi/abi/encode-reply/datagram@2/stream/4096": {
+      "ir": 934
+    },
+    "ffi/abi/encode-reply/datagram@2/stream/65536": {
+      "ir": 66075
+    },
+    "ffi/abi/encode-reply/jsonrpc@1/message/16": {
+      "ir": 477
+    },
+    "ffi/abi/encode-reply/jsonrpc@1/message/256": {
+      "ir": 493
+    },
+    "ffi/abi/encode-reply/jsonrpc@1/message/4096": {
+      "ir": 874
+    },
+    "ffi/abi/encode-reply/jsonrpc@1/message/65536": {
+      "ir": 66015
+    },
+    "ffi/abi/encode-reply/jsonrpc@1/stream/16": {
+      "ir": 548
+    },
+    "ffi/abi/encode-reply/jsonrpc@1/stream/256": {
+      "ir": 564
+    },
+    "ffi/abi/encode-reply/jsonrpc@1/stream/4096": {
+      "ir": 945
+    },
+    "ffi/abi/encode-reply/jsonrpc@1/stream/65536": {
+      "ir": 66086
+    },
+    "ffi/abi/encode-request/datagram@2/message/16": {
+      "ir": 949
+    },
+    "ffi/abi/encode-request/datagram@2/message/256": {
+      "ir": 966
+    },
+    "ffi/abi/encode-request/datagram@2/message/4096": {
+      "ir": 1347
+    },
+    "ffi/abi/encode-request/datagram@2/message/65536": {
+      "ir": 66488
+    },
+    "ffi/abi/encode-request/datagram@2/stream/16": {
+      "ir": 1024
+    },
+    "ffi/abi/encode-request/datagram@2/stream/256": {
+      "ir": 1041
+    },
+    "ffi/abi/encode-request/datagram@2/stream/4096": {
+      "ir": 1422
+    },
+    "ffi/abi/encode-request/datagram@2/stream/65536": {
+      "ir": 66563
+    },
+    "ffi/abi/encode-request/jsonrpc@1/message/16": {
+      "ir": 1131
+    },
+    "ffi/abi/encode-request/jsonrpc@1/message/256": {
+      "ir": 1148
+    },
+    "ffi/abi/encode-request/jsonrpc@1/message/4096": {
+      "ir": 1529
+    },
+    "ffi/abi/encode-request/jsonrpc@1/message/65536": {
+      "ir": 66670
+    },
+    "ffi/abi/encode-request/jsonrpc@1/stream/16": {
+      "ir": 1206
+    },
+    "ffi/abi/encode-request/jsonrpc@1/stream/256": {
+      "ir": 1223
+    },
+    "ffi/abi/encode-request/jsonrpc@1/stream/4096": {
+      "ir": 1604
+    },
+    "ffi/abi/encode-request/jsonrpc@1/stream/65536": {
+      "ir": 66745
+    },
+    "ffi/abi/feed/datagram@2/message/16": {
+      "ir": 319
+    },
+    "ffi/abi/feed/datagram@2/message/256": {
+      "ir": 319
+    },
+    "ffi/abi/feed/datagram@2/message/4096": {
+      "ir": 319
+    },
+    "ffi/abi/feed/datagram@2/message/65536": {
+      "ir": 319
+    },
+    "ffi/abi/feed/datagram@2/stream/16": {
+      "ir": 327
+    },
+    "ffi/abi/feed/datagram@2/stream/256": {
+      "ir": 324
+    },
+    "ffi/abi/feed/datagram@2/stream/4096": {
+      "ir": 324
+    },
+    "ffi/abi/feed/datagram@2/stream/65536": {
+      "ir": 324
+    },
+    "ffi/abi/feed/jsonrpc@1/message/16": {
+      "ir": 1728
+    },
+    "ffi/abi/feed/jsonrpc@1/message/256": {
+      "ir": 2403
+    },
+    "ffi/abi/feed/jsonrpc@1/message/4096": {
+      "ir": 13203
+    },
+    "ffi/abi/feed/jsonrpc@1/message/65536": {
+      "ir": 186003
+    },
+    "ffi/abi/feed/jsonrpc@1/stream/16": {
+      "ir": 1830
+    },
+    "ffi/abi/feed/jsonrpc@1/stream/256": {
+      "ir": 2505
+    },
+    "ffi/abi/feed/jsonrpc@1/stream/4096": {
+      "ir": 13305
+    },
+    "ffi/abi/feed/jsonrpc@1/stream/65536": {
+      "ir": 186105
+    },
+    "ffi/abi/handshake-check": {
+      "ir": 152
+    },
+    "ffi/abi/handshake-encode": {
+      "ir": 779
+    },
+    "ffi/abi/name-hash": {
+      "ir": 199
+    },
+    "ffi/core/encode-reply/datagram@2/message/16": {
+      "ir": 325
+    },
+    "ffi/core/encode-reply/datagram@2/message/256": {
+      "ir": 344
+    },
+    "ffi/core/encode-reply/datagram@2/message/4096": {
+      "ir": 725
+    },
+    "ffi/core/encode-reply/datagram@2/message/65536": {
+      "ir": 65818
+    },
+    "ffi/core/encode-reply/datagram@2/stream/16": {
+      "ir": 397
+    },
+    "ffi/core/encode-reply/datagram@2/stream/256": {
+      "ir": 416
+    },
+    "ffi/core/encode-reply/datagram@2/stream/4096": {
+      "ir": 797
+    },
+    "ffi/core/encode-reply/datagram@2/stream/65536": {
+      "ir": 65890
+    },
+    "ffi/core/encode-reply/jsonrpc@1/message/16": {
+      "ir": 336
+    },
+    "ffi/core/encode-reply/jsonrpc@1/message/256": {
+      "ir": 355
+    },
+    "ffi/core/encode-reply/jsonrpc@1/message/4096": {
+      "ir": 736
+    },
+    "ffi/core/encode-reply/jsonrpc@1/message/65536": {
+      "ir": 65829
+    },
+    "ffi/core/encode-reply/jsonrpc@1/stream/16": {
+      "ir": 408
+    },
+    "ffi/core/encode-reply/jsonrpc@1/stream/256": {
+      "ir": 427
+    },
+    "ffi/core/encode-reply/jsonrpc@1/stream/4096": {
+      "ir": 808
+    },
+    "ffi/core/encode-reply/jsonrpc@1/stream/65536": {
+      "ir": 65901
+    },
+    "ffi/core/encode-request/datagram@2/message/16": {
+      "ir": 341
+    },
+    "ffi/core/encode-request/datagram@2/message/256": {
+      "ir": 360
+    },
+    "ffi/core/encode-request/datagram@2/message/4096": {
+      "ir": 741
+    },
+    "ffi/core/encode-request/datagram@2/message/65536": {
+      "ir": 65834
+    },
+    "ffi/core/encode-request/datagram@2/stream/16": {
+      "ir": 413
+    },
+    "ffi/core/encode-request/datagram@2/stream/256": {
+      "ir": 432
+    },
+    "ffi/core/encode-request/datagram@2/stream/4096": {
+      "ir": 813
+    },
+    "ffi/core/encode-request/datagram@2/stream/65536": {
+      "ir": 65906
+    },
+    "ffi/core/encode-request/jsonrpc@1/message/16": {
+      "ir": 523
+    },
+    "ffi/core/encode-request/jsonrpc@1/message/256": {
+      "ir": 542
+    },
+    "ffi/core/encode-request/jsonrpc@1/message/4096": {
+      "ir": 923
+    },
+    "ffi/core/encode-request/jsonrpc@1/message/65536": {
+      "ir": 66016
+    },
+    "ffi/core/encode-request/jsonrpc@1/stream/16": {
+      "ir": 595
+    },
+    "ffi/core/encode-request/jsonrpc@1/stream/256": {
+      "ir": 614
+    },
+    "ffi/core/encode-request/jsonrpc@1/stream/4096": {
+      "ir": 995
+    },
+    "ffi/core/encode-request/jsonrpc@1/stream/65536": {
+      "ir": 66088
+    },
+    "ffi/core/feed/datagram@2/message/16": {
+      "ir": 141
+    },
+    "ffi/core/feed/datagram@2/message/256": {
+      "ir": 141
+    },
+    "ffi/core/feed/datagram@2/message/4096": {
+      "ir": 141
+    },
+    "ffi/core/feed/datagram@2/message/65536": {
+      "ir": 141
+    },
+    "ffi/core/feed/datagram@2/stream/16": {
+      "ir": 150
+    },
+    "ffi/core/feed/datagram@2/stream/256": {
+      "ir": 150
+    },
+    "ffi/core/feed/datagram@2/stream/4096": {
+      "ir": 150
+    },
+    "ffi/core/feed/datagram@2/stream/65536": {
+      "ir": 150
+    },
+    "ffi/core/feed/jsonrpc@1/message/16": {
+      "ir": 1550
+    },
+    "ffi/core/feed/jsonrpc@1/message/256": {
+      "ir": 2225
+    },
+    "ffi/core/feed/jsonrpc@1/message/4096": {
+      "ir": 13025
+    },
+    "ffi/core/feed/jsonrpc@1/message/65536": {
+      "ir": 185825
+    },
+    "ffi/core/feed/jsonrpc@1/stream/16": {
+      "ir": 1656
+    },
+    "ffi/core/feed/jsonrpc@1/stream/256": {
+      "ir": 2331
+    },
+    "ffi/core/feed/jsonrpc@1/stream/4096": {
+      "ir": 13131
+    },
+    "ffi/core/feed/jsonrpc@1/stream/65536": {
+      "ir": 185931
+    },
+    "ffi/core/handshake-check": {
+      "ir": 100
+    },
+    "ffi/core/handshake-encode": {
+      "ir": 441
+    },
+    "ffi/core/name-hash": {
+      "ir": 49
     },
     "format/decode/enum-heavy/json@1": {
       "ir": 13246
