@@ -8,6 +8,8 @@
 
 #![allow(dead_code)]
 
+pub mod cases;
+
 use std::ptr;
 
 use comline_runtime_ffi::*;

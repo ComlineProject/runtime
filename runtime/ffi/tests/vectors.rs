@@ -38,47 +38,10 @@ mod common;
 
 use std::collections::BTreeMap;
 
-use comline_runtime_conformance::{json_equal, Case, Compare, Expect, Op, Value, Vectors, Wire};
+use comline_runtime_conformance::{json_equal, Case, Compare, Expect, Op};
 use comline_runtime_ffi::*;
+use common::cases::*;
 use common::*;
-
-const FILES: [&str; 6] = [
-    "name-hash",
-    "handshake",
-    "envelope",
-    "framing-datagram",
-    "framing-datagram2",
-    "framing-jsonrpc",
-];
-
-/// The largest request id a connection is driven to by spending ids.
-const DRIVABLE: u64 = 1_000;
-
-/// The vectors, compiled in rather than read at run time, so the replay
-/// also runs under Miri's isolation (no file system).
-fn vectors(feature: &str) -> Vectors {
-    macro_rules! file {
-        ($name:literal) => {
-            (
-                $name,
-                include_str!(concat!("../../conformance/vectors/", $name, ".json")),
-            )
-        };
-    }
-    const FILES_TEXT: [(&str, &str); 6] = [
-        file!("name-hash"),
-        file!("handshake"),
-        file!("envelope"),
-        file!("framing-datagram"),
-        file!("framing-datagram2"),
-        file!("framing-jsonrpc"),
-    ];
-    let (_, text) = FILES_TEXT
-        .iter()
-        .find(|(name, _)| *name == feature)
-        .unwrap_or_else(|| panic!("no vectors for {feature}"));
-    serde_json::from_str(text).unwrap_or_else(|e| panic!("{feature}: {e}"))
-}
 
 /// How a case went through the ABI.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -101,15 +64,19 @@ fn every_case_replays_through_the_abi() {
     for file in FILES {
         let vectors = vectors(file);
         assert!(!vectors.cases.is_empty(), "{file} has no cases");
+        let mut passed = 0;
         for case in &vectors.cases {
             match std::panic::catch_unwind(|| replay(case)) {
                 Ok(Ok(how)) => {
                     ran.insert(case.id.clone(), how);
+                    passed += 1;
                 }
                 Ok(Err(why)) => failures.push(format!("{}: {why}", case.id)),
                 Err(_) => failures.push(format!("{}: panicked", case.id)),
             }
         }
+        // The C and Node harnesses print the same line, from the export.
+        eprintln!("{file}: {passed}/{} passed", vectors.cases.len());
     }
     assert!(failures.is_empty(), "{}", failures.join("\n"));
 
@@ -202,40 +169,6 @@ fn check(ok: bool, why: impl FnOnce() -> String) -> Result<(), String> {
 fn same(case: &Case, encoded: &[u8]) -> bool {
     encoded == case.bytes.0.as_slice()
         || (case.compare == Compare::Json && json_equal(encoded, &case.bytes.0))
-}
-
-fn hex(bytes: &[u8]) -> String {
-    bytes.iter().map(|b| format!("{b:02x}")).collect()
-}
-
-fn u64_of(v: &serde_json::Value) -> u64 {
-    v.as_str()
-        .expect("a 64-bit integer is a decimal string")
-        .parse()
-        .expect("a decimal")
-}
-
-fn str_of(v: &serde_json::Value) -> &str {
-    v.as_str().expect("a string")
-}
-
-fn bytes_of(v: &serde_json::Value) -> Vec<u8> {
-    let text = str_of(v);
-    (0..text.len())
-        .step_by(2)
-        .map(|i| u8::from_str_radix(&text[i..i + 2], 16).expect("hex"))
-        .collect()
-}
-
-/// A vector's params, as the host's `json@1` codec writes them.
-fn params_of(input: &serde_json::Value) -> Result<Vec<u8>, String> {
-    let format = str_of(&input["format"]);
-    if format != "json@1" {
-        return Err(format!("params in {format}: only json@1 is encoded here"));
-    }
-    let value: Value =
-        serde_json::from_value(input["params"].clone()).map_err(|e| e.to_string())?;
-    serde_json::to_vec(&Wire(&value)).map_err(|e| e.to_string())
 }
 
 // ── name_hash ──────────────────────────────────────────────────────────────
@@ -341,9 +274,6 @@ fn handshake_case(case: &Case) -> Result<Ran, String> {
 
 // ── envelope ───────────────────────────────────────────────────────────────
 
-/// A `datagram@2` reply's header for protocol 0, request 0.
-const REPLY_HEADER: [u8; 10] = [1, 0, 0, 0, 0, 0, 0, 0, 0, 0];
-
 /// A `datagram@2` connection waiting on request 0.
 fn waiting_on_zero() -> Result<Conn, String> {
     let mut conn = Conn::new(&Setup::plain("datagram@2")).map_err(|s| format!("new: {s}"))?;
@@ -352,20 +282,6 @@ fn waiting_on_zero() -> Result<Conn, String> {
         format!("request gave {sent:?}")
     })?;
     Ok(conn)
-}
-
-/// `(envelope, error_id, body)` from an `envelope` / `response` input.
-fn reply_of(input: &serde_json::Value) -> (u8, u16, Vec<u8>) {
-    match str_of(&input["kind"]) {
-        "ok" => (COMLINE_ENVELOPE_OK, 0, bytes_of(&input["payload"])),
-        "err" => (
-            COMLINE_ENVELOPE_ERR,
-            input["id"].as_u64().expect("an ordinal") as u16,
-            bytes_of(&input["body"]),
-        ),
-        "fault" => (COMLINE_ENVELOPE_FAULT, 0, Vec::new()),
-        other => panic!("kind {other}"),
-    }
 }
 
 /// A reply event holds `(envelope, error_id, body)`.
@@ -499,30 +415,6 @@ fn request_case(case: &Case, framing: &'static str) -> Result<Ran, String> {
         }
     }
     Ok(if patched { Ran::IdPatched } else { Ran::Full })
-}
-
-/// `frame` with its request id set to `id`: the id field of a `datagram@2`
-/// request, or a JSON-RPC request's `id` member.
-fn with_request_id(framing: &str, frame: &[u8], protocol: u16, id: u64) -> Result<Vec<u8>, String> {
-    match framing {
-        "datagram@2" => {
-            let varint = match protocol {
-                0..=0x7f => 1,
-                0x80..=0x3fff => 2,
-                _ => 3,
-            };
-            let at = 1 + varint + 2;
-            let mut out = frame.to_vec();
-            out[at..at + 8].copy_from_slice(&id.to_le_bytes());
-            Ok(out)
-        }
-        _ => {
-            let mut message: serde_json::Value =
-                serde_json::from_slice(frame).map_err(|e| e.to_string())?;
-            message["id"] = id.into();
-            serde_json::to_vec(&message).map_err(|e| e.to_string())
-        }
-    }
 }
 
 // ── response ───────────────────────────────────────────────────────────────
