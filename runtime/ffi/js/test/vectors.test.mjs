@@ -459,9 +459,11 @@ for (const feature of FILES) {
         failures.push(`${id}: ${e.message}`);
       }
     }
+    if (lines.length !== expected) {
+      failures.push(`${path}: replayed ${lines.length} cases, the header says ${expected}`);
+    }
     console.log(`${feature}: ${passed}/${expected} passed`);
     assert.deepEqual(failures, []);
-    assert.equal(lines.length, expected, `${path}: replayed ${lines.length}, the header says ${expected}`);
   });
 }
 
