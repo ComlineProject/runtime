@@ -41,9 +41,17 @@ impl<D: Dispatch, W: WireFormat, F: Framing> Server<D, W, F> {
 
     /// Handle one call. `Ok(true)` — a call was served; `Ok(false)` — the
     /// transport closed.
+    ///
+    /// A request over the transport's limit is
+    /// [`RuntimeError::FrameTooLarge`] (the transport is closed after it). A
+    /// reply over the limit is sent as a fault instead, so the caller hears
+    /// [`RuntimeError::Provider`]: this runtime doesn't log, so a provider
+    /// that wants to know checks its replies' size itself.
     pub fn serve_one<T: Transport>(&mut self, transport: &mut T) -> Result<bool, RuntimeError> {
-        if transport.recv(&mut self.recv).is_err() {
-            return Ok(false);
+        match transport.recv(&mut self.recv) {
+            Ok(()) => {}
+            Err(RuntimeError::Transport) => return Ok(false),
+            Err(error) => return Err(error),
         }
 
         let req = self
@@ -110,6 +118,12 @@ impl<D: Dispatch, W: WireFormat, F: Framing> Server<D, W, F> {
             Outcome::Fault => self
                 .framing
                 .encode_response_fault(request_id, &mut self.response),
+        }
+        if self.response.len() > transport.max_frame() {
+            // Too large to send: the caller hears a fault, not silence.
+            self.response.clear();
+            self.framing
+                .encode_response_fault(request_id, &mut self.response);
         }
         transport.send(&self.response)?;
         Ok(true)

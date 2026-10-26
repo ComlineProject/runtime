@@ -251,6 +251,18 @@ impl State {
         }
     }
 
+    /// Take back the call [`encode_request`](Self::encode_request) just
+    /// framed as `request_id`, before it was sent: it no longer waits, and,
+    /// if no call was framed since, its request id is handed out again.
+    /// Call it only before the frame is sent: on a sent call it would hand
+    /// that request id out a second time.
+    pub(crate) fn retract(&mut self, request_id: u64) {
+        self.abandon(request_id);
+        if self.next_id == request_id.wrapping_add(1) {
+            self.next_id = request_id;
+        }
+    }
+
     /// Stop waiting on `request_id` (it timed out); a late reply to it is
     /// then [`Event::Stale`].
     pub fn abandon(&mut self, request_id: u64) {
@@ -497,10 +509,14 @@ impl<T: Transport, W: WireFormat, F: ConnectionFraming> Connection<T, W, F> {
     }
 
     /// Handle the peer's next frame. `Ok(true)`: one was handled;
-    /// `Ok(false)`: the transport closed.
+    /// `Ok(false)`: the transport closed. A frame over the transport's limit
+    /// is [`RuntimeError::FrameTooLarge`], and the transport is closed after
+    /// it.
     pub fn serve_one(&mut self) -> Result<bool, RuntimeError> {
-        if self.link.transport.recv(&mut self.link.recv).is_err() {
-            return Ok(false);
+        match self.link.transport.recv(&mut self.link.recv) {
+            Ok(()) => {}
+            Err(RuntimeError::Transport) => return Ok(false),
+            Err(error) => return Err(error),
         }
         self.link.handle_frame(&self.providers)?;
         Ok(true)
@@ -629,6 +645,7 @@ impl<T: Transport, W: WireFormat, F: ConnectionFraming> Link<T, W, F> {
             true,
             &mut self.send,
         )?;
+        self.check_size(request_id)?;
         if let Err(error) = self.transport.send(&self.send) {
             self.state.abandon(request_id);
             return Err(error);
@@ -646,7 +663,7 @@ impl<T: Transport, W: WireFormat, F: ConnectionFraming> Link<T, W, F> {
         call: Call,
         params: &P,
     ) -> Result<(), RuntimeError> {
-        self.state.encode_request(
+        let request_id = self.state.encode_request(
             &self.framing,
             protocol,
             call,
@@ -655,7 +672,19 @@ impl<T: Transport, W: WireFormat, F: ConnectionFraming> Link<T, W, F> {
             false,
             &mut self.send,
         )?;
+        self.check_size(request_id)?;
         self.transport.send(&self.send)
+    }
+
+    /// Refuse the call just framed in `self.send` if it's over the
+    /// transport's limit, taking it back: no request id is spent, nothing
+    /// waits and nothing is sent, so the connection keeps working.
+    fn check_size(&mut self, request_id: u64) -> Result<(), RuntimeError> {
+        if self.send.len() > self.transport.max_frame() {
+            self.state.retract(request_id);
+            return Err(RuntimeError::FrameTooLarge);
+        }
+        Ok(())
     }
 
     /// Read frames, serving the peer's requests, until the reply to
@@ -758,6 +787,18 @@ impl<T: Transport, W: WireFormat, F: ConnectionFraming> Link<T, W, F> {
                     &envelope,
                     &mut self.send,
                 );
+                if self.send.len() > self.transport.max_frame() {
+                    // Too large to send: the caller hears a fault, not
+                    // silence. This runtime doesn't log; a provider that
+                    // wants to know checks its replies' size itself.
+                    self.state.encode_reply(
+                        &self.framing,
+                        protocol,
+                        request.request_id,
+                        &Envelope::Fault,
+                        &mut self.send,
+                    );
+                }
                 self.transport.send(&self.send)
             }
             None => Ok(()),
@@ -829,6 +870,41 @@ mod tests {
         let mut frame = Vec::new();
         framing.encode_reply(0, id, &Envelope::Fault, &mut frame);
         assert_eq!(state.receive(&framing, &frame), Ok(Event::Stale));
+    }
+
+    #[test]
+    fn a_retracted_call_spends_nothing() {
+        let framing = Datagram2Framing;
+        let mut state = State::default();
+        let mut out = Vec::new();
+        let id = state
+            .encode_request(&framing, 0, Call::from(0), &(), &Unit, true, &mut out)
+            .unwrap();
+        state.retract(id);
+        assert!(!state.is_waiting());
+        let again = state
+            .encode_request(&framing, 0, Call::from(0), &(), &Unit, true, &mut out)
+            .unwrap();
+        assert_eq!(again, id, "the id is handed out again");
+    }
+
+    #[test]
+    fn retract_after_a_later_call_does_not_rewind_the_ids() {
+        let framing = Datagram2Framing;
+        let mut state = State::default();
+        let mut out = Vec::new();
+        let first = state
+            .encode_request(&framing, 0, Call::from(0), &(), &Unit, true, &mut out)
+            .unwrap();
+        let later = state
+            .encode_request(&framing, 0, Call::from(0), &(), &Unit, false, &mut out)
+            .unwrap();
+        state.retract(first);
+        assert!(!state.is_waiting());
+        let next = state
+            .encode_request(&framing, 0, Call::from(0), &(), &Unit, false, &mut out)
+            .unwrap();
+        assert_eq!(next, later + 1, "neither id is handed out again");
     }
 
     #[test]

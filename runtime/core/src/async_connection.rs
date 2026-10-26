@@ -21,6 +21,12 @@
 //!   [`set_timer`](AsyncConnection::set_timer). Without one,
 //!   [`AsyncPeer::call_with_timeout`] waits. Dropping a call's future gives up
 //!   on it too, so the executor's own timeout works as well.
+//! - **Frame limits:** a call over the connection's limit
+//!   ([`set_max_frame`](AsyncConnection::set_max_frame), by default
+//!   [`DEFAULT_MAX_FRAME`]) fails alone with [`RuntimeError::FrameTooLarge`]
+//!   before anything is queued, and a handler's reply over it is sent as a
+//!   fault. A frame over the transport's limit arriving from the peer ends
+//!   [`run`](AsyncConnection::run) with that error.
 
 use std::collections::VecDeque;
 use std::future::{poll_fn, Future};
@@ -38,6 +44,7 @@ use futures_util::{Sink, SinkExt, Stream, StreamExt};
 use serde::Serialize;
 
 use crate::connection::{call_index, Event, Extensions, State};
+use crate::contract::stream::DEFAULT_MAX_FRAME;
 use crate::contract::{
     Call, ConnectionFraming, ConnectionId, Datagram2Framing, Envelope, HandshakeFrame, Kind,
     Outcome, ProtocolNumber, RuntimeError, WireFormat,
@@ -63,23 +70,60 @@ impl<T> AsyncTransport for T where
 
 /// An in-process [`AsyncTransport`], for tests and same-binary setups.
 /// Dropping or closing one end ends the other's stream.
+///
+/// Like the blocking [`InMemory`](crate::transport::InMemory), it holds
+/// frames to a limit, by default [`DEFAULT_MAX_FRAME`], as a TCP transport
+/// does: a send over it is refused, and a received frame over it is refused
+/// and closes this end. It has no ceiling of its own.
 pub struct AsyncInMemory {
     tx: mpsc::UnboundedSender<Vec<u8>>,
     rx: mpsc::UnboundedReceiver<Vec<u8>>,
+    max_frame: usize,
+    closed: bool,
 }
 
 /// A crossed pair: what `a` sends, `b` receives, and vice versa.
 pub fn async_duplex() -> (AsyncInMemory, AsyncInMemory) {
     let (a_tx, a_rx) = mpsc::unbounded();
     let (b_tx, b_rx) = mpsc::unbounded();
-    (AsyncInMemory { tx: a_tx, rx: b_rx }, AsyncInMemory { tx: b_tx, rx: a_rx })
+    (
+        AsyncInMemory::new(a_tx, b_rx),
+        AsyncInMemory::new(b_tx, a_rx),
+    )
+}
+
+impl AsyncInMemory {
+    fn new(tx: mpsc::UnboundedSender<Vec<u8>>, rx: mpsc::UnboundedReceiver<Vec<u8>>) -> Self {
+        Self {
+            tx,
+            rx,
+            max_frame: DEFAULT_MAX_FRAME,
+            closed: false,
+        }
+    }
+
+    /// The same end, holding frames to `max_frame` bytes instead.
+    pub fn with_max_frame(mut self, max_frame: usize) -> Self {
+        self.max_frame = max_frame;
+        self
+    }
 }
 
 impl Stream for AsyncInMemory {
     type Item = Result<Vec<u8>, RuntimeError>;
 
     fn poll_next(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Option<Self::Item>> {
-        self.rx.poll_next_unpin(cx).map(|frame| frame.map(Ok))
+        if self.closed {
+            return Poll::Ready(Some(Err(RuntimeError::Transport)));
+        }
+        let max_frame = self.max_frame;
+        match self.rx.poll_next_unpin(cx) {
+            Poll::Ready(Some(frame)) if frame.len() > max_frame => {
+                self.closed = true;
+                Poll::Ready(Some(Err(RuntimeError::FrameTooLarge)))
+            }
+            other => other.map(|frame| frame.map(Ok)),
+        }
     }
 }
 
@@ -91,6 +135,12 @@ impl Sink<Vec<u8>> for AsyncInMemory {
     }
 
     fn start_send(self: Pin<&mut Self>, frame: Vec<u8>) -> Result<(), RuntimeError> {
+        if self.closed {
+            return Err(RuntimeError::Transport);
+        }
+        if frame.len() > self.max_frame {
+            return Err(RuntimeError::FrameTooLarge);
+        }
         self.tx.unbounded_send(frame).map_err(|_| RuntimeError::Transport)
     }
 
@@ -267,6 +317,14 @@ struct Shared<W, F> {
     /// Calls to the peer that handlers are waiting on.
     handlers_waiting: AtomicUsize,
     timer: OnceLock<Timer>,
+    /// The largest frame this side sends.
+    max_frame: AtomicUsize,
+}
+
+impl<W, F> Shared<W, F> {
+    fn max_frame(&self) -> usize {
+        self.max_frame.load(Ordering::Relaxed)
+    }
 }
 
 struct Calls {
@@ -383,6 +441,7 @@ where
                 extensions: Mutex::new(Extensions::default()),
                 handlers_waiting: AtomicUsize::new(0),
                 timer: OnceLock::new(),
+                max_frame: AtomicUsize::new(DEFAULT_MAX_FRAME),
             }),
             commands,
             providers: Vec::new(),
@@ -424,6 +483,25 @@ where
         let _ = self.shared.timer.set(timer);
     }
 
+    /// The largest frame, in bytes, this side sends; by default
+    /// [`DEFAULT_MAX_FRAME`]. Set it to the transport's own limit (the tokio
+    /// [`Tcp::with_max_frame`](tokio::Tcp::with_max_frame),
+    /// [`AsyncInMemory::with_max_frame`]) when that isn't the default.
+    ///
+    /// - A call over it fails with [`RuntimeError::FrameTooLarge`] before
+    ///   anything is queued or a request id is spent; the connection keeps
+    ///   working.
+    /// - A handler's reply over it is sent as a fault, so the caller hears
+    ///   [`RuntimeError::Provider`]. This runtime doesn't log; a provider
+    ///   that wants to know checks its replies' size itself.
+    ///
+    /// A frame the transport refuses to send all the same (its limit is
+    /// lower than this) ends [`run`](Self::run) with
+    /// [`RuntimeError::FrameTooLarge`].
+    pub fn set_max_frame(&mut self, max_frame: usize) {
+        self.shared.max_frame.store(max_frame, Ordering::Relaxed);
+    }
+
     /// A handle to call the peer with, from any task. Calls made before
     /// [`run`](Self::run) starts are sent once it does.
     pub fn handle(&self) -> AsyncHandle<W, F> {
@@ -439,9 +517,13 @@ where
     }
 
     /// Drive the connection until the transport closes or a handle
-    /// [`close`](AsyncHandle::close)s it. Calls still waiting then fail with
-    /// [`RuntimeError::Transport`]. A malformed frame ends it with
-    /// [`RuntimeError::Framing`].
+    /// [`close`](AsyncHandle::close)s it, then `Ok(())`. Calls still waiting
+    /// then fail with [`RuntimeError::Transport`].
+    ///
+    /// It ends with the error instead when the transport fails to receive
+    /// (a frame over its limit is [`RuntimeError::FrameTooLarge`]), or a
+    /// received frame is malformed ([`RuntimeError::Framing`]). A failed
+    /// send means the peer is gone, as a closed stream does.
     pub async fn run(self) -> Result<(), RuntimeError> {
         let mut driver = Driver {
             transport: self.transport,
@@ -516,8 +598,9 @@ where
                             progressed = true;
                             self.receive(&frame)?;
                         }
+                        Poll::Ready(Some(Err(error))) => return Poll::Ready(Err(error)),
                         // The peer is gone.
-                        Poll::Ready(Some(Err(_)) | None) => return Poll::Ready(Ok(())),
+                        Poll::Ready(None) => return Poll::Ready(Ok(())),
                         Poll::Pending => break,
                     }
                 }
@@ -536,8 +619,10 @@ where
                         return Pin::new(&mut self.transport).poll_close(cx).map(|_| Ok(()));
                     }
                 }
-                // A send that fails means the peer is gone, as a failed read.
-                Poll::Ready(Err(_)) => return Poll::Ready(Ok(())),
+                // A send that fails means the peer is gone, as a closed
+                // stream. A frame the transport refused is this side's.
+                Poll::Ready(Err(RuntimeError::Transport)) => return Poll::Ready(Ok(())),
+                Poll::Ready(Err(error)) => return Poll::Ready(Err(error)),
                 Poll::Pending => {}
             }
 
@@ -626,6 +711,16 @@ where
             shared
                 .framing
                 .encode_reply(incoming.protocol, incoming.request_id, &envelope, &mut frame);
+            if frame.len() > shared.max_frame() {
+                // Too large to send: the caller hears a fault, not silence.
+                frame.clear();
+                shared.framing.encode_reply(
+                    incoming.protocol,
+                    incoming.request_id,
+                    &Envelope::Fault,
+                    &mut frame,
+                );
+            }
             Some(frame)
         })
     }
@@ -680,7 +775,8 @@ where
         let _ = self.shared.commands.unbounded_send(Command::Close);
     }
 
-    /// Frame a call and queue it for sending.
+    /// Frame a call and queue it for sending. One over the connection's
+    /// limit is [`RuntimeError::FrameTooLarge`], with nothing spent.
     fn start<P: Serialize + ?Sized>(
         &self,
         protocol: ProtocolNumber,
@@ -702,6 +798,11 @@ where
             expects_reply,
             &mut frame,
         )?;
+        if frame.len() > self.shared.max_frame() {
+            // Refused before it waits or is queued: this call fails alone.
+            calls.state.retract(request_id);
+            return Err(RuntimeError::FrameTooLarge);
+        }
         let waiting = expects_reply.then(|| {
             let (tx, rx) = oneshot::channel();
             calls.waiting.insert(request_id, tx);
@@ -830,6 +931,7 @@ impl<W, F> Drop for Waiting<W, F> {
 /// Tokio's TCP as an [`AsyncTransport`], and its clock as a [`Timer`].
 #[cfg(feature = "tokio")]
 pub mod tokio {
+    use std::io;
     use std::pin::Pin;
     use std::sync::Arc;
     use std::task::{Context, Poll};
@@ -837,18 +939,30 @@ pub mod tokio {
     use bytes::Bytes;
     use futures_util::{Sink, Stream};
     use ::tokio::net::{TcpStream, ToSocketAddrs};
-    use tokio_util::codec::{Framed, LengthDelimitedCodec};
+    use tokio_util::codec::{Framed, LengthDelimitedCodec, LengthDelimitedCodecError};
 
     use super::Timer;
-    use crate::contract::stream::{DEFAULT_MAX_FRAME, PREFIX_LEN};
+    use crate::contract::stream::{DEFAULT_MAX_FRAME, PREFIX_CEILING, PREFIX_LEN};
     use crate::contract::RuntimeError;
 
     /// An [`AsyncTransport`](super::AsyncTransport) over a tokio TCP stream,
     /// framed as the blocking [`Tcp`](crate::transport::Tcp) is (`[len: u32
     /// LE][frame]`, [`contract::stream`](crate::contract::stream)), so the two
     /// talk to each other.
+    ///
+    /// Frames are held to the same limit, by default [`DEFAULT_MAX_FRAME`]
+    /// ([`with_max_frame`](Self::with_max_frame) sets another):
+    /// - a send over it is [`RuntimeError::FrameTooLarge`], and nothing is
+    ///   queued or written;
+    /// - a received length prefix over it is
+    ///   [`RuntimeError::FrameTooLarge`], before its body is read or
+    ///   allocated. The stream is out of step past it, so every later
+    ///   operation returns [`RuntimeError::Transport`]; the socket closes
+    ///   when the `Tcp` is dropped.
     pub struct Tcp {
         framed: Framed<TcpStream, LengthDelimitedCodec>,
+        max_frame: usize,
+        closed: bool,
     }
 
     impl Tcp {
@@ -861,6 +975,8 @@ pub mod tokio {
                 .new_codec();
             Self {
                 framed: Framed::new(stream, codec),
+                max_frame: DEFAULT_MAX_FRAME,
+                closed: false,
             }
         }
 
@@ -872,9 +988,48 @@ pub mod tokio {
                 .map_err(|_| RuntimeError::Transport)
         }
 
+        /// Hold frames to `max_frame` bytes instead of [`DEFAULT_MAX_FRAME`],
+        /// lower or higher. A limit above what the `u32` prefix can declare
+        /// ([`PREFIX_CEILING`]) is refused with
+        /// [`RuntimeError::FrameTooLarge`].
+        ///
+        /// An [`AsyncConnection`](super::AsyncConnection) over it checks its
+        /// own sends against
+        /// [`set_max_frame`](super::AsyncConnection::set_max_frame); give it
+        /// the same value.
+        pub fn with_max_frame(mut self, max_frame: usize) -> Result<Self, RuntimeError> {
+            if max_frame > PREFIX_CEILING {
+                return Err(RuntimeError::FrameTooLarge);
+            }
+            self.framed.codec_mut().set_max_frame_length(max_frame);
+            self.max_frame = max_frame;
+            Ok(self)
+        }
+
+        /// The largest frame this transport sends or receives.
+        pub fn max_frame(&self) -> usize {
+            self.max_frame
+        }
+
         /// The wrapped stream.
         pub fn stream(&self) -> &TcpStream {
             self.framed.get_ref()
+        }
+
+        fn open(&self) -> Result<(), RuntimeError> {
+            if self.closed {
+                Err(RuntimeError::Transport)
+            } else {
+                Ok(())
+            }
+        }
+    }
+
+    /// The codec's own refusal of a frame over its limit, or another failure.
+    fn error_of(error: &io::Error) -> RuntimeError {
+        match error.get_ref() {
+            Some(inner) if inner.is::<LengthDelimitedCodecError>() => RuntimeError::FrameTooLarge,
+            _ => RuntimeError::Transport,
         }
     }
 
@@ -882,8 +1037,17 @@ pub mod tokio {
         type Item = Result<Vec<u8>, RuntimeError>;
 
         fn poll_next(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Option<Self::Item>> {
+            if self.closed {
+                return Poll::Ready(Some(Err(RuntimeError::Transport)));
+            }
             Pin::new(&mut self.framed).poll_next(cx).map(|frame| {
-                frame.map(|frame| frame.map(|bytes| bytes.to_vec()).map_err(|_| RuntimeError::Transport))
+                frame.map(|frame| {
+                    frame.map(|bytes| bytes.to_vec()).map_err(|error| {
+                        // Whatever went wrong, the stream can't be read on.
+                        self.closed = true;
+                        error_of(&error)
+                    })
+                })
             })
         }
     }
@@ -892,21 +1056,29 @@ pub mod tokio {
         type Error = RuntimeError;
 
         fn poll_ready(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Result<(), RuntimeError>> {
-            Sink::<Bytes>::poll_ready(Pin::new(&mut self.framed), cx).map_err(|_| RuntimeError::Transport)
+            self.open()?;
+            Sink::<Bytes>::poll_ready(Pin::new(&mut self.framed), cx).map_err(|e| error_of(&e))
         }
 
         fn start_send(mut self: Pin<&mut Self>, frame: Vec<u8>) -> Result<(), RuntimeError> {
+            self.open()?;
+            // Before the codec, which would refuse it too, but only once the
+            // frame is in its write buffer's way.
+            if frame.len() > self.max_frame {
+                return Err(RuntimeError::FrameTooLarge);
+            }
             Pin::new(&mut self.framed)
                 .start_send(Bytes::from(frame))
-                .map_err(|_| RuntimeError::Transport)
+                .map_err(|e| error_of(&e))
         }
 
         fn poll_flush(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Result<(), RuntimeError>> {
-            Sink::<Bytes>::poll_flush(Pin::new(&mut self.framed), cx).map_err(|_| RuntimeError::Transport)
+            self.open()?;
+            Sink::<Bytes>::poll_flush(Pin::new(&mut self.framed), cx).map_err(|e| error_of(&e))
         }
 
         fn poll_close(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Result<(), RuntimeError>> {
-            Sink::<Bytes>::poll_close(Pin::new(&mut self.framed), cx).map_err(|_| RuntimeError::Transport)
+            Sink::<Bytes>::poll_close(Pin::new(&mut self.framed), cx).map_err(|e| error_of(&e))
         }
     }
 

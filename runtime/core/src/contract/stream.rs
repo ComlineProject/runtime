@@ -23,6 +23,17 @@ pub const DEFAULT_MAX_FRAME: usize = 16 * 1024 * 1024;
 /// The length prefix's size in bytes: a `u32`, little-endian.
 pub const PREFIX_LEN: usize = 4;
 
+/// The largest frame the length prefix can declare: `u32::MAX` bytes (on a
+/// target whose `usize` holds it). A stream transport's limit can be raised
+/// up to this, and no further.
+pub const PREFIX_CEILING: usize = if usize::BITS >= u32::BITS {
+    u32::MAX as usize
+} else {
+    usize::MAX
+};
+
+const _: () = assert!(DEFAULT_MAX_FRAME <= PREFIX_CEILING);
+
 /// Write the length prefix for a frame of `len` bytes. Refuses a `len` above
 /// `max` (normally [`DEFAULT_MAX_FRAME`]), or one a `u32` can't hold, with
 /// [`RuntimeError::FrameTooLarge`], writing nothing.
@@ -94,6 +105,20 @@ mod tests {
     #[test]
     fn max_frame_fits_the_prefix() {
         assert!(u32::try_from(DEFAULT_MAX_FRAME).is_ok());
+    }
+
+    #[test]
+    fn the_ceiling_is_the_largest_prefix() {
+        #[cfg(not(target_pointer_width = "16"))]
+        assert_eq!(PREFIX_CEILING, u32::MAX as usize);
+        let mut prefix = [0u8; PREFIX_LEN];
+        put_prefix(
+            PREFIX_CEILING,
+            PREFIX_CEILING,
+            &mut SliceBuf::new(&mut prefix),
+        )
+        .unwrap();
+        assert_eq!(frame_len(prefix, PREFIX_CEILING), Some(PREFIX_CEILING));
     }
 
     #[test]

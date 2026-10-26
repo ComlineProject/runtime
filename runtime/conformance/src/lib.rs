@@ -22,6 +22,8 @@ use serde::de::Error as _;
 use serde::ser::{SerializeSeq, SerializeStruct, SerializeTuple};
 use serde::{Deserialize, Deserializer, Serialize, Serializer};
 
+use comline_runtime::contract::stream::{self, Split, DEFAULT_MAX_FRAME, PREFIX_LEN};
+use comline_runtime::contract::SliceBuf;
 use comline_runtime::contract::{
     name_hash, Call, ConnectionFraming, Datagram2Framing, DatagramFraming, Envelope, Frame,
     Framing, HandshakeFrame, RequestCall, WireFormat, FORMAT_JSON, FORMAT_MSGPACK, FORMAT_PACKED,
@@ -218,6 +220,19 @@ pub enum Op {
     /// more, a variant reordered), which is what a profile fact is about.
     /// A rejection's input is `{format, type}`.
     Decode,
+    /// `{len, max}` → the 4-byte length prefix of a `len`-byte frame on a
+    /// byte stream, under the limit `max`. Decoding reads the prefix back.
+    /// A rejection's bytes are a prefix over `max`; its input is
+    /// `{len, max}` too, and encoding it must fail as well.
+    StreamPrefix,
+    /// `{max, frames, rest, needed}` → a byte stream: each of `frames`
+    /// (hex) behind its length prefix, then `rest`, the start of a frame
+    /// not yet whole. Decoding splits the stream frame by frame under the
+    /// limit `max`; `needed` is how many bytes the incomplete frame in
+    /// `rest` takes in all, prefix included, or 0 while its prefix is
+    /// incomplete. A rejection's bytes declare a frame over `max`; its
+    /// input is `{max}`.
+    StreamSplit,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
@@ -312,6 +327,26 @@ struct ResponseIn {
     request_id: u64,
     #[serde(flatten)]
     reply: Reply,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+struct StreamPrefixIn {
+    len: u64,
+    max: u64,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+struct StreamSplitIn {
+    max: u64,
+    frames: Vec<Hex>,
+    rest: Hex,
+    needed: u64,
+}
+
+/// A stream limit as the runtime takes it: a `max` past `usize` holds every
+/// frame `usize` can.
+fn stream_max(max: u64) -> usize {
+    usize::try_from(max).unwrap_or(usize::MAX)
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -778,6 +813,30 @@ fn encode(op: Op, input: &serde_json::Value) -> Result<Vec<u8>, Outcome> {
                 .ok_or_else(|| Outcome::NotImplemented(format!("format `{}`", i.format)));
         }
         Op::Decode => return Err(Outcome::Fail("`decode` cases are decode only".into())),
+        Op::StreamPrefix => {
+            let i: StreamPrefixIn = parse(input)?;
+            let len = usize::try_from(i.len)
+                .map_err(|_| Outcome::Fail(format!("refused: a {}-byte frame", i.len)))?;
+            let mut prefix = [0u8; PREFIX_LEN];
+            stream::put_prefix(len, stream_max(i.max), &mut SliceBuf::new(&mut prefix))
+                .map_err(|e| Outcome::Fail(format!("refused: {e}")))?;
+            out.extend_from_slice(&prefix);
+        }
+        Op::StreamSplit => {
+            let i: StreamSplitIn = parse(input)?;
+            for frame in &i.frames {
+                let mut prefix = [0u8; PREFIX_LEN];
+                stream::put_prefix(
+                    frame.0.len(),
+                    stream_max(i.max),
+                    &mut SliceBuf::new(&mut prefix),
+                )
+                .map_err(|e| Outcome::Fail(format!("refused: {e}")))?;
+                out.extend_from_slice(&prefix);
+                out.extend_from_slice(&frame.0);
+            }
+            out.extend_from_slice(&i.rest.0);
+        }
     }
     Ok(out)
 }
@@ -792,6 +851,48 @@ fn decode(
     let json = |v: serde_json::Value| -> Result<Option<serde_json::Value>, Outcome> { Ok(Some(v)) };
     match op {
         Op::NameHash | Op::Encode => Ok(None),
+        Op::StreamPrefix => {
+            #[derive(Deserialize)]
+            struct Max {
+                max: u64,
+            }
+            let i: Max = parse(input)?;
+            let Ok(prefix) = <[u8; PREFIX_LEN]>::try_from(bytes) else {
+                return Ok(None);
+            };
+            Ok(stream::frame_len(prefix, stream_max(i.max)).map(|len| {
+                to_json(&StreamPrefixIn {
+                    len: len as u64,
+                    max: i.max,
+                })
+            }))
+        }
+        Op::StreamSplit => {
+            #[derive(Deserialize)]
+            struct Max {
+                max: u64,
+            }
+            let i: Max = parse(input)?;
+            let mut frames = Vec::new();
+            let mut at = 0;
+            loop {
+                match stream::split_frame(&bytes[at..], stream_max(i.max)) {
+                    Split::Frame { start, len } => {
+                        frames.push(Hex(bytes[at + start..at + start + len].to_vec()));
+                        at += start + len;
+                    }
+                    Split::NeedMore { needed } => {
+                        return json(to_json(&StreamSplitIn {
+                            max: i.max,
+                            frames,
+                            rest: Hex(bytes[at..].to_vec()),
+                            needed: needed as u64,
+                        }));
+                    }
+                    Split::TooLarge => return Ok(None),
+                }
+            }
+        }
         Op::Decode => {
             let i: DecodeIn = parse(input)?;
             Ok(decode_typed(&i.format, &i.ty, bytes)?.map(|value| {
@@ -998,6 +1099,14 @@ pub fn run(case: &Case) -> Outcome {
 fn run_inner(case: &Case) -> Result<(), Outcome> {
     let bytes = &case.bytes.0;
     if case.expect == Expect::Reject {
+        if case.op == Op::StreamPrefix {
+            if let Ok(encoded) = encode(case.op, &case.input) {
+                return Err(Outcome::Fail(format!(
+                    "prefixed a frame over the limit, as {}",
+                    to_json(&Hex(encoded))
+                )));
+            }
+        }
         return match decode(case.op, &case.input, bytes)? {
             None => Ok(()),
             Some(got) => Err(Outcome::Fail(format!(
@@ -1232,6 +1341,8 @@ pub fn reference_cases() -> Vec<Vectors> {
             on(response(p("response-fault"), FRAMING_DATAGRAM2, 9, Reply::Fault), 200),
         ],
     );
+
+    feature("stream", stream_cases());
 
     feature("format-json", format_cases("format-json", FORMAT_JSON));
     feature(
@@ -1735,6 +1846,60 @@ fn found_jsonrpc_cases() -> Vec<Case> {
     ]
 }
 
+/// Stream framing (`contract::stream`): length prefixes, and streams split
+/// into frames, at the default limit and at a small one, on both sides of
+/// each.
+fn stream_cases() -> Vec<(String, Op, serde_json::Value)> {
+    let default = DEFAULT_MAX_FRAME as u64;
+    let ceiling = u64::from(u32::MAX);
+    let prefix = |id: &str, len: u64, max: u64| {
+        (
+            format!("stream/{id}"),
+            Op::StreamPrefix,
+            serde_json::json!({ "len": len, "max": max }),
+        )
+    };
+    let split = |id: &str, max: u64, frames: &[&[u8]], rest: &[u8], needed: u64| {
+        let frames: Vec<Hex> = frames.iter().map(|f| Hex(f.to_vec())).collect();
+        (
+            format!("stream/{id}"),
+            Op::StreamSplit,
+            to_json(&StreamSplitIn {
+                max,
+                frames,
+                rest: Hex(rest.to_vec()),
+                needed,
+            }),
+        )
+    };
+    let at_default_max = (DEFAULT_MAX_FRAME as u32).to_le_bytes();
+    vec![
+        prefix("prefix-zero", 0, default),
+        prefix("prefix-small", 3, default),
+        prefix("prefix-le", 0x0001_0203, default),
+        prefix("prefix-default-max", default, default),
+        prefix("prefix-small-max", 2, 2),
+        prefix("prefix-u32-max", ceiling, ceiling),
+        split("split-empty", default, &[], &[], 0),
+        split("split-partial-prefix-1", default, &[], &[3], 0),
+        split("split-partial-prefix-3", default, &[], &[3, 0, 0], 0),
+        split("split-prefix-only", default, &[], &[3, 0, 0, 0], 7),
+        split("split-partial-body", default, &[], &[3, 0, 0, 0, b'a'], 7),
+        split("split-one-frame", default, &[b"abc"], &[], 0),
+        split("split-zero-length", default, &[b""], &[], 0),
+        split("split-two-frames", default, &[b"ab", b"c"], &[], 0),
+        split("split-frame-then-partial", default, &[b"ab"], &[1, 0], 0),
+        split("split-small-max", 2, &[b"ab", b""], &[2, 0, 0, 0, b'c'], 6),
+        split(
+            "split-default-max-prefix",
+            default,
+            &[],
+            &at_default_max,
+            PREFIX_LEN as u64 + default,
+        ),
+    ]
+}
+
 /// Bytes a runtime must refuse, per feature.
 fn rejections(feature: &str) -> Vec<Case> {
     let none = serde_json::Value::Null;
@@ -1766,6 +1931,56 @@ fn rejections(feature: &str) -> Vec<Case> {
                     Op::Handshake,
                     none,
                     &bad_version,
+                ),
+            ]
+        }
+        "stream" => {
+            let default = DEFAULT_MAX_FRAME as u64;
+            let over_default = (DEFAULT_MAX_FRAME as u32 + 1).to_le_bytes();
+            let prefix = |len: u64, max: u64| serde_json::json!({ "len": len, "max": max });
+            let max = |max: u64| serde_json::json!({ "max": max });
+            vec![
+                reject(
+                    "stream/reject-prefix-over-default-max",
+                    Op::StreamPrefix,
+                    prefix(default + 1, default),
+                    &over_default,
+                ),
+                reject(
+                    "stream/reject-prefix-over-small-max",
+                    Op::StreamPrefix,
+                    prefix(3, 2),
+                    &[3, 0, 0, 0],
+                ),
+                reject(
+                    "stream/reject-prefix-u32-max-over-default-max",
+                    Op::StreamPrefix,
+                    prefix(u64::from(u32::MAX), default),
+                    &[0xff; 4],
+                ),
+                reject(
+                    "stream/reject-split-over-default-max",
+                    Op::StreamSplit,
+                    max(default),
+                    &over_default,
+                ),
+                reject(
+                    "stream/reject-split-u32-max",
+                    Op::StreamSplit,
+                    max(default),
+                    &[0xff; 4],
+                ),
+                reject(
+                    "stream/reject-split-over-small-max",
+                    Op::StreamSplit,
+                    max(2),
+                    &[3, 0, 0, 0, b'a', b'b', b'c'],
+                ),
+                reject(
+                    "stream/reject-split-frame-then-over-max",
+                    Op::StreamSplit,
+                    max(2),
+                    &[1, 0, 0, 0, b'a', 3, 0, 0, 0],
                 ),
             ]
         }

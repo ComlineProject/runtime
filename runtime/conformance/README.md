@@ -7,7 +7,8 @@ reproduce, and the Rust runtime's proof that it does.
 
 - [`features.json`](features.json): the wire features, with stable ids:
   `name-hash`, `handshake`, `envelope`, `framing-datagram`, `framing-datagram2`,
-  `framing-jsonrpc`, `format-json`, `format-msgpack` and `format-packed`.
+  `framing-jsonrpc`, `stream`, `format-json`, `format-msgpack` and
+  `format-packed`.
 - `vectors/<feature>.json`: that feature's cases.
 - [`benches/`](benches/README.md): the benchmarks every runtime runs, in the
   same value encoding.
@@ -34,6 +35,8 @@ The ops, and what their `input` holds:
 | `response` | `framing`, `request_id`, and an envelope's fields | encode and decode |
 | `encode` | `format`, `value` | encode |
 | `decode` | `format`, `type`, `value` | decode: `bytes` read as `type` give `value` |
+| `stream_prefix` | `len`, `max` | encode and decode: the 4-byte length prefix of a `len`-byte frame under the limit `max` |
+| `stream_split` | `max`, `frames`, `rest`, `needed` | encode and decode: a byte stream of `frames`, each behind its prefix, then `rest` |
 
 - **Encode and decode:** encoding the input gives exactly `bytes`, and decoding
   `bytes` gives the input back.
@@ -56,6 +59,21 @@ The ops, and what their `input` holds:
     another way, which every runtime must read.
 - **`"expect": "reject"`:** decoding `bytes` must fail. The input then names
   only the framing, where there is one.
+- **Stream framing** (`stream`): a frame on a byte stream is
+  `[len: u32 LE][len bytes]`, and a runtime refuses a `len` over its limit:
+  by default 16 MiB (16,777,216 bytes) in every runtime, and `len == max` is
+  accepted.
+  - `stream_prefix`: a rejection's bytes are a prefix over `max`, and its
+    input is `{len, max}`: decoding the bytes and encoding the input must
+    both fail.
+  - `stream_split`: decoding splits `bytes` frame by frame under `max`
+    (`frames`, hex), until what's left (`rest`) isn't a whole frame.
+    `needed` is the bytes that incomplete frame takes in all, prefix
+    included, or 0 while its prefix is incomplete. A rejection's bytes
+    declare a frame over `max`, possibly after whole frames; its input is
+    `{max}`.
+  - `len`, `max` and `needed` are plain JSON numbers: they stay below
+    2^53.
 - **Bytes** are lowercase hex.
 - **64-bit integers** (`ir_hash`, `request_id`, `u64` and `i64` values) are
   decimal strings, so a reader that holds JSON numbers as doubles keeps them
