@@ -2,9 +2,10 @@
 // License, v. 2.0. If a copy of the MPL was not distributed with this
 // file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
-// Types for `comline.mjs` (TypeScript pairs a `.mjs` with a `.d.mts`), the JS glue over the wasm32 build of
-// `comline-runtime-ffi`. Each method is one `comline.h` function; see
-// there for what it does and when it fails.
+// Types for `comline.mjs`, the JS glue over the wasm32 build of
+// `comline-runtime-ffi` (`.d.mts`, the name TypeScript looks for beside a
+// `.mjs`). Each method is one `comline.h` function; see there for what it
+// does and when it fails.
 
 export declare const ABI_MAJOR: 0;
 export declare const ABI_MINOR: 1;
