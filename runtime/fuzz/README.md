@@ -37,6 +37,7 @@ cargo +nightly fuzz run --fuzz-dir runtime/fuzz decode_no_panic -- \
 | `packed_canonical` | a type, bytes | bytes that decode as the type in `packed@1` re-encode to exactly themselves |
 | `framing_decode` | bytes | through `datagram@1` request and response decode, `datagram@2`, JSON-RPC request, response and connection decode, `Envelope::decode` and `HandshakeFrame::decode`; no panic, and see below |
 | `seed_vs_derive` | a format, a mirror, bytes | `TypeSeed` accepts and refuses what the mirror's `serde` derive does, and reads the same value; the mirrors are [`conformance/tests/common`](../conformance/tests/common/mod.rs) |
+| `stream_split` | a limit (`u32` LE), bytes | stream framing: `split_frame` never panics and reports exactly what the prefix declares (a frame within the limit and the buffer, `NeedMore` counting the prefix in, `TooLarge` only over the limit); splitting the whole buffer consumes it in order; `put_prefix` refuses only a length over the limit, and what it writes splits back to the same frame |
 
 **What `framing_decode` checks.**
 - The binary frames are canonical, so what decodes re-encodes to exactly the
@@ -70,7 +71,8 @@ refuses a count past the bytes left even for such an element, and the vector
 
 `seed-corpus.sh` runs `examples/seed_corpus.rs`, which writes the following into
 `corpus/<target>/`, prefixed as each target reads them:
-- every conformance vector's bytes, from `reference_cases()`;
+- every conformance vector's bytes, from `reference_cases()` (the `stream`
+  vectors, behind their limit, seed `stream_split`);
 - every mirror's samples, in every format.
 
 The corpora are generated, so they aren't committed (`.gitignore`), and neither

@@ -41,6 +41,7 @@ jobs:
           - packed_canonical
           - framing_decode
           - seed_vs_derive
+          - stream_split
     env:
       NIGHTLY: ${{ github.event_name != 'pull_request' }}
       SECONDS_PER_TARGET: ${{ github.event_name == 'pull_request' && 60 || 600 }}
@@ -224,7 +225,7 @@ jobs:
           python3 .github/scripts/fuzz-report.py combine \
             --commit "$COMMIT" --run "$RUN" \
             --fragments "$RUNNER_TEMP/stats" \
-            --expect decode_no_panic packed_canonical framing_decode seed_vs_derive \
+            --expect decode_no_panic packed_canonical framing_decode seed_vs_derive stream_split \
             --report runtime/conformance/reports/rust.fuzz.json \
             --markdown "$RUNNER_TEMP/fuzz.md"
           cat "$RUNNER_TEMP/fuzz.md" >> "$GITHUB_STEP_SUMMARY"

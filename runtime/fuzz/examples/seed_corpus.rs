@@ -47,6 +47,17 @@ fn main() {
                 ),
                 _ => None,
             };
+            if matches!(case.op, Op::StreamPrefix | Op::StreamSplit) {
+                // `stream_split` reads its limit first.
+                let max = case.input["max"].as_u64().expect("a limit");
+                let mut input = u32::try_from(max)
+                    .unwrap_or(u32::MAX)
+                    .to_le_bytes()
+                    .to_vec();
+                input.extend_from_slice(&bytes);
+                add("stream_split", name, input);
+                continue;
+            }
             let Some(ty) = typed else {
                 add("framing_decode", name, bytes);
                 continue;
