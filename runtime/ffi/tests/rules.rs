@@ -929,6 +929,41 @@ fn the_happy_path_allocates_nothing() {
     }
 }
 
+/// Found by the `ffi_feed` fuzz target and `tests/differential.rs`: feeding
+/// `jsonrpc@1` allocates in two cases, since the framing parses with
+/// serde_json. Refusing a malformed frame does, as serde_json boxes every
+/// error it makes (and formats a message into some, such as a string `id`).
+/// And taking a valid frame does when a member's name has an escape in it
+/// (`"js\u006erpc"`), which serde_json unescapes into a scratch `Vec` to
+/// match it. The rule says nothing allocates after `comline_connection_new`,
+/// so these are bugs in the core's JSON-RPC decode, not in the rule. Ignored
+/// until they're fixed; `common/drive.rs` allows exactly these two cases.
+#[test]
+#[ignore = "jsonrpc@1 decode allocates on a malformed frame or an escaped member name"]
+fn jsonrpc_decode_allocates_nothing() {
+    let conn = Conn::new(&Setup::plain("jsonrpc@1")).unwrap();
+    let mut allocating = Vec::new();
+    for (frame, status) in [
+        (&b""[..], COMLINE_ERR_FRAMING),
+        (b"!", COMLINE_ERR_FRAMING),
+        (b"{", COMLINE_ERR_FRAMING),
+        (
+            br#"{"jsonrpc":"2.0","result":1,"id":"x"}"#,
+            COMLINE_ERR_FRAMING,
+        ),
+        (br#"{"js\u006erpc":"2.0","method":"a","id":1}"#, COMLINE_OK),
+    ] {
+        let before = allocations();
+        let (s, _, _) = feed_raw(&conn, frame);
+        let allocated = allocations() - before;
+        assert_eq!(s, status);
+        if allocated != 0 {
+            allocating.push((String::from_utf8_lossy(frame).into_owned(), allocated));
+        }
+    }
+    assert!(allocating.is_empty(), "{allocating:?}");
+}
+
 #[test]
 fn the_counter_counts() {
     let before = allocations();
