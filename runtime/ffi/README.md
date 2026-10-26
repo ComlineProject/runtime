@@ -70,3 +70,20 @@ proptest's sequences in `tests/differential.rs`, and on fuzzer input in the
 PROPTEST_CASES=100000 cargo test --release -p comline-runtime-ffi --test differential
 cargo +nightly fuzz run --fuzz-dir runtime/fuzz ffi_vs_core
 ```
+
+## What crossing costs
+
+`runtime/ffi/bench` counts instructions (Callgrind, through
+`iai-callgrind`) of `feed`, `encode_request` and `encode_reply` per framing
+(`datagram@2`, `jsonrpc@1`), in message and stream mode, at the runtime
+benches' payload sizes, and of `name_hash`, `handshake_encode` and
+`handshake_check`. Each is measured twice: through its `extern "C"`
+function (`ffi/abi/...`), and as the same work on `State` and the framings
+directly (`ffi/core/...`). CI gates both like the runtime's benches (see
+`CONTRIBUTING.md` at the repository's root), and its job summary pairs them
+in a crossing-cost table. The benches are a package of their own so the ABI
+is built as a host links it, without this crate's `test-hooks`.
+
+```sh
+cargo bench -p comline-runtime-ffi-bench   # needs Valgrind and iai-callgrind-runner
+```

@@ -81,7 +81,14 @@ Results name each benchmark by an id built from the definitions:
 
 - `metric` says what the numbers count. Rust counts instructions (`ir`, with
   Callgrind), which only compare against the same runtime on another commit.
-- `benches` has one entry per id above.
+- `benches` has one entry per id above. Rust's also has its own targets'
+  benchmarks, under ids that start with the target's name, which no other
+  runtime has: the C ABI's (`runtime/ffi/bench`), `ffi/abi/<call>` through
+  each `extern "C"` function and `ffi/core/<call>` for the same work on the
+  core directly, where `<call>` is
+  `<feed|encode-request|encode-reply>/<framing>/<message|stream>/<size>`
+  (sizes as `framings.json`'s) or `name-hash`, `handshake-encode`,
+  `handshake-check`. A reader that knows only the ids above can skip them.
 
 Rust's CI writes it as an artifact on every pull request. On every push to
 `main` it benches the new head and commits the report to the

@@ -1,0 +1,30 @@
+[package]
+name = "comline-runtime-ffi-bench"
+version = "0.1.0"
+edition = "2021"
+license = "MPL-2.0"
+publish = false
+
+# The instruction-count benches of the C ABI (`benches/ffi.rs`): each call
+# through its `extern "C"` function, and the same work done on `State` and
+# the framings directly, so the crossing's cost is measured, not assumed.
+#
+# A package of its own, not a bench target of `comline-runtime-ffi`: that
+# crate's tests take it as a dev-dependency with `test-hooks` on, and a bench
+# there would measure the hooks too. Here the ABI is built as a host links
+# it, and `comline-runtime` with the ABI's features, so both sides of each
+# pair run the same core code.
+
+[dependencies]
+comline-runtime-ffi = { path = ".." }
+comline-runtime = { path = "../../core", default-features = false, features = ["alloc", "jsonrpc"] }
+
+[dev-dependencies]
+# The shared definitions (`runtime/core/benches/definitions`) derive serde.
+serde = { version = "1.0.190", features = ["derive"] }
+# The same version as `runtime/core`'s; see its `Cargo.toml`.
+iai-callgrind = "=0.16.1"
+
+[[bench]]
+name = "ffi"
+harness = false

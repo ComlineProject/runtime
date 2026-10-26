@@ -6,6 +6,7 @@ members = [
     "runtime/reference",
     "runtime-std-extra",
     "runtime/ffi",
+    "runtime/ffi/bench",
 
     # Broken on current rustc, independent of the `no_std` rework — re-enable
     # once addressed:
