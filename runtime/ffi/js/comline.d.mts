@@ -6,6 +6,13 @@
 // `comline-runtime-ffi` (`.d.mts`, the name TypeScript looks for beside a
 // `.mjs`). Each method is one `comline.h` function; see there for what it
 // does and when it fails.
+//
+// On wasm32 a trap (a panic in the module) poisons the whole instance, not
+// just the handle: the call that trapped returns `Status.ERR_POISONED`, and
+// so does every later call on the `Comline` and on every `Connection` from
+// it, without entering the module. Drop them and instantiate again. A
+// poisoned result has the fields its type always has zeroed; `supports` is
+// false. See `comline.mjs`.
 
 export declare const ABI_MAJOR: 0;
 export declare const ABI_MINOR: 1;
@@ -107,8 +114,64 @@ export interface Fed {
  * check its ABI version and the `comline_event` layout. */
 export declare function instantiate(source: BufferSource | WebAssembly.Module): Promise<Comline>;
 
+/** `instantiate`, synchronously, with the same checks. For Node and
+ * workers: a browser's main thread refuses to compile a module this size
+ * synchronously. */
+export declare function instantiateSync(source: BufferSource | WebAssembly.Module): Comline;
+
+/** Instantiate from a `fetch` response, compiling as it downloads, with the
+ * same checks. Falls back to reading the whole body when the engine has no
+ * `WebAssembly.instantiateStreaming` or the response's content type isn't
+ * `application/wasm`; a response that isn't `ok` is refused. */
+export declare function instantiateStreaming(
+  source: Response | PromiseLike<Response>,
+): Promise<Comline>;
+
+/** What `encodeBound` sizes. Leaving out a field it can use gives a looser
+ * bound, never a smaller one. */
+export type EncodeBoundArgs = {
+  framing: "datagram@2" | "jsonrpc@1";
+  /** The connection's `stream`: a 4-byte prefix is counted. */
+  stream?: boolean;
+  /** The body's length, as given to the encode. */
+  bodyLen: number;
+  /** `datagram@2`: exact with it, the varint's most (3 bytes) without. */
+  protocol?: number;
+} & (
+  | {
+      kind: "request";
+      /** `jsonrpc@1`: the method name, counted escaped exactly. */
+      name?: Bytes;
+      /** `jsonrpc@1`, without `name`: its UTF-8 length, counted at 6 bytes
+       * a byte (`\u00XX`). */
+      nameLen?: number;
+      /** `jsonrpc@1`: a one-way call (`false`) has no `id`. Counted with
+       * one when left out. */
+      expectsReply?: boolean | number;
+      /** `jsonrpc@1`: the id the request will be given, when known; 20
+       * digits otherwise. */
+      requestId?: bigint | number;
+    }
+  | {
+      kind: "reply";
+      envelope: number;
+      /** `jsonrpc@1`: the request id answered; 20 digits without it. */
+      requestId?: bigint | number;
+      /** `jsonrpc@1`, `Envelope.ERR`: the error id; 5 digits without it. */
+      errorId?: number;
+    }
+);
+
+/** The most bytes an encode can write (`*written`, a stream's prefix
+ * included), to size `cap` so it never retries: never smaller than what
+ * the ABI writes, and exactly that when every field the frame holds is
+ * given. Pure; needs no instance. */
+export declare function encodeBound(args: EncodeBoundArgs): number;
+
 export declare class Comline {
   private constructor();
+  /** Whether a trap killed this instance. */
+  readonly poisoned: boolean;
   abiVersion(): number;
   supports(name: Bytes): boolean;
   nameHash(name: Bytes): { status: Status; hash?: bigint };
@@ -126,7 +189,8 @@ export declare class Comline {
 }
 
 /** A `comline_connection *`. Free it with `free()`; nothing frees it for
- * you. */
+ * you. Once its instance is poisoned, every call returns `ERR_POISONED`
+ * and `free()` does nothing. */
 export declare class Connection {
   private constructor();
   start(cap: number): Written;
