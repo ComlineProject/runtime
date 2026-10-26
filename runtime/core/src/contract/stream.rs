@@ -103,6 +103,21 @@ mod tests {
     #[test]
     fn max_frame_fits_the_prefix() {
         assert!(u32::try_from(DEFAULT_MAX_FRAME).is_ok());
+        assert!(DEFAULT_MAX_FRAME <= PREFIX_CEILING);
+    }
+
+    #[test]
+    fn the_ceiling_is_the_largest_prefix() {
+        #[cfg(not(target_pointer_width = "16"))]
+        assert_eq!(PREFIX_CEILING, u32::MAX as usize);
+        let mut prefix = [0u8; PREFIX_LEN];
+        put_prefix(
+            PREFIX_CEILING,
+            PREFIX_CEILING,
+            &mut SliceBuf::new(&mut prefix),
+        )
+        .unwrap();
+        assert_eq!(frame_len(prefix, PREFIX_CEILING), Some(PREFIX_CEILING));
     }
 
     #[test]

@@ -871,6 +871,33 @@ mod tests {
     }
 
     #[test]
+    fn a_retracted_call_spends_nothing() {
+        let framing = Datagram2Framing;
+        let mut state = State::default();
+        let mut out = Vec::new();
+        let id = state
+            .encode_request(&framing, 0, Call::from(0), &(), &Unit, true, &mut out)
+            .unwrap();
+        state.retract(id);
+        assert!(!state.is_waiting());
+        let again = state
+            .encode_request(&framing, 0, Call::from(0), &(), &Unit, true, &mut out)
+            .unwrap();
+        assert_eq!(again, id, "the id is handed out again");
+
+        // Once another call was framed, the id isn't reused.
+        let next = state
+            .encode_request(&framing, 0, Call::from(0), &(), &Unit, false, &mut out)
+            .unwrap();
+        state.retract(again);
+        assert!(!state.is_waiting());
+        let after = state
+            .encode_request(&framing, 0, Call::from(0), &(), &Unit, false, &mut out)
+            .unwrap();
+        assert_eq!(after, next + 1);
+    }
+
+    #[test]
     fn extensions_hold_one_value_per_type() {
         struct Session(u32);
         let mut extensions = Extensions::default();
