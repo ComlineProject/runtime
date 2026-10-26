@@ -378,7 +378,8 @@ uint32_t comline_abi_version(void);
 
 /*
  Make a connection from `cfg`, into `*out`. The one allocation the library
- makes: the handle, with room for `max_waiting` waiting calls.
+ makes: the handle, with room for `max_waiting` waiting calls. (One known
+ exception, a bug: `comline_connection_feed` on `jsonrpc@1`; see there.)
 
  Errors: `COMLINE_ERR_INVALID_ARGUMENT` (a null pointer, a name that isn't
  UTF-8, a field outside its values, `max_frame` above the ceiling,
@@ -454,6 +455,13 @@ comline_status comline_connection_start(struct comline_connection *conn,
    the `id`. A notification is `COMLINE_EVENT_ONE_WAY` with request id 0.
    Absent `params`, `result` or `error.data` is
    `COMLINE_EVENT_BODY_ABSENT`.
+
+ **Known bug (runtime#58):** on `jsonrpc@1` this call can allocate, which
+ breaks the rule that nothing allocates after `comline_connection_new`.
+ The JSON parser allocates for any refused frame, for a member name
+ written with escapes, and for brackets nested three deep in the frame
+ (`"params":[[1]]`, counting the frame's own `{`). `datagram@2` never
+ allocates here.
 
  # Safety
  `conn` is null or a live handle; `in` is null or `in_len` readable bytes;
