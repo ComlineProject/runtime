@@ -5,7 +5,7 @@ members = [
     "runtime/conformance",
     "runtime/reference",
     "runtime-std-extra",
-    "runtime-langs/c",
+    "runtime/ffi",
 
     # Broken on current rustc, independent of the `no_std` rework — re-enable
     # once addressed:
