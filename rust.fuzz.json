@@ -1,32 +1,50 @@
 {
   "runtime": "rust",
-  "commit": "e3b9d77d3913e005d8ee24dbd445d8958cb49f6a",
-  "toolchain": "rustc 1.101.0-nightly (12433c307 2026-10-24)",
-  "date": "2026-10-25T20:15:07Z",
-  "run": "https://github.com/ComlineProject/runtime/actions/runs/40228930570",
+  "commit": "b77305733199604d5c3938a064543ff9c3b04af9",
+  "toolchain": "rustc 1.101.0-nightly (76456a688 2026-10-25)",
+  "date": "2026-10-26T09:05:39Z",
+  "run": "https://github.com/ComlineProject/runtime/actions/runs/40295480872",
   "targets": {
     "decode_no_panic": {
       "seconds": 601,
-      "executions": 21926352,
-      "corpus": 6608,
+      "executions": 17545486,
+      "corpus": 6256,
+      "findings": 0
+    },
+    "ffi_feed": {
+      "seconds": 601,
+      "executions": 4154468,
+      "corpus": 4505,
+      "findings": 0
+    },
+    "ffi_vs_core": {
+      "seconds": 601,
+      "executions": 2465895,
+      "corpus": 3289,
       "findings": 0
     },
     "framing_decode": {
       "seconds": 601,
-      "executions": 25446719,
-      "corpus": 3110,
+      "executions": 25427012,
+      "corpus": 3093,
       "findings": 0
     },
     "packed_canonical": {
       "seconds": 601,
-      "executions": 15160490,
-      "corpus": 740,
+      "executions": 8310762,
+      "corpus": 753,
       "findings": 0
     },
     "seed_vs_derive": {
       "seconds": 601,
-      "executions": 20839172,
-      "corpus": 9741,
+      "executions": 18714561,
+      "corpus": 9551,
+      "findings": 0
+    },
+    "stream_split": {
+      "seconds": 601,
+      "executions": 113007661,
+      "corpus": 42,
       "findings": 0
     }
   },
@@ -39,7 +57,8 @@
       "msgpack_round_trips": "pass",
       "packed_is_canonical": "pass",
       "packed_round_trips": "pass",
-      "seed_agrees_with_derive": "pass"
+      "seed_agrees_with_derive": "pass",
+      "the_abi_agrees_with_the_core": "pass"
     }
   }
 }
