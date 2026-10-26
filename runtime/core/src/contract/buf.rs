@@ -44,6 +44,7 @@ pub struct SliceBuf<'a> {
 }
 
 impl<'a> SliceBuf<'a> {
+    #[inline]
     pub fn new(buf: &'a mut [u8]) -> Self {
         Self {
             buf,
@@ -53,17 +54,20 @@ impl<'a> SliceBuf<'a> {
     }
 
     /// The bytes written so far.
+    #[inline]
     pub fn written(&self) -> &[u8] {
         &self.buf[..self.len]
     }
 
     /// Whether a write was dropped for want of capacity.
+    #[inline]
     pub fn overflowed(&self) -> bool {
         self.overflowed
     }
 
     /// Reset the cursor for the next call. Does not touch the backing bytes;
     /// pair with a `zeroize` pass where hardening is on.
+    #[inline]
     pub fn clear(&mut self) {
         self.len = 0;
         self.overflowed = false;

@@ -335,12 +335,32 @@ fn abi_handshake_check(pair: (Vec<u8>, Vec<u8>)) -> (Vec<u8>, Vec<u8>) {
     (ours, peer)
 }
 
+#[library_benchmark]
+#[bench::frame(setup = handshake_pair)]
+fn abi_handshake_check_out(pair: (Vec<u8>, Vec<u8>)) -> (Vec<u8>, Vec<u8>) {
+    let (ours, peer) = pair;
+    let mut out = comline_handshake::default();
+    // SAFETY: every pointer is valid for its length, and none overlap.
+    let status = unsafe {
+        comline_handshake_check(
+            ours.as_ptr(),
+            ours.len(),
+            peer.as_ptr(),
+            peer.len(),
+            &mut out,
+        )
+    };
+    assert_eq!(status, COMLINE_OK);
+    black_box(out);
+    (ours, peer)
+}
+
 library_benchmark_group!(
     name = abi;
     benchmarks =
         abi_feed_datagram2, abi_encode_request_datagram2, abi_encode_reply_datagram2,
         abi_feed_jsonrpc1, abi_encode_request_jsonrpc1, abi_encode_reply_jsonrpc1,
-        abi_name_hash, abi_handshake_encode, abi_handshake_check
+        abi_name_hash, abi_handshake_encode, abi_handshake_check, abi_handshake_check_out
 );
 
 // ── the same work, on the core directly ─────────────────────────────────────
@@ -543,12 +563,22 @@ fn core_handshake_check(pair: (Vec<u8>, Vec<u8>)) -> (Vec<u8>, Vec<u8>) {
     (ours, peer)
 }
 
+#[library_benchmark]
+#[bench::frame(setup = handshake_pair)]
+fn core_handshake_check_out(pair: (Vec<u8>, Vec<u8>)) -> (Vec<u8>, Vec<u8>) {
+    let (ours, peer) = pair;
+    let frame = HandshakeFrame::decode(&ours).expect("our frame parses");
+    black_box(HandshakeFrame::decode(&peer));
+    black_box(frame.check_bytes(&peer)).expect("the frames agree");
+    (ours, peer)
+}
+
 library_benchmark_group!(
     name = core;
     benchmarks =
         core_feed_datagram2, core_encode_request_datagram2, core_encode_reply_datagram2,
         core_feed_jsonrpc1, core_encode_request_jsonrpc1, core_encode_reply_jsonrpc1,
-        core_name_hash, core_handshake_encode, core_handshake_check
+        core_name_hash, core_handshake_encode, core_handshake_check, core_handshake_check_out
 );
 
 main!(library_benchmark_groups = abi, core);
