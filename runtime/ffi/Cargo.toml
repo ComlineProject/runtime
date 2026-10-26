@@ -25,10 +25,6 @@ test-hooks = []
 # build and wasm32 works. The FFI crate itself uses `std` for
 # `catch_unwind`.
 comline-runtime = { path = "../core", default-features = false, features = ["alloc", "jsonrpc"] }
-# Only to find an escaped JSON-RPC method name's text in the frame (see
-# `name_span` in src/lib.rs). The same versions and features core uses.
-serde = { version = "1.0.190", default-features = false, features = ["derive"] }
-serde_json = { version = "1.0.108", default-features = false, features = ["alloc", "raw_value"] }
 
 [dev-dependencies]
 # Itself, with the test hooks on, for `tests/rules.rs`.

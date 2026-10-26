@@ -653,30 +653,19 @@ fn body_span(base: &[u8], body: &[u8]) -> (comline_span, u8) {
     }
 }
 
-/// A method name's span as the frame spells it, and whether that spelling
-/// has escapes.
-///
-/// [`MethodName`] lends its text only when it has no escapes
-/// ([`MethodName::as_str`]); an escaped name's raw text isn't exposed. So
-/// for one (rare: no Comline runtime writes a generated name with escapes)
-/// the `method` member is found again in the frame, which `frame` already
-/// parsed as JSON.
-fn name_span(base: &[u8], frame: &[u8], name: MethodName<'_>) -> (comline_span, u8) {
-    if let Some(plain) = name.as_str() {
-        let span = span_in(base, plain.as_bytes()).expect("a plain name borrows the frame");
-        return (span, 0);
-    }
-    #[derive(serde::Deserialize)]
-    struct Method<'a> {
-        #[serde(borrow)]
-        method: &'a serde_json::value::RawValue,
-    }
-    let json = core::str::from_utf8(frame).expect("the frame was read as JSON");
-    let parsed: Method<'_> = serde_json::from_str(json).expect("the frame was read as JSON");
-    let written = parsed.method.get();
-    let inner = &written[1..written.len() - 1];
-    let span = span_in(base, inner.as_bytes()).expect("the name borrows the frame");
-    (span, COMLINE_EVENT_NAME_ESCAPED)
+/// A method name's span as the frame spells it, and
+/// `COMLINE_EVENT_NAME_ESCAPED` when that spelling has escapes.
+fn name_span(base: &[u8], name: MethodName<'_>) -> (comline_span, u8) {
+    let (written, escaped) = name.as_written();
+    let span = span_in(base, written.as_bytes()).expect("a name borrows the frame");
+    (
+        span,
+        if escaped {
+            COMLINE_EVENT_NAME_ESCAPED
+        } else {
+            0
+        },
+    )
 }
 
 // ── making and freeing a connection ────────────────────────────────────────
@@ -993,7 +982,7 @@ fn feed(
             match request.call {
                 RequestCall::Id(id) => ev.call_id = id,
                 RequestCall::Name(name) => {
-                    let (span, escaped) = name_span(input, frame, name);
+                    let (span, escaped) = name_span(input, name);
                     ev.flags |= COMLINE_EVENT_CALL_BY_NAME | escaped;
                     ev.call_name = span;
                 }
