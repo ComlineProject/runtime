@@ -317,7 +317,7 @@ fn check_same(case: &Case, encoded: &[u8]) -> Result<(), String> {
 fn with_framing(name: &str, f: impl FnOnce(&dyn Reference)) -> Result<(), String> {
     match name {
         "datagram@2" => f(&Datagram2Framing),
-        "jsonrpc@1" => f(&JsonRpcFraming::default()),
+        "jsonrpc@1" => f(&JsonRpcFraming),
         other => return Err(format!("no reference for {other}")),
     }
     Ok(())

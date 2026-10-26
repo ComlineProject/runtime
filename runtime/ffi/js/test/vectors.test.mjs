@@ -9,7 +9,7 @@
 // does; each `case*` below follows the function of the same name in
 // `tests/vectors.rs`.
 //
-//     node --test runtime/ffi/js/test/
+//     node --test runtime/ffi/js/test/vectors.test.mjs
 //
 // `COMLINE_VECTORS` is the export's directory and `COMLINE_WASM` the module;
 // they default to `ffi-vectors` and the release wasm32 build under

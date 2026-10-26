@@ -47,7 +47,10 @@ jobs:
 
   # `comline-runtime-ffi`, the C ABI: `include/comline.h` matches what the
   # pinned cbindgen generates from the source, and the crate builds as a
-  # cdylib and a staticlib natively and as a wasm32 module.
+  # cdylib and a staticlib natively and as a wasm32 module. The conformance
+  # vectors are replayed through it from Rust (`cargo test`), from C against
+  # the staticlib and the cdylib (gcc, and ASan + UBSan), and from Node
+  # against the wasm32 build, each on the same cases.
   ffi:
     name: ffi
     runs-on: ubuntu-latest
@@ -77,6 +80,15 @@ jobs:
           cargo build --verbose -p comline-runtime-ffi --release --target wasm32-unknown-unknown
           ls -l target/wasm32-unknown-unknown/release/comline_runtime_ffi.wasm
       - run: cargo test --verbose -p comline-runtime-ffi
+      - name: export the vectors for C and Node
+        run: cargo run -p comline-runtime-ffi --example export_vectors -- target/ffi-vectors
+      - name: C harness (staticlib, cdylib, sanitizers)
+        run: make -C runtime/ffi/tests/c check CC=gcc
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - name: Node harness (wasm32)
+        run: node --test runtime/ffi/js/test/vectors.test.mjs
 
   # The C ABI under Miri: the replay and the rule tests, checked for
   # undefined behaviour at the `extern "C"` boundary (aliasing, bounds,

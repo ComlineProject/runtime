@@ -64,15 +64,19 @@ fn every_case_replays_through_the_abi() {
     for file in FILES {
         let vectors = vectors(file);
         assert!(!vectors.cases.is_empty(), "{file} has no cases");
+        let mut passed = 0;
         for case in &vectors.cases {
             match std::panic::catch_unwind(|| replay(case)) {
                 Ok(Ok(how)) => {
                     ran.insert(case.id.clone(), how);
+                    passed += 1;
                 }
                 Ok(Err(why)) => failures.push(format!("{}: {why}", case.id)),
                 Err(_) => failures.push(format!("{}: panicked", case.id)),
             }
         }
+        // The C and Node harnesses print the same line, from the export.
+        eprintln!("{file}: {passed}/{} passed", vectors.cases.len());
     }
     assert!(failures.is_empty(), "{}", failures.join("\n"));
 
