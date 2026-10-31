@@ -14,6 +14,7 @@
 use std::collections::BTreeMap;
 
 mod intern;
+pub mod runner;
 mod seed;
 
 pub use seed::{check, TypeSeed};
@@ -424,6 +425,10 @@ pub struct Profile {
 pub enum ProfileKind {
     Format,
     Framing,
+    /// A handshake. No official handshake has a profile here yet, and a
+    /// handshake profile states no facts; core declares the kind
+    /// (`config.idp` `encodings`), so a package's handshake profile loads.
+    Handshake,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -449,6 +454,7 @@ impl ProfileKind {
                 ("calls", &["by_index", "by_name", "by_id"]),
                 ("errors", &["by_ordinal", "by_name"]),
             ],
+            ProfileKind::Handshake => &[],
         }
     }
 }
@@ -616,7 +622,10 @@ fn encode_reply(reply: &Reply, out: &mut Vec<u8>) {
 fn envelope_of(reply: &Reply) -> Envelope<'_> {
     match reply {
         Reply::Ok { payload } => Envelope::Ok(&payload.0),
-        Reply::Err { id, body } => Envelope::Err { id: *id, body: &body.0 },
+        Reply::Err { id, body } => Envelope::Err {
+            id: *id,
+            body: &body.0,
+        },
         Reply::Fault => Envelope::Fault,
     }
 }
@@ -663,7 +672,9 @@ fn encode_request_bodies(
             framed(&|out| DatagramFraming.encode_request_body(call, name, id, &params, out)),
         )),
         FRAMING_DATAGRAM2 => {
-            let protocol = i.protocol.ok_or_else(|| Outcome::Fail("no `protocol`".into()))?;
+            let protocol = i
+                .protocol
+                .ok_or_else(|| Outcome::Fail("no `protocol`".into()))?;
             bodies.push((
                 "ConnectionFraming::encode_request_body",
                 framed(&|out| {
@@ -719,7 +730,9 @@ fn encode(op: Op, input: &serde_json::Value) -> Result<Vec<u8>, Outcome> {
         Op::Request => {
             let i: RequestIn = parse(input)?;
             if i.framing == FRAMING_DATAGRAM2 {
-                let protocol = i.protocol.ok_or_else(|| Outcome::Fail("no `protocol`".into()))?;
+                let protocol = i
+                    .protocol
+                    .ok_or_else(|| Outcome::Fail("no `protocol`".into()))?;
                 let call = Call::new(i.call_id, intern::name(&i.method));
                 let f = Datagram2Framing;
                 let encoded = match i.format.as_str() {
@@ -793,8 +806,15 @@ fn encode(op: Op, input: &serde_json::Value) -> Result<Vec<u8>, Outcome> {
         Op::Response => {
             let i: ResponseIn = parse(input)?;
             if i.framing == FRAMING_DATAGRAM2 {
-                let protocol = i.protocol.ok_or_else(|| Outcome::Fail("no `protocol`".into()))?;
-                Datagram2Framing.encode_reply(protocol, i.request_id, &envelope_of(&i.reply), &mut out);
+                let protocol = i
+                    .protocol
+                    .ok_or_else(|| Outcome::Fail("no `protocol`".into()))?;
+                Datagram2Framing.encode_reply(
+                    protocol,
+                    i.request_id,
+                    &envelope_of(&i.reply),
+                    &mut out,
+                );
                 return Ok(out);
             }
             let framing = framing_of(&i.framing)
@@ -925,7 +945,11 @@ fn decode(
             None => Ok(None),
         },
         Op::Request if is_datagram2(input) => {
-            let Some(Frame::Request { protocol: Some(protocol), request, .. }) = Datagram2Framing.decode(bytes)
+            let Some(Frame::Request {
+                protocol: Some(protocol),
+                request,
+                ..
+            }) = Datagram2Framing.decode(bytes)
             else {
                 return Ok(None);
             };
@@ -953,7 +977,11 @@ fn decode(
             }))
         }
         Op::Response if is_datagram2(input) => match Datagram2Framing.decode(bytes) {
-            Some(Frame::Reply { protocol, request_id, envelope }) => json(to_json(&ResponseIn {
+            Some(Frame::Reply {
+                protocol,
+                request_id,
+                envelope,
+            }) => json(to_json(&ResponseIn {
                 framing: FRAMING_DATAGRAM2.into(),
                 protocol,
                 request_id,
@@ -976,7 +1004,9 @@ fn decode(
             // says whether the frame wanted a reply.
             let (req, one_way) = if i.one_way && i.framing == FRAMING_JSONRPC {
                 match ConnectionFraming::decode(&JsonRpcFraming, bytes) {
-                    Some(Frame::Request { request, one_way, .. }) => (request, one_way),
+                    Some(Frame::Request {
+                        request, one_way, ..
+                    }) => (request, one_way),
                     _ => return Ok(None),
                 }
             } else {
@@ -1279,8 +1309,22 @@ pub fn reference_cases() -> Vec<Vectors> {
             // On a connection: a qualified method names its protocol, and a
             // one-way call is a notification, with no `id`.
             let said = Value::Array(vec![Value::String("hi".into())]);
-            connection.push(request(p("request-qualified-method"), framing, 0, "chat.Chat/send", 5, &said));
-            let (id, op, mut input) = request(p("notification"), framing, 0, "chat.ChatClient/pushed", 0, &said);
+            connection.push(request(
+                p("request-qualified-method"),
+                framing,
+                0,
+                "chat.Chat/send",
+                5,
+                &said,
+            ));
+            let (id, op, mut input) = request(
+                p("notification"),
+                framing,
+                0,
+                "chat.ChatClient/pushed",
+                0,
+                &said,
+            );
             input["one_way"] = true.into();
             connection.push((id, op, input));
             // Found by comline-typescript's differential tests (#41): a
@@ -1296,27 +1340,30 @@ pub fn reference_cases() -> Vec<Vectors> {
         }
         feature(
             feature_id,
-            [vec![
-                request(p("request"), framing, 3, "greet", 42, &params),
-                request(
-                    p("request-large-id"),
-                    framing,
-                    u16::MAX,
-                    "ping",
-                    u64::MAX,
-                    &Value::Array(vec![]),
-                ),
-                response(p("response-ok"), framing, 7, ok(br#"{"body":"hi"}"#)),
-                // Payloads pass through as written, digits and all.
-                response(
-                    p("response-ok-exact-numbers"),
-                    framing,
-                    8,
-                    ok(br#"{"n":9007199254740993,"f":1.0}"#),
-                ),
-                response(p("response-err"), framing, 7, err(2, br#"{"why":"no"}"#)),
-                response(p("response-fault"), framing, 9, Reply::Fault),
-            ], connection]
+            [
+                vec![
+                    request(p("request"), framing, 3, "greet", 42, &params),
+                    request(
+                        p("request-large-id"),
+                        framing,
+                        u16::MAX,
+                        "ping",
+                        u64::MAX,
+                        &Value::Array(vec![]),
+                    ),
+                    response(p("response-ok"), framing, 7, ok(br#"{"body":"hi"}"#)),
+                    // Payloads pass through as written, digits and all.
+                    response(
+                        p("response-ok-exact-numbers"),
+                        framing,
+                        8,
+                        ok(br#"{"n":9007199254740993,"f":1.0}"#),
+                    ),
+                    response(p("response-err"), framing, 7, err(2, br#"{"why":"no"}"#)),
+                    response(p("response-fault"), framing, 9, Reply::Fault),
+                ],
+                connection,
+            ]
             .concat(),
         );
     }
@@ -1329,16 +1376,55 @@ pub fn reference_cases() -> Vec<Vectors> {
     feature(
         "framing-datagram2",
         vec![
-            on(request(p("request"), FRAMING_DATAGRAM2, 3, "greet", 42, &params), 0),
-            // 300 is two varint bytes, the largest protocol number three.
-            on(request(p("request-two-byte-protocol"), FRAMING_DATAGRAM2, 1, "ping", 5, &Value::Array(vec![])), 300),
             on(
-                request(p("request-large-ids"), FRAMING_DATAGRAM2, u16::MAX, "ping", u64::MAX, &Value::Array(vec![])),
+                request(p("request"), FRAMING_DATAGRAM2, 3, "greet", 42, &params),
+                0,
+            ),
+            // 300 is two varint bytes, the largest protocol number three.
+            on(
+                request(
+                    p("request-two-byte-protocol"),
+                    FRAMING_DATAGRAM2,
+                    1,
+                    "ping",
+                    5,
+                    &Value::Array(vec![]),
+                ),
+                300,
+            ),
+            on(
+                request(
+                    p("request-large-ids"),
+                    FRAMING_DATAGRAM2,
+                    u16::MAX,
+                    "ping",
+                    u64::MAX,
+                    &Value::Array(vec![]),
+                ),
                 u16::MAX,
             ),
-            on(response(p("response-ok"), FRAMING_DATAGRAM2, 7, ok(br#"{"body":"hi"}"#)), 0),
-            on(response(p("response-err"), FRAMING_DATAGRAM2, 7, err(2, br#"{"why":"no"}"#)), 1),
-            on(response(p("response-fault"), FRAMING_DATAGRAM2, 9, Reply::Fault), 200),
+            on(
+                response(
+                    p("response-ok"),
+                    FRAMING_DATAGRAM2,
+                    7,
+                    ok(br#"{"body":"hi"}"#),
+                ),
+                0,
+            ),
+            on(
+                response(
+                    p("response-err"),
+                    FRAMING_DATAGRAM2,
+                    7,
+                    err(2, br#"{"why":"no"}"#),
+                ),
+                1,
+            ),
+            on(
+                response(p("response-fault"), FRAMING_DATAGRAM2, 9, Reply::Fault),
+                200,
+            ),
         ],
     );
 
@@ -1364,9 +1450,7 @@ pub fn reference_cases() -> Vec<Vectors> {
             "format-msgpack" => v
                 .cases
                 .extend(decode_cases("format-msgpack", FORMAT_MSGPACK)),
-            "format-packed" => v
-                .cases
-                .extend(decode_cases("format-packed", FORMAT_PACKED)),
+            "format-packed" => v.cases.extend(decode_cases("format-packed", FORMAT_PACKED)),
             "framing-jsonrpc" => v.cases.extend(found_jsonrpc_cases()),
             _ => {}
         }
@@ -1582,9 +1666,15 @@ fn packed_cases() -> Vec<(String, Op, serde_json::Value)> {
     let samples: Vec<(&str, Value)> = vec![
         ("f32", Value::F32(1.5)),
         ("u16-small", Value::U16(1)),
-        ("tuple-f32", Value::Tuple(vec![Value::F32(1.0), Value::F32(2.0)])),
+        (
+            "tuple-f32",
+            Value::Tuple(vec![Value::F32(1.0), Value::F32(2.0)]),
+        ),
         // 300 elements: a count that takes two varint bytes.
-        ("array-two-byte-count", Value::Array(vec![Value::U8(0); 300])),
+        (
+            "array-two-byte-count",
+            Value::Array(vec![Value::U8(0); 300]),
+        ),
         ("enum-first-variant", class(0, "Warrior")),
         (
             "struct-player",
@@ -1596,7 +1686,10 @@ fn packed_cases() -> Vec<(String, Op, serde_json::Value)> {
                     ("name".into(), Value::String("ab".into())),
                     ("guild".into(), Value::Option(None)),
                     ("class".into(), class(1, "Mage")),
-                    ("pos".into(), Value::Tuple(vec![Value::F32(1.0), Value::F32(2.0)])),
+                    (
+                        "pos".into(),
+                        Value::Tuple(vec![Value::F32(1.0), Value::F32(2.0)]),
+                    ),
                 ],
             },
         ),
@@ -1754,8 +1847,18 @@ fn decode_cases(feature_id: &str, format: &str) -> Vec<Case> {
             Type::U32,
         ),
         // The shapes beyond the scalars a generated type can have.
-        decode_case(p("decode-u128"), format, &Value::U128(u128::MAX), Type::U128),
-        decode_case(p("decode-i128"), format, &Value::I128(i128::MIN), Type::I128),
+        decode_case(
+            p("decode-u128"),
+            format,
+            &Value::U128(u128::MAX),
+            Type::U128,
+        ),
+        decode_case(
+            p("decode-i128"),
+            format,
+            &Value::I128(i128::MIN),
+            Type::I128,
+        ),
         decode_case(p("decode-unit"), format, &Value::Unit(()), Type::Unit),
         decode_case(p("decode-fixed-array"), format, &bytes(4), fixed(4)),
         decode_case(p("decode-fixed-array-33"), format, &bytes(33), fixed(33)),
@@ -2027,12 +2130,42 @@ fn rejections(feature: &str) -> Vec<Case> {
             unknown_kind[0] = 2;
             let d2 = || framing(FRAMING_DATAGRAM2);
             vec![
-                reject("framing-datagram2/reject-unknown-kind", Op::Request, d2(), &unknown_kind),
-                reject("framing-datagram2/reject-overlong-protocol", Op::Request, d2(), &overlong),
-                reject("framing-datagram2/reject-reply-as-request", Op::Request, d2(), &reply),
-                reject("framing-datagram2/reject-request-as-reply", Op::Response, d2(), &request),
-                reject("framing-datagram2/reject-short-request", Op::Request, d2(), &request[..9]),
-                reject("framing-datagram2/reject-reply-without-envelope", Op::Response, d2(), &reply[..10]),
+                reject(
+                    "framing-datagram2/reject-unknown-kind",
+                    Op::Request,
+                    d2(),
+                    &unknown_kind,
+                ),
+                reject(
+                    "framing-datagram2/reject-overlong-protocol",
+                    Op::Request,
+                    d2(),
+                    &overlong,
+                ),
+                reject(
+                    "framing-datagram2/reject-reply-as-request",
+                    Op::Request,
+                    d2(),
+                    &reply,
+                ),
+                reject(
+                    "framing-datagram2/reject-request-as-reply",
+                    Op::Response,
+                    d2(),
+                    &request,
+                ),
+                reject(
+                    "framing-datagram2/reject-short-request",
+                    Op::Request,
+                    d2(),
+                    &request[..9],
+                ),
+                reject(
+                    "framing-datagram2/reject-reply-without-envelope",
+                    Op::Response,
+                    d2(),
+                    &reply[..10],
+                ),
             ]
         }
         "format-packed" => {
@@ -2044,11 +2177,20 @@ fn rejections(feature: &str) -> Vec<Case> {
                 })
             };
             let r = |id: &str, ty: Type, bytes: &[u8]| {
-                reject(&format!("format-packed/{id}"), Op::Decode, decode(ty), bytes)
+                reject(
+                    &format!("format-packed/{id}"),
+                    Op::Decode,
+                    decode(ty),
+                    bytes,
+                )
             };
             vec![
                 r("reject-bool-not-0-or-1", Type::Bool, &[2]),
-                r("reject-option-tag-not-0-or-1", Type::Option(Box::new(Type::U32)), &[2, 0, 0, 0, 0]),
+                r(
+                    "reject-option-tag-not-0-or-1",
+                    Type::Option(Box::new(Type::U32)),
+                    &[2, 0, 0, 0, 0],
+                ),
                 r("reject-truncated-u32", Type::U32, &[1, 2, 3]),
                 r("reject-trailing-bytes", Type::U32, &[1, 0, 0, 0, 9]),
                 r("reject-overlong-length", Type::String, &[0x80, 0x00]),

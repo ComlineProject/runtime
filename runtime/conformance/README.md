@@ -126,6 +126,55 @@ review as one.
 CONFORMANCE_BLESS=1 cargo test -p comline-runtime-conformance
 ```
 
+## The spec, version 0.1
+
+The case format above (`vectors/*.json`, `profiles/*.json`, the ops, values
+and types) and the ops protocol
+([`comline-reference`'s README](../reference/README.md#the-protocol)) are a
+public spec, at version **0.1** (`runner::SPEC_VERSION`). Third-party
+encodings ship vectors in this format, and `comline conformance --impl`
+drives their implementations over this protocol. While Comline is in its
+early days (0.x), a minor version may change anything, and the change is
+named in the pull request that makes it. The ops protocol keeps its own
+number (`protocol: 1` in a `version` reply), under which ops and reply
+fields are only ever added.
+
+What an implementation answers, and how its answers are judged:
+
+- It reads request lines on stdin and writes one reply line each on stdout,
+  as `comline-reference` does, until stdin ends.
+- `version` says what it implements: `protocol`, `ops`, and the encoding
+  names it ships under `formats` and `framings` (namespaced names too,
+  `com.acme.lines@1`).
+- Each case poses the questions `runner::questions` lists: a rejection asks
+  to decode its bytes (a `stream_prefix` rejection also asks to encode its
+  input, which must fail); any other case asks to encode its input (unless
+  it's a `decode`) and to decode its bytes (unless it's a `name_hash` or an
+  `encode`). The questions never depend on earlier answers.
+- `runner::judge` passes a case when every encode gives its bytes (as JSON,
+  for `"compare": "json"`), every decode accepts and gives its input back
+  exactly, and a rejection is refused. A `not_implemented` answer makes the
+  case not implemented; an `error` fails it.
+- A profile fact is proven when every case it names passes and shows its
+  value (`fact_shown`). A format's facts are shown by `decode` cases of the
+  `Point` and `Color` shapes the official profiles use.
+
+### The runner as a library
+
+Other crates depend on this one by git rev
+(`comline-runtime-conformance`, `runtime/conformance`). Its
+[`runner`](src/runner.rs) module:
+
+- `load_corpus(dir)`: `vectors/*.json` and `profiles/*.json` under `dir`;
+  `load_vectors(path)` and `load_profile(path)` for single files;
+- `Corpus::cases_for(profile)`: every case of the features its facts are
+  proven from; `Corpus::prove(profile, outcomes)`: each fact, proven or why
+  not;
+- `questions(case)`, `judge(case, answers)` and `byte_diff(got, expected)`;
+- the `Implementation` trait, with `InProcess` (`comline-runtime`) and
+  `Lines` (any reader and writer speaking the ops protocol, such as a
+  child process's stdout and stdin); `run_all(cases, implementation)`.
+
 ## Support, and its proof
 
 Each runtime declares, per feature, `supported`, `partial` or `unsupported`,
