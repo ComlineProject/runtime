@@ -170,3 +170,27 @@ test("memory growing between calls doesn't disturb the glue", () => {
   big.free();
   conn.free();
 });
+
+test("a name from the glue's cache encodes as its bytes do", () => {
+  const comline = new Comline(new WebAssembly.Instance(module, {}).exports);
+  const { status, connection } = comline.connectionNew({
+    framing: "jsonrpc@1",
+    handshake: Handshake.NONE,
+  });
+  assert.equal(status, Status.OK);
+  try {
+    // Past the cache's bound and back, twice over, so it fills and empties.
+    for (let round = 0; round < 2; round++) {
+      for (let i = 0; i < 600; i++) {
+        const name = `method.${i % 300}.é`;
+        const viaString = connection.encodeRequest(0, 0, name, false, "1", 256);
+        const viaBytes = connection.encodeRequest(0, 0, utf8.encode(name), false, "1", 256);
+        assert.equal(viaString.status, Status.OK);
+        assert.deepEqual(viaString.bytes, viaBytes.bytes);
+        assert.ok(new TextDecoder().decode(viaString.bytes).includes(`"${name}"`));
+      }
+    }
+  } finally {
+    connection.free();
+  }
+});
