@@ -45,7 +45,7 @@ use crate::{Profile, Vectors};
 /// early days: a minor bump may change anything, and says so in the
 /// changelog. The ops protocol also carries its own number (`protocol` in
 /// the `version` reply, [`OPS_PROTOCOL`]).
-pub const SPEC_VERSION: &str = "0.1";
+pub const SPEC_VERSION: &str = "0.2";
 
 /// The ops protocol's number, as a `version` reply states it. Ops and reply
 /// fields are only ever added under it.
@@ -250,7 +250,8 @@ pub fn parse_reply(reply: &Json) -> Result<(Json, Answer), String> {
 ///
 /// - A rejection asks to decode `bytes`; a `stream_prefix` rejection also
 ///   asks to encode its input, which must fail too.
-/// - Otherwise, every op but `decode` asks to encode the input, and every
+/// - Otherwise, every op but `decode` and `handshake_check` asks to encode
+///   the input, and every
 ///   op but `name_hash` and `encode` asks to decode `bytes`.
 pub fn questions(case: &Case) -> Vec<Question> {
     let ask = |bytes: Option<&[u8]>| Question {
@@ -266,7 +267,7 @@ pub fn questions(case: &Case) -> Vec<Question> {
         asked.push(ask(Some(&case.bytes.0)));
         return asked;
     }
-    if case.op != Op::Decode {
+    if !case.op.decode_only() {
         asked.push(ask(None));
     }
     if !matches!(case.op, Op::NameHash | Op::Encode) {

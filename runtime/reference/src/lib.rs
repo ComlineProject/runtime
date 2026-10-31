@@ -32,6 +32,7 @@ pub const PROTOCOL: u32 = 1;
 pub const CORPUS_OPS: &[&str] = &[
     "name_hash",
     "handshake",
+    "handshake_check",
     "envelope",
     "request",
     "response",

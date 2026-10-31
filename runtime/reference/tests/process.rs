@@ -99,7 +99,7 @@ fn expectations(case: &Case) -> Vec<Expected> {
         });
         return out;
     }
-    if case.op != Op::Decode {
+    if !case.op.decode_only() {
         out.push(Expected {
             request: json!({ "id": id("encode"), "op": case.op, "input": case.input }),
             reply: json!({ "id": id("encode"), "bytes": bytes }),

@@ -15,7 +15,7 @@ use std::path::{Path, PathBuf};
 
 use comline_runtime::contract::{
     FORMAT_JSON, FORMAT_MSGPACK, FORMAT_PACKED, FRAMING_DATAGRAM, FRAMING_DATAGRAM2,
-    FRAMING_JSONRPC,
+    FRAMING_JSONRPC, HANDSHAKE_COMLINE,
 };
 use comline_runtime_conformance::{
     fact_shown, reference_cases, render, run, Case, Features, Outcome, Profile, ProvenClaim,
@@ -218,6 +218,7 @@ fn profiles_are_proven() {
         FRAMING_DATAGRAM,
         FRAMING_DATAGRAM2,
         FRAMING_JSONRPC,
+        HANDSHAKE_COMLINE,
     ];
     for name in names {
         let path = root().join("profiles").join(format!("{name}.json"));
@@ -232,7 +233,9 @@ fn profiles_are_proven() {
         let expected = profile.kind.facts();
         for (fact, values) in expected {
             let Some(stated) = profile.facts.get(*fact) else {
-                problems.push(format!("`{name}` doesn't state `{fact}`"));
+                if profile.kind.states_every_fact() {
+                    problems.push(format!("`{name}` doesn't state `{fact}`"));
+                }
                 continue;
             };
             if !values.contains(&stated.value.as_str()) {
@@ -241,7 +244,7 @@ fn profiles_are_proven() {
                     stated.value
                 ));
             }
-            if stated.proven_by.is_empty() {
+            if stated.proven_by.is_empty() && stated.value != "false" {
                 problems.push(format!("`{name}`: `{fact}` has no proving case"));
             }
             let mut proving = Vec::new();
@@ -287,11 +290,55 @@ fn the_runner_passes_the_reference() {
         .filter(|(_, o)| **o != Outcome::Pass)
         .collect();
     assert!(failed.is_empty(), "{failed:#?}");
-    assert_eq!(corpus.profiles.len(), 6);
+    assert_eq!(corpus.profiles.len(), 7);
     for profile in corpus.profiles.values() {
         assert!(!corpus.cases_for(profile).is_empty(), "{}", profile.name);
         for proof in corpus.prove(profile, &outcomes) {
             assert_eq!(proof.result, Ok(()), "{}: {}", profile.name, proof.fact);
         }
     }
+}
+
+/// A handshake's facts are booleans; `false` (or leaving one out) claims
+/// nothing, and `true` needs the cases that show the refusal.
+#[test]
+fn handshake_facts_need_their_refusals() {
+    let profile: Profile = serde_json::from_str(
+        r#"{"name": "com.acme.hello@1", "kind": "handshake",
+            "facts": {"schema_agreement": {"value": false}}}"#,
+    )
+    .unwrap();
+    let stated = &profile.facts["schema_agreement"];
+    assert_eq!(stated.value, "false");
+    assert!(stated.proven_by.is_empty());
+    assert_eq!(fact_shown("schema_agreement", "false", &[]), Ok(()));
+    let written = serde_json::to_value(&profile).unwrap();
+    assert_eq!(
+        written["facts"]["schema_agreement"]["value"],
+        serde_json::json!(false)
+    );
+
+    let vectors = reference_cases();
+    let case = |id: &str| -> &Case {
+        vectors
+            .iter()
+            .flat_map(|v| &v.cases)
+            .find(|c| c.id == id)
+            .unwrap()
+    };
+    let agree = case("handshake/check-agree");
+    let ir_hash = case("handshake/check-reject-ir-hash");
+    let format = case("handshake/check-reject-format");
+    let framing = case("handshake/check-reject-framing");
+    assert_eq!(
+        fact_shown("schema_agreement", "true", &[agree, ir_hash]),
+        Ok(())
+    );
+    assert!(fact_shown("schema_agreement", "true", &[agree]).is_err());
+    assert!(fact_shown("schema_agreement", "true", &[agree, format]).is_err());
+    assert_eq!(
+        fact_shown("encoding_agreement", "true", &[agree, format, framing]),
+        Ok(())
+    );
+    assert!(fact_shown("encoding_agreement", "true", &[agree, format]).is_err());
 }

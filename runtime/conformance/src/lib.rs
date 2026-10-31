@@ -204,6 +204,13 @@ pub enum Op {
     NameHash,
     /// `{ir_hash, wire_format, framing, capabilities}`, names unhashed.
     Handshake,
+    /// `{ir_hash, wire_format, framing, capabilities}`, one end's own
+    /// declaration (`comline@1`'s), and `bytes`, the frame its peer sent.
+    /// Decoding checks the peer's frame against the input: it's accepted,
+    /// and gives the input back, when the schema fingerprint, format and
+    /// framing agree (capability bits may differ), and refused otherwise.
+    /// Decode only. A handshake profile's facts are about this.
+    HandshakeCheck,
     /// A [`Reply`].
     Envelope,
     /// `{framing, call_id, method, request_id, format, params}`. Decoding
@@ -244,6 +251,14 @@ pub enum Expect {
     Exact,
     /// Decoding `bytes` fails.
     Reject,
+}
+
+impl Op {
+    /// Whether a case of this op only asks to decode its bytes, never to
+    /// encode its input.
+    pub fn decode_only(self) -> bool {
+        matches!(self, Op::Decode | Op::HandshakeCheck)
+    }
 }
 
 impl Expect {
@@ -425,16 +440,50 @@ pub struct Profile {
 pub enum ProfileKind {
     Format,
     Framing,
-    /// A handshake. No official handshake has a profile here yet, and a
-    /// handshake profile states no facts; core declares the kind
-    /// (`config.idp` `encodings`), so a package's handshake profile loads.
+    /// A handshake: what it establishes between the two ends. A fact it
+    /// leaves out, or states `false`, isn't established, and the schema has
+    /// to give it up (`@unverified`).
     Handshake,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Fact {
+    /// The fact's value. A handshake's facts are JSON booleans, read as
+    /// `"true"` / `"false"`; every other fact is a string.
+    #[serde(with = "fact_value")]
     pub value: String,
+    /// The cases that prove it. A handshake fact stated `false` claims
+    /// nothing, so it names none.
+    #[serde(default)]
     pub proven_by: Vec<String>,
+}
+
+/// A fact's value: a string, or a JSON boolean (a handshake's facts), held
+/// as `"true"` / `"false"` and written back as a boolean.
+mod fact_value {
+    use serde::{Deserialize, Deserializer, Serializer};
+
+    #[derive(Deserialize)]
+    #[serde(untagged)]
+    enum Written {
+        Bool(bool),
+        Str(String),
+    }
+
+    pub fn deserialize<'de, D: Deserializer<'de>>(d: D) -> Result<String, D::Error> {
+        Ok(match Written::deserialize(d)? {
+            Written::Bool(b) => b.to_string(),
+            Written::Str(s) => s,
+        })
+    }
+
+    pub fn serialize<S: Serializer>(value: &str, s: S) -> Result<S::Ok, S::Error> {
+        match value {
+            "true" => s.serialize_bool(true),
+            "false" => s.serialize_bool(false),
+            other => s.serialize_str(other),
+        }
+    }
 }
 
 impl ProfileKind {
@@ -454,8 +503,17 @@ impl ProfileKind {
                 ("calls", &["by_index", "by_name", "by_id"]),
                 ("errors", &["by_ordinal", "by_name"]),
             ],
-            ProfileKind::Handshake => &[],
+            ProfileKind::Handshake => &[
+                ("schema_agreement", &["true", "false"]),
+                ("encoding_agreement", &["true", "false"]),
+            ],
         }
+    }
+
+    /// Whether a profile of this kind must state every fact. A handshake's
+    /// may leave one out, which reads as `false`: not established.
+    pub fn states_every_fact(self) -> bool {
+        !matches!(self, ProfileKind::Handshake)
     }
 }
 
@@ -463,6 +521,9 @@ impl ProfileKind {
 /// `fact`, beyond passing: a rejection where the fact says rejected, the
 /// decoded value where it says by name or by position.
 pub fn fact_shown(fact: &str, value: &str, cases: &[&Case]) -> Result<(), String> {
+    if matches!(fact, "schema_agreement" | "encoding_agreement") {
+        return handshake_fact_shown(fact, value, cases);
+    }
     let decoded = |case: &Case| -> Option<Value> {
         serde_json::from_value::<DecodeIn>(case.input.clone())
             .ok()?
@@ -497,6 +558,49 @@ pub fn fact_shown(fact: &str, value: &str, cases: &[&Case]) -> Result<(), String
         _ => return Err(format!("no check for `{fact}: {value}`")),
     };
     if shown {
+        Ok(())
+    } else {
+        Err(format!("its cases don't show `{fact}: {value}`"))
+    }
+}
+
+/// A handshake fact: `false` claims nothing. `true` is shown by
+/// `handshake_check` cases: one where the peer agrees, accepted, and, for
+/// each thing the fact covers, one where the peer's frame differs from the
+/// input in only that (the schema fingerprint; the format; the framing),
+/// refused.
+fn handshake_fact_shown(fact: &str, value: &str, cases: &[&Case]) -> Result<(), String> {
+    if value == "false" {
+        return Ok(());
+    }
+    // (ir_hash, format, framing) differ, of the peer's frame from the input.
+    let differs = |case: &Case| -> Option<(bool, bool, bool)> {
+        if case.op != Op::HandshakeCheck {
+            return None;
+        }
+        let i: HandshakeIn = serde_json::from_value(case.input.clone()).ok()?;
+        let ours = HandshakeFrame::new(i.ir_hash, &i.wire_format, &i.framing, i.capabilities);
+        let peer = HandshakeFrame::decode(&case.bytes.0)?;
+        Some((
+            ours.ir_hash != peer.ir_hash,
+            ours.wire_format != peer.wire_format,
+            ours.framing != peer.framing,
+        ))
+    };
+    let shows = |want: (bool, bool, bool), expect: Expect| {
+        cases
+            .iter()
+            .any(|c| c.expect == expect && differs(c) == Some(want))
+    };
+    let agrees = shows((false, false, false), Expect::Exact);
+    let refused = match fact {
+        "schema_agreement" => shows((true, false, false), Expect::Reject),
+        _ => {
+            shows((false, true, false), Expect::Reject)
+                && shows((false, false, true), Expect::Reject)
+        }
+    };
+    if agrees && refused {
         Ok(())
     } else {
         Err(format!("its cases don't show `{fact}: {value}`"))
@@ -833,6 +937,11 @@ fn encode(op: Op, input: &serde_json::Value) -> Result<Vec<u8>, Outcome> {
                 .ok_or_else(|| Outcome::NotImplemented(format!("format `{}`", i.format)));
         }
         Op::Decode => return Err(Outcome::Fail("`decode` cases are decode only".into())),
+        Op::HandshakeCheck => {
+            return Err(Outcome::Fail(
+                "`handshake_check` cases are decode only".into(),
+            ))
+        }
         Op::StreamPrefix => {
             let i: StreamPrefixIn = parse(input)?;
             let len = usize::try_from(i.len)
@@ -939,6 +1048,14 @@ fn decode(
                 "framing": named(h.framing, i.as_ref().map(|i| &i.framing)),
                 "capabilities": h.capabilities,
             }))
+        }
+        Op::HandshakeCheck => {
+            let i: HandshakeIn = parse(input)?;
+            let ours = HandshakeFrame::new(i.ir_hash, &i.wire_format, &i.framing, i.capabilities);
+            match ours.check_bytes(bytes) {
+                Ok(_) => json(input.clone()),
+                Err(_) => Ok(None),
+            }
         }
         Op::Envelope => match Envelope::decode(bytes) {
             Some(e) => json(to_json(&reply_of(e))),
@@ -1145,7 +1262,7 @@ fn run_inner(case: &Case) -> Result<(), Outcome> {
         };
     }
 
-    if case.op != Op::Decode {
+    if !case.op.decode_only() {
         let same = |encoded: &[u8]| {
             encoded == bytes || (case.compare == Compare::Json && json_equal(encoded, bytes))
         };
@@ -1452,6 +1569,7 @@ pub fn reference_cases() -> Vec<Vectors> {
                 .extend(decode_cases("format-msgpack", FORMAT_MSGPACK)),
             "format-packed" => v.cases.extend(decode_cases("format-packed", FORMAT_PACKED)),
             "framing-jsonrpc" => v.cases.extend(found_jsonrpc_cases()),
+            "handshake" => v.cases.extend(handshake_check_cases()),
             _ => {}
         }
     }
@@ -1520,6 +1638,58 @@ fn handshake(
         capabilities,
     };
     (id.into(), Op::Handshake, to_json(&input))
+}
+
+/// One end's `comline@1` declaration against the frame its peer sent:
+/// agreeing (capability bits differ, which is allowed), then a peer that
+/// differs in the schema fingerprint, the format, or the framing alone. The
+/// cases `comline@1`'s profile proves its facts by.
+fn handshake_check_cases() -> Vec<Case> {
+    let ours = HandshakeIn {
+        ir_hash: 1,
+        wire_format: FORMAT_JSON.into(),
+        framing: FRAMING_DATAGRAM.into(),
+        capabilities: 0,
+    };
+    let peer = |ir_hash: u64, format: &str, framing: &str, capabilities: u32| {
+        let mut bytes = Vec::new();
+        HandshakeFrame::new(ir_hash, format, framing, capabilities).encode(&mut bytes);
+        bytes
+    };
+    let input = to_json(&ours);
+    let check = |id: &str, bytes: Vec<u8>| {
+        let case = Case {
+            id: format!("handshake/{id}"),
+            op: Op::HandshakeCheck,
+            input: input.clone(),
+            bytes: Hex(bytes),
+            expect: Expect::Exact,
+            compare: Compare::Bytes,
+        };
+        match decode(Op::HandshakeCheck, &case.input, &case.bytes.0) {
+            Ok(Some(_)) => case,
+            Ok(None) => Case {
+                expect: Expect::Reject,
+                ..case
+            },
+            Err(outcome) => panic!("reference case `{id}` doesn't check: {outcome:?}"),
+        }
+    };
+    vec![
+        check("check-agree", peer(1, FORMAT_JSON, FRAMING_DATAGRAM, 0b101)),
+        check(
+            "check-reject-ir-hash",
+            peer(2, FORMAT_JSON, FRAMING_DATAGRAM, 0),
+        ),
+        check(
+            "check-reject-format",
+            peer(1, FORMAT_MSGPACK, FRAMING_DATAGRAM, 0),
+        ),
+        check(
+            "check-reject-framing",
+            peer(1, FORMAT_JSON, FRAMING_DATAGRAM2, 0),
+        ),
+    ]
 }
 
 fn request(
