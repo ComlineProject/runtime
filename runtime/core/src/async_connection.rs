@@ -11,6 +11,13 @@
 //! - **Transport:** anything that's a [`Stream`] of frames and a [`Sink`]
 //!   for them ([`AsyncTransport`]). [`async_duplex`] is in-memory; the
 //!   `tokio` feature adds TCP ([`tokio::Tcp`]).
+//! - **Handshake:** [`connect`](AsyncConnection::connect) /
+//!   [`accept`](AsyncConnection::accept) run `comline@1`;
+//!   [`connect_with`](AsyncConnection::connect_with) /
+//!   [`accept_with`](AsyncConnection::accept_with) run any
+//!   [`AsyncHandshake`], a custom one included, as the blocking
+//!   [`Connection`](crate::connection::Connection)'s do a
+//!   [`Handshake`](crate::handshake::Handshake).
 //! - **Providers** implement [`AsyncDispatch`]; their handlers get an
 //!   [`AsyncPeer`] to call back the peer that called them.
 //! - **Order:** the peer's requests are handled one at a time, in order,
@@ -40,15 +47,16 @@ use alloc::collections::BTreeMap;
 use futures_channel::{mpsc, oneshot};
 use futures_util::future::{select, Either};
 use futures_util::stream::FuturesUnordered;
-use futures_util::{Sink, SinkExt, Stream, StreamExt};
+use futures_util::{Sink, Stream, StreamExt};
 use serde::Serialize;
 
 use crate::connection::{call_index, Event, Extensions, State};
 use crate::contract::stream::DEFAULT_MAX_FRAME;
 use crate::contract::{
-    Call, ConnectionFraming, ConnectionId, Datagram2Framing, Envelope, HandshakeFrame, Kind,
-    Outcome, ProtocolNumber, RuntimeError, WireFormat,
+    Call, ConnectionFraming, ConnectionId, Datagram2Framing, Envelope, Kind, Outcome,
+    ProtocolNumber, RuntimeError, WireFormat,
 };
+use crate::handshake::{AsyncHandshake, ComlineHandshake, Facts};
 
 // ── transports ─────────────────────────────────────────────────────────────
 
@@ -400,13 +408,13 @@ where
     /// `transport`, with `datagram@2`. Refuses (`RuntimeError::Handshake`) on
     /// a schema, format or framing mismatch.
     pub async fn connect(transport: T, format: W, ir_hash: u64) -> Result<Self, RuntimeError> {
-        Self::handshake(transport, format, Datagram2Framing, ir_hash).await
+        Self::connect_with(transport, format, Datagram2Framing, &mut ComlineHandshake, ir_hash).await
     }
 
     /// Answer: run the `comline@1` handshake's provider side. It's
     /// symmetric, so the same exchange as [`connect`](Self::connect).
     pub async fn accept(transport: T, format: W, ir_hash: u64) -> Result<Self, RuntimeError> {
-        Self::handshake(transport, format, Datagram2Framing, ir_hash).await
+        Self::accept_with(transport, format, Datagram2Framing, &mut ComlineHandshake, ir_hash).await
     }
 
     /// A connection over `transport` **without a handshake**, with
@@ -450,14 +458,36 @@ where
     }
 
     /// The `comline@1` exchange over `transport` with another framing:
-    /// each end sends its handshake frame and checks the peer's.
-    pub async fn handshake(mut transport: T, format: W, framing: F, ir_hash: u64) -> Result<Self, RuntimeError> {
-        let ours = HandshakeFrame::new(ir_hash, format.name(), framing.name(), 0);
-        let mut frame = Vec::new();
-        ours.encode(&mut frame);
-        transport.send(frame).await?;
-        let theirs = transport.next().await.ok_or(RuntimeError::Transport)??;
-        ours.check(&HandshakeFrame::decode(&theirs).ok_or(RuntimeError::Handshake)?)?;
+    /// each end sends its handshake frame and checks the peer's. The
+    /// exchange is symmetric, so this is [`connect_with`](Self::connect_with)
+    /// (or [`accept_with`](Self::accept_with)) with [`ComlineHandshake`].
+    pub async fn handshake(transport: T, format: W, framing: F, ir_hash: u64) -> Result<Self, RuntimeError> {
+        Self::connect_with(transport, format, framing, &mut ComlineHandshake, ir_hash).await
+    }
+
+    /// Dial with `handshake` ([`AsyncHandshake::initiate`]).
+    pub async fn connect_with<H: AsyncHandshake>(
+        mut transport: T,
+        format: W,
+        framing: F,
+        handshake: &mut H,
+        ir_hash: u64,
+    ) -> Result<Self, RuntimeError> {
+        let local = Facts::new(ir_hash, format.name(), framing.name());
+        handshake.initiate(&mut transport, &local).await?;
+        Ok(Self::with_framing_unverified(transport, format, framing))
+    }
+
+    /// Answer with `handshake` ([`AsyncHandshake::respond`]).
+    pub async fn accept_with<H: AsyncHandshake>(
+        mut transport: T,
+        format: W,
+        framing: F,
+        handshake: &mut H,
+        ir_hash: u64,
+    ) -> Result<Self, RuntimeError> {
+        let local = Facts::new(ir_hash, format.name(), framing.name());
+        handshake.respond(&mut transport, &local).await?;
         Ok(Self::with_framing_unverified(transport, format, framing))
     }
 
