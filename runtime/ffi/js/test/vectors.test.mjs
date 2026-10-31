@@ -283,6 +283,32 @@ function sizedEncode(exact, loose, encode) {
   return encoded;
 }
 
+/** An `*Into` encode of a `size`-byte frame: one byte short is
+ * `BUFFER_TOO_SMALL` with `size` and leaves the array as it was (the module
+ * refuses before it commits an id); then into an array with room to spare,
+ * which must be the frame and then the spare bytes untouched. `.check(want,
+ * what)` compares the frame. */
+function intoEncode(size, encode) {
+  if (size > 0) {
+    const short = new Uint8Array(size - 1).fill(0xa5);
+    const refused = encode(short);
+    check(
+      refused.status === Status.BUFFER_TOO_SMALL && refused.written === size,
+      () => `into ${size - 1} bytes gave ${JSON.stringify(refused, big)}`,
+    );
+    check(short.every((b) => b === 0xa5), "a refused encode wrote into its array");
+  }
+  const dest = new Uint8Array(size + 7).fill(0x5a);
+  const result = encode(dest);
+  check(result.status === Status.OK && result.written === size, () => {
+    return `into ${size + 7} bytes gave ${JSON.stringify(result, big)}`;
+  });
+  check(!("bytes" in result), "an encode into an array also gave bytes");
+  check(dest.subarray(size).every((b) => b === 0x5a), "an encode wrote past its frame");
+  result.check = (want, what) => sameBytes(dest.subarray(0, size), want, what);
+  return result;
+}
+
 /** A `datagram@2` connection waiting on request 0, freed after `body`. */
 function waitingOnZero(body) {
   return withConn(plain("datagram@2"), (conn) => {
@@ -316,6 +342,9 @@ function caseEnvelope(how, f) {
       (cap) => conn.encodeReply(0, 0n, envelope, errorId, body, cap),
     );
     sameBytes(encoded.bytes, want, "encoded");
+    intoEncode(want.length, (dest) =>
+      conn.encodeReplyInto(dest, 0, 0n, envelope, errorId, body),
+    ).check(want, "encoded into");
   });
   const fed = waitingOnZero((conn) => conn.feed(frame));
   checkReply(frame, fed, envelope, errorId, body);
@@ -382,6 +411,16 @@ function caseRequest(how, f) {
     check(waiting.status === Status.OK && waiting.waiting === !oneWay, "waiting");
   });
 
+  // The same encode into a caller's array: the same bytes, the same id.
+  withConn(plain(framing), (conn) => {
+    spendIds(conn, drive);
+    const into = intoEncode(want.length, (dest) =>
+      conn.encodeRequestInto(dest, protocol, callId, method, !oneWay, params),
+    );
+    into.check(want, "encoded into");
+    if (!oneWay) check(into.requestId === drive, `encoded into as request ${into.requestId}`);
+  });
+
   // Decode, on a fresh connection.
   const fed = withConn(plain(framing), (conn) => conn.feed(input));
   const ev = fed.event;
@@ -439,6 +478,9 @@ function caseResponse(how, f) {
       (cap) => conn.encodeReply(protocol, requestId, envelope, errorId, body, cap),
     );
     sameBytes(encoded.bytes, want, "encoded");
+    intoEncode(want.length, (dest) =>
+      conn.encodeReplyInto(dest, protocol, requestId, envelope, errorId, body),
+    ).check(want, "encoded into");
   });
 
   // Decode, on a connection waiting on the vector's request id.

@@ -104,7 +104,7 @@ function counted() {
           }
         : value;
   }
-  return { count, comline: new Comline(exports) };
+  return { count, comline: new Comline(exports), memory: raw.memory };
 }
 
 test("a call that fits the regions is one crossing", () => {
@@ -167,6 +167,158 @@ test("memory growing between calls doesn't disturb the glue", () => {
   const fed = conn.feed(second.bytes);
   assert.equal(fed.event.protocol, 3);
   assert.equal(fed.event.callId, 4);
+  big.free();
+  conn.free();
+});
+
+test("a name from the glue's cache encodes as its bytes do", () => {
+  const comline = new Comline(new WebAssembly.Instance(module, {}).exports);
+  const { status, connection } = comline.connectionNew({
+    framing: "jsonrpc@1",
+    handshake: Handshake.NONE,
+  });
+  assert.equal(status, Status.OK);
+  try {
+    // Past the cache's bound and back, twice over, so it fills and empties.
+    for (let round = 0; round < 2; round++) {
+      for (let i = 0; i < 600; i++) {
+        const name = `method.${i % 300}.é`;
+        const viaString = connection.encodeRequest(0, 0, name, false, "1", 256);
+        const viaBytes = connection.encodeRequest(0, 0, utf8.encode(name), false, "1", 256);
+        assert.equal(viaString.status, Status.OK);
+        assert.deepEqual(viaString.bytes, viaBytes.bytes);
+        assert.ok(new TextDecoder().decode(viaString.bytes).includes(`"${name}"`));
+      }
+    }
+  } finally {
+    connection.free();
+  }
+});
+
+test("an encode into a caller's array is one crossing, and copies a frame the default encode would", () => {
+  const { count, comline } = counted();
+  const open = () =>
+    comline.connectionNew({ framing: "datagram@2", handshake: Handshake.NONE, maxWaiting: 8 }).connection;
+  const a = open();
+  const b = open();
+  const body = Uint8Array.from({ length: 4096 }, (_, i) => (i * 31 + 7) & 0xff);
+  const dest = new Uint8Array(4096 + 64);
+  for (let i = 0; i < 5; i++) {
+    const want = a.encodeRequest(5, 0x0203, "", 0, body, 4096 + 64);
+    const before = count.calls;
+    const into = b.encodeRequestInto(dest, 5, 0x0203, "", 0, body);
+    assert.equal(count.calls - before, 1, "crossings");
+    assert.equal(into.status, Status.OK);
+    assert.equal(into.written, want.written);
+    assert.deepEqual(dest.subarray(0, into.written), want.bytes);
+    // Fed straight from the caller's array.
+    const fed = a.feed(dest.subarray(0, into.written));
+    assert.equal(fed.status, Status.OK);
+    assert.equal(fed.event.body.len, 4096);
+  }
+  a.free();
+  b.free();
+});
+
+test("an encode into a caller's array gives the exact size when it's too small, and takes no id", () => {
+  const comline = new Comline(new WebAssembly.Instance(module, {}).exports);
+  const { connection: conn } = comline.connectionNew({
+    framing: "jsonrpc@1",
+    handshake: Handshake.NONE,
+    maxWaiting: 8,
+  });
+  const want = conn.encodeRequest(0, 0, "app.Chat/send", true, "[1,2,3]", 256);
+  for (const len of [0, 1, want.written - 1]) {
+    const dest = new Uint8Array(len).fill(7);
+    assert.deepEqual(conn.encodeRequestInto(dest, 0, 0, "app.Chat/send", true, "[1,2,3]"), {
+      status: Status.BUFFER_TOO_SMALL,
+      written: want.written,
+    });
+    assert.ok(dest.every((b) => b === 7));
+  }
+  const dest = new Uint8Array(want.written);
+  const into = conn.encodeRequestInto(dest, 0, 0, "app.Chat/send", true, "[1,2,3]");
+  assert.equal(into.status, Status.OK);
+  assert.equal(into.requestId, want.requestId + 1n, "the refusals took no id");
+  const reply = conn.encodeReply(0, 1n, Envelope.OK, 0, "[1]", 256);
+  const short = new Uint8Array(reply.written - 1);
+  assert.deepEqual(conn.encodeReplyInto(short, 0, 1n, Envelope.OK, 0, "[1]"), {
+    status: Status.BUFFER_TOO_SMALL,
+    written: reply.written,
+  });
+  conn.free();
+});
+
+test("an encode into a view of wasm memory is refused without entering the module", () => {
+  const { count, comline, memory } = counted();
+  const { connection: conn } = comline.connectionNew({
+    framing: "datagram@2",
+    handshake: Handshake.NONE,
+    maxWaiting: 8,
+  });
+  conn.encodeRequest(0, 1, "", true, "warm", 64);
+  const views = () => [
+    new Uint8Array(memory.buffer),
+    new Uint8Array(memory.buffer, 0, 256),
+    new Uint8Array(memory.buffer, memory.buffer.byteLength - 256),
+  ];
+  const refuse = (dest, what) => {
+    const before = count.calls;
+    const snapshot = dest.slice();
+    assert.deepEqual(conn.encodeRequestInto(dest, 0, 1, "", true, "x"), {
+      status: Status.ERR_INVALID_ARGUMENT,
+      written: 0,
+    }, what);
+    assert.deepEqual(conn.encodeReplyInto(dest, 0, 1n, Envelope.OK, 0, "x"), {
+      status: Status.ERR_INVALID_ARGUMENT,
+      written: 0,
+    }, what);
+    assert.equal(count.calls, before, `${what}: entered the module`);
+    assert.deepEqual(dest, snapshot, `${what}: written`);
+  };
+  for (const view of views()) refuse(view, "a view of memory");
+  // Memory grows (through another connection's allocation); a view of the
+  // new buffer, taken before the glue has seen it grow, is refused too.
+  const { connection: big } = comline.connectionNew({
+    framing: "datagram@2",
+    handshake: Handshake.NONE,
+    maxWaiting: 4_000_000,
+  });
+  for (const view of views()) refuse(view, "a view of grown memory");
+  // A refusal took no id: the next request is the one after `warm`.
+  const next = conn.encodeRequest(0, 1, "", true, "x", 64);
+  assert.equal(next.requestId, 1n);
+  assert.throws(() => conn.encodeRequestInto(new ArrayBuffer(64), 0, 1, "", true, "x"), TypeError);
+  assert.throws(() => conn.encodeRequestInto(new DataView(new ArrayBuffer(64)), 0, 1, "", true, "x"), TypeError);
+  big.free();
+  conn.free();
+});
+
+test("a caller's array shares nothing with wasm memory after the encode", () => {
+  const comline = new Comline(new WebAssembly.Instance(module, {}).exports);
+  const open = () =>
+    comline.connectionNew({ framing: "datagram@2", handshake: Handshake.NONE, maxWaiting: 8 }).connection;
+  const conn = open();
+  const dest = new Uint8Array(256);
+  const first = conn.encodeRequestInto(dest, 3, 4, "", false, "abc");
+  assert.equal(first.status, Status.OK);
+  const frame = dest.slice(0, first.written);
+  // The regions are reused, and memory grows: the array keeps its frame.
+  conn.encodeRequest(9, 9, "", false, "zzzzzzzz", 256);
+  conn.encodeReply(9, 1n, Envelope.OK, 0, new Uint8Array(100_000).fill(0xee), 100_100);
+  const big = open();
+  comline.connectionNew({ framing: "datagram@2", handshake: Handshake.NONE, maxWaiting: 4_000_000 })
+    .connection.free();
+  assert.deepEqual(dest.subarray(0, first.written), frame);
+  assert.equal(dest.byteLength, 256, "not detached by the grow");
+  // Writing into the array changes nothing the module sees: the next encode
+  // into the same array is the same frame but the request id (bytes 4-11).
+  dest.fill(0xff);
+  const second = conn.encodeRequestInto(dest, 3, 4, "", false, "abc");
+  assert.equal(second.status, Status.OK);
+  assert.equal(second.written, first.written);
+  assert.deepEqual(dest.subarray(0, 4), frame.subarray(0, 4));
+  assert.deepEqual(dest.subarray(12, second.written), frame.subarray(12));
   big.free();
   conn.free();
 });
