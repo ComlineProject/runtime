@@ -14,7 +14,8 @@ use std::fs;
 use std::path::{Path, PathBuf};
 
 use comline_runtime::contract::{
-    FORMAT_JSON, FORMAT_MSGPACK, FORMAT_PACKED, FRAMING_DATAGRAM, FRAMING_DATAGRAM2, FRAMING_JSONRPC,
+    FORMAT_JSON, FORMAT_MSGPACK, FORMAT_PACKED, FRAMING_DATAGRAM, FRAMING_DATAGRAM2,
+    FRAMING_JSONRPC,
 };
 use comline_runtime_conformance::{
     fact_shown, reference_cases, render, run, Case, Features, Outcome, Profile, ProvenClaim,
@@ -269,4 +270,28 @@ fn profiles_are_proven() {
     }
 
     assert!(problems.is_empty(), "{}", problems.join("\n"));
+}
+
+/// The library runner, with `comline-runtime` in process, passes every case
+/// of the corpus on disk and proves every official profile.
+#[test]
+fn the_runner_passes_the_reference() {
+    use comline_runtime_conformance::runner::{load_corpus, run_all, InProcess};
+
+    let corpus = load_corpus(&root()).unwrap();
+    let cases: Vec<&Case> = corpus.cases().collect();
+    assert!(!cases.is_empty());
+    let outcomes = run_all(&cases, &mut InProcess).unwrap();
+    let failed: Vec<_> = outcomes
+        .iter()
+        .filter(|(_, o)| **o != Outcome::Pass)
+        .collect();
+    assert!(failed.is_empty(), "{failed:#?}");
+    assert_eq!(corpus.profiles.len(), 6);
+    for profile in corpus.profiles.values() {
+        assert!(!corpus.cases_for(profile).is_empty(), "{}", profile.name);
+        for proof in corpus.prove(profile, &outcomes) {
+            assert_eq!(proof.result, Ok(()), "{}: {}", profile.name, proof.fact);
+        }
+    }
 }
