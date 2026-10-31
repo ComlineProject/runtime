@@ -6,6 +6,15 @@
 //! generated code hands it to [`Client::connect_with`](crate::client::Client::connect_with)
 //! / [`Server::serve_with`](crate::serve::Server::serve_with).
 //!
+//! An [`AsyncConnection`](crate::async_connection::AsyncConnection) (the
+//! `async` feature) runs an [`AsyncHandshake`] instead, over its
+//! [`AsyncTransport`], through
+//! [`AsyncConnection::connect_with`](crate::async_connection::AsyncConnection::connect_with)
+//! / [`accept_with`](crate::async_connection::AsyncConnection::accept_with).
+//! [`ComlineHandshake`] and [`NoHandshake`] implement both traits and send
+//! the same bytes either way. A custom handshake implements whichever its
+//! connections need, or both.
+//!
 //! A handshake that doesn't establish schema and encoding agreement gives those
 //! guarantees up, which the schema has to say (`@unverified`).
 
@@ -13,6 +22,12 @@ use alloc::vec::Vec;
 
 use crate::contract::{HandshakeFrame, RuntimeError, HANDSHAKE_COMLINE, HANDSHAKE_NONE};
 use crate::transport::Transport;
+#[cfg(feature = "async")]
+use crate::async_connection::AsyncTransport;
+#[cfg(feature = "async")]
+use core::future::Future;
+#[cfg(feature = "async")]
+use futures_util::{SinkExt, StreamExt};
 
 /// What one end knows when a connection opens, handed to its [`Handshake`]:
 /// the schema fingerprint the generated code was built from, the names of the
@@ -97,15 +112,34 @@ pub trait Handshake {
 pub struct ComlineHandshake;
 
 impl ComlineHandshake {
-    fn exchange<T: Transport>(transport: &mut T, local: &Facts<'_>) -> Result<(), RuntimeError> {
+    /// Our frame, and its bytes to send. Both the blocking and the async
+    /// exchange start here, so they send the same bytes.
+    fn ours(local: &Facts<'_>) -> (HandshakeFrame, Vec<u8>) {
         let ours = HandshakeFrame::from_facts(local);
         let mut buf = Vec::new();
         ours.encode(&mut buf);
+        (ours, buf)
+    }
+
+    fn exchange<T: Transport>(transport: &mut T, local: &Facts<'_>) -> Result<(), RuntimeError> {
+        let (ours, mut buf) = Self::ours(local);
         transport.send(&buf)?;
 
         buf.clear();
         transport.recv(&mut buf)?;
         ours.check_bytes(&buf).map(|_peer| ())
+    }
+
+    #[cfg(feature = "async")]
+    async fn exchange_async<T: AsyncTransport>(
+        transport: &mut T,
+        local: &Facts<'_>,
+    ) -> Result<(), RuntimeError> {
+        let (ours, buf) = Self::ours(local);
+        transport.send(buf).await?;
+
+        let theirs = transport.next().await.ok_or(RuntimeError::Transport)??;
+        ours.check_bytes(&theirs).map(|_peer| ())
     }
 }
 
@@ -146,6 +180,91 @@ impl Handshake for NoHandshake {
     }
 
     fn respond<T: Transport>(&mut self, _: &mut T, _: &Facts<'_>) -> Result<(), RuntimeError> {
+        Ok(())
+    }
+}
+
+// ── async ──────────────────────────────────────────────────────────────────
+
+/// What runs on an [`AsyncConnection`](crate::async_connection::AsyncConnection)
+/// before the first call: the async counterpart of [`Handshake`], over an
+/// [`AsyncTransport`]. Needs nothing from an executor but polling.
+///
+/// The consumer side [`initiate`](Self::initiate)s, the provider side
+/// [`respond`](Self::respond)s; either refuses the connection with `Err` (by
+/// convention [`RuntimeError::Handshake`]). Implement it with `async fn`s:
+///
+/// ```ignore
+/// impl AsyncHandshake for Hello {
+///     fn name(&self) -> &str { "com.acme.hello@1" }
+///
+///     async fn initiate<T: AsyncTransport>(&mut self, transport: &mut T, local: &Facts<'_>)
+///         -> Result<(), RuntimeError>
+///     {
+///         transport.send(b"HELLO".to_vec()).await?;
+///         // ...
+///         Ok(())
+///     }
+///     // respond likewise
+/// }
+/// ```
+///
+/// The futures are `Send`, so a connection opened with one can be dialled
+/// from a spawned task.
+#[cfg(feature = "async")]
+pub trait AsyncHandshake {
+    /// The handshake's versioned name, as [`Handshake::name`].
+    fn name(&self) -> &str;
+
+    /// Run the consumer's side over `transport`.
+    fn initiate<T: AsyncTransport>(
+        &mut self,
+        transport: &mut T,
+        local: &Facts<'_>,
+    ) -> impl Future<Output = Result<(), RuntimeError>> + Send;
+
+    /// Run the provider's side over `transport`.
+    fn respond<T: AsyncTransport>(
+        &mut self,
+        transport: &mut T,
+        local: &Facts<'_>,
+    ) -> impl Future<Output = Result<(), RuntimeError>> + Send;
+}
+
+#[cfg(feature = "async")]
+impl AsyncHandshake for ComlineHandshake {
+    fn name(&self) -> &str {
+        HANDSHAKE_COMLINE
+    }
+
+    async fn initiate<T: AsyncTransport>(
+        &mut self,
+        transport: &mut T,
+        local: &Facts<'_>,
+    ) -> Result<(), RuntimeError> {
+        Self::exchange_async(transport, local).await
+    }
+
+    async fn respond<T: AsyncTransport>(
+        &mut self,
+        transport: &mut T,
+        local: &Facts<'_>,
+    ) -> Result<(), RuntimeError> {
+        Self::exchange_async(transport, local).await
+    }
+}
+
+#[cfg(feature = "async")]
+impl AsyncHandshake for NoHandshake {
+    fn name(&self) -> &str {
+        HANDSHAKE_NONE
+    }
+
+    async fn initiate<T: AsyncTransport>(&mut self, _: &mut T, _: &Facts<'_>) -> Result<(), RuntimeError> {
+        Ok(())
+    }
+
+    async fn respond<T: AsyncTransport>(&mut self, _: &mut T, _: &Facts<'_>) -> Result<(), RuntimeError> {
         Ok(())
     }
 }
