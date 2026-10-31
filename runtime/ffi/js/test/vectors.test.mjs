@@ -11,12 +11,18 @@
 //
 //     node --test runtime/ffi/js/test/vectors.test.mjs
 //
+// The whole replay runs once per way of loading the module (`LOADERS`), so
+// each is proven on every case. Every encode is sized by `encodeBound`: with
+// everything the frame holds given, the bound must be the exact size the
+// ABI writes, so the encode never needs a retry; with only the lengths, it
+// must be no smaller.
+//
 // `COMLINE_VECTORS` is the export's directory and `COMLINE_WASM` the module;
-// they default to `ffi-vectors` and the release wasm32 build under
+// they default to `ffi-vectors` and the `wasm` profile's wasm32 build under
 // `CARGO_TARGET_DIR` (or the repository's `target`). Each file fails on any
 // mismatch, a malformed line, or a number of cases other than its header's.
 
-import { after, test } from "node:test";
+import { after, before, describe, test } from "node:test";
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
@@ -24,6 +30,9 @@ import { fileURLToPath } from "node:url";
 
 import {
   instantiate,
+  instantiateStreaming,
+  instantiateSync,
+  encodeBound,
   EventFlag,
   EventKind,
   Handshake,
@@ -35,7 +44,7 @@ const TARGET = process.env.CARGO_TARGET_DIR || join(ROOT, "target");
 const VECTORS = process.env.COMLINE_VECTORS || join(TARGET, "ffi-vectors");
 const WASM =
   process.env.COMLINE_WASM ||
-  join(TARGET, "wasm32-unknown-unknown", "release", "comline_runtime_ffi.wasm");
+  join(TARGET, "wasm32-unknown-unknown", "wasm", "comline_runtime_ffi.wasm");
 
 const FILES = [
   "name-hash",
@@ -51,10 +60,23 @@ const FULL = "full";
 const ID_PATCHED = "id-patched";
 const OTHER_KIND = "rejected as the other kind";
 const NOT_MAPPED = "not mapped";
-const counts = { [FULL]: 0, [ID_PATCHED]: 0, [OTHER_KIND]: 0, [NOT_MAPPED]: 0 };
 
-const comline = await instantiate(readFileSync(WASM));
-const utf8 = new TextEncoder();
+const bytes = readFileSync(WASM);
+const served = (type) => new Response(bytes, { headers: { "content-type": type } });
+
+/** Every way of loading the module, each run on every case. */
+const LOADERS = {
+  "instantiate (bytes)": () => instantiate(bytes),
+  "instantiate (module)": () => instantiate(new WebAssembly.Module(bytes)),
+  "instantiateSync (bytes)": async () => instantiateSync(bytes),
+  "instantiateSync (module)": async () => instantiateSync(new WebAssembly.Module(bytes)),
+  "instantiateStreaming": () => instantiateStreaming(served("application/wasm")),
+  "instantiateStreaming (from bytes)": () =>
+    instantiateStreaming(Promise.resolve(served("application/octet-stream"))),
+};
+
+/** The instance the cases below run on: each loader's in turn. */
+let comline;
 
 /** A failed check: the replay records it against the case and goes on. */
 class Mismatch extends Error {}
@@ -250,6 +272,17 @@ function caseHandshake(how, f) {
   return FULL;
 }
 
+/** Encode with `cap` set to `exact`, the bound with everything given,
+ * which must be exactly what's written; `loose`, the bound from lengths
+ * alone, must be no smaller. */
+function sizedEncode(exact, loose, encode) {
+  check(loose >= exact, `the loose bound ${loose} is under the exact ${exact}`);
+  const encoded = encode(exact);
+  check(encoded.status === Status.OK, `encode at the bound ${exact} gave ${encoded.status}`);
+  check(encoded.written === exact, `wrote ${encoded.written}, the bound is ${exact}`);
+  return encoded;
+}
+
 /** A `datagram@2` connection waiting on request 0, freed after `body`. */
 function waitingOnZero(body) {
   return withConn(plain("datagram@2"), (conn) => {
@@ -276,8 +309,12 @@ function caseEnvelope(how, f) {
   const frame = bytesField(f[3]);
   const want = bytesField(f[4]);
   withConn(plain("datagram@2"), (conn) => {
-    const encoded = conn.encodeReply(0, 0n, envelope, errorId, body, 256);
-    check(encoded.status === Status.OK, `encode gave ${encoded.status}`);
+    const reply = { framing: "datagram@2", kind: "reply", envelope, bodyLen: body.length };
+    const encoded = sizedEncode(
+      encodeBound({ ...reply, protocol: 0, requestId: 0n, errorId }),
+      encodeBound(reply),
+      (cap) => conn.encodeReply(0, 0n, envelope, errorId, body, cap),
+    );
     sameBytes(encoded.bytes, want, "encoded");
   });
   const fed = waitingOnZero((conn) => conn.feed(frame));
@@ -328,8 +365,14 @@ function caseRequest(how, f) {
   // else at 0, for which the export's bytes are.
   withConn(plain(framing), (conn) => {
     spendIds(conn, drive);
-    const encoded = conn.encodeRequest(protocol, callId, method, !oneWay, params, 4096);
-    check(encoded.status === Status.OK, `encode gave ${encoded.status}`);
+    const request = { framing, kind: "request", bodyLen: params.length };
+    const encoded = sizedEncode(
+      encodeBound({
+        ...request, protocol, name: method, expectsReply: !oneWay, requestId: drive,
+      }),
+      encodeBound({ ...request, nameLen: method.length }),
+      (cap) => conn.encodeRequest(protocol, callId, method, !oneWay, params, cap),
+    );
     if (!oneWay) {
       check(encoded.requestId === drive, `encoded as request ${encoded.requestId}`);
     }
@@ -389,8 +432,12 @@ function caseResponse(how, f) {
 
   // Encode: a reply carries the peer's request id, so nothing to drive.
   withConn(plain(framing), (conn) => {
-    const encoded = conn.encodeReply(protocol, requestId, envelope, errorId, body, 4096);
-    check(encoded.status === Status.OK, `encode gave ${encoded.status}`);
+    const reply = { framing, kind: "reply", envelope, bodyLen: body.length };
+    const encoded = sizedEncode(
+      encodeBound({ ...reply, protocol, requestId, errorId }),
+      encodeBound(reply),
+      (cap) => conn.encodeReply(protocol, requestId, envelope, errorId, body, cap),
+    );
     sameBytes(encoded.bytes, want, "encoded");
   });
 
@@ -431,46 +478,60 @@ const OPS = {
 
 // ── the replay ─────────────────────────────────────────────────────────────
 
-for (const feature of FILES) {
-  test(feature, () => {
-    const path = join(VECTORS, `${feature}.txt`);
-    const text = readFileSync(path, "latin1");
-    assert.ok(text.endsWith("\n"), `${path}: unterminated`);
-    const [header, ...lines] = text.slice(0, -1).split("\n");
-    const head = header.split(" ");
-    assert.ok(
-      head.length === 4 &&
-        head[0] === "comline-ffi-vectors" &&
-        head[1] === "1" &&
-        head[2] === feature &&
-        /^[0-9]+$/.test(head[3]),
-      `${path}: not a version 1 export of ${feature}`,
-    );
-    const expected = Number(head[3]);
-    const failures = [];
-    let passed = 0;
-    for (const line of lines) {
-      const [op, id, how, ...fields] = line.split(" ");
-      try {
-        assert.ok(how !== undefined && OPS[op], `malformed line: ${line.slice(0, 60)}`);
-        counts[OPS[op](how, fields)]++;
-        passed++;
-      } catch (e) {
-        failures.push(`${id}: ${e.message}`);
-      }
+/** Replays one export file on `comline`; its counts go to `counts`. */
+function replay(feature, counts) {
+  const path = join(VECTORS, `${feature}.txt`);
+  const text = readFileSync(path, "latin1");
+  assert.ok(text.endsWith("\n"), `${path}: unterminated`);
+  const [header, ...lines] = text.slice(0, -1).split("\n");
+  const head = header.split(" ");
+  assert.ok(
+    head.length === 4 &&
+      head[0] === "comline-ffi-vectors" &&
+      head[1] === "1" &&
+      head[2] === feature &&
+      /^[0-9]+$/.test(head[3]),
+    `${path}: not a version 1 export of ${feature}`,
+  );
+  const expected = Number(head[3]);
+  const failures = [];
+  let passed = 0;
+  for (const line of lines) {
+    const [op, id, how, ...fields] = line.split(" ");
+    try {
+      assert.ok(how !== undefined && OPS[op], `malformed line: ${line.slice(0, 60)}`);
+      counts[OPS[op](how, fields)]++;
+      passed++;
+    } catch (e) {
+      failures.push(`${id}: ${e.message}`);
     }
-    if (lines.length !== expected) {
-      failures.push(`${path}: replayed ${lines.length} cases, the header says ${expected}`);
-    }
-    console.log(`${feature}: ${passed}/${expected} passed`);
-    assert.deepEqual(failures, []);
-  });
+  }
+  if (lines.length !== expected) {
+    failures.push(`${path}: replayed ${lines.length} cases, the header says ${expected}`);
+  }
+  console.log(`${feature}: ${passed}/${expected} passed`);
+  assert.deepEqual(failures, []);
 }
 
-after(() => {
-  const total = Object.values(counts).reduce((a, b) => a + b, 0);
-  console.log(
-    `${total} cases: ${counts[FULL]} full, ${counts[ID_PATCHED]} id-patched, ` +
-      `${counts[OTHER_KIND]} rejected as the other kind, ${counts[NOT_MAPPED]} not mapped`,
-  );
-});
+for (const [loader, load] of Object.entries(LOADERS)) {
+  describe(loader, () => {
+    const counts = { [FULL]: 0, [ID_PATCHED]: 0, [OTHER_KIND]: 0, [NOT_MAPPED]: 0 };
+    let instance;
+    before(async () => {
+      instance = await load();
+    });
+    for (const feature of FILES) {
+      test(feature, () => {
+        comline = instance;
+        replay(feature, counts);
+      });
+    }
+    after(() => {
+      const total = Object.values(counts).reduce((a, b) => a + b, 0);
+      console.log(
+        `${loader}: ${total} cases: ${counts[FULL]} full, ${counts[ID_PATCHED]} id-patched, ` +
+          `${counts[OTHER_KIND]} rejected as the other kind, ${counts[NOT_MAPPED]} not mapped`,
+      );
+    });
+  });
+}

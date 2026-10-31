@@ -24,6 +24,23 @@ exclude = ["runtime/fuzz"]
 [profile.release]
 opt-level = 2
 
+# The wasm32 build of `comline-runtime-ffi`, for the JS glue:
+#   cargo build -p comline-runtime-ffi --profile wasm --target wasm32-unknown-unknown
+# For wasm32 only: native builds keep `release`, and the instruction-count
+# benches `bench`. One codegen unit and fat LTO let the core inline into
+# each export, and `release`'s `opt-level` stays: 3, "s" and "z" measured no
+# faster (and "s"/"z" slower on `jsonrpc@1`). `panic = "abort"` is what
+# wasm32-unknown-unknown does anyway (a panic is a trap, which poisons the
+# whole instance; see runtime/ffi/src/lib.rs), so it changes nothing there.
+# Never use this profile natively, where the ABI's guards need a panic to
+# unwind. The measurements are in runtime/ffi/README.md; the JS instruction
+# counts will settle `opt-level`.
+[profile.wasm]
+inherits = "release"
+lto = "fat"
+codegen-units = 1
+panic = "abort"
+
 # The instruction-count benches: one codegen unit, so a change to one function
 # can't move how an unrelated one is partitioned, inlined and counted.
 [profile.bench]

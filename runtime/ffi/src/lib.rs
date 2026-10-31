@@ -39,8 +39,17 @@
 //!   panic is a bug: the call returns `COMLINE_ERR_POISONED`, the handle is
 //!   marked poisoned and every later call on it returns the same, so the
 //!   binding drops the connection. A free function returns
-//!   `COMLINE_ERR_POISONED` for the call that panicked. On wasm32 a panic is
-//!   a trap instead, and the host discards the instance.
+//!   `COMLINE_ERR_POISONED` for the call that panicked.
+//!
+//!   **On wasm32 the instance is poisoned, not just the handle.** There a
+//!   panic doesn't unwind: it aborts, which is a trap (a
+//!   `WebAssembly.RuntimeError` in JS) that `catch_unwind` can't catch, so
+//!   the module never returns `COMLINE_ERR_POISONED` itself. The trap stops
+//!   the module mid-call and leaves the whole instance (its stack pointer,
+//!   its heap, every handle in it) unusable. The host marks the instance
+//!   dead and answers every later call on it, and on every handle from it,
+//!   with `COMLINE_ERR_POISONED`, never entering the module again; then it
+//!   drops the instance and makes a new one. `js/comline.mjs` does this.
 //! - **Threads.** A handle may move between threads, but calls on one handle
 //!   must not overlap. Different handles are independent, and the free
 //!   functions are pure.
@@ -1494,6 +1503,23 @@ pub unsafe extern "C" fn comline_method_name_unescape(
 /// Linear-memory regions for a wasm32 host, which can't pass pointers into
 /// its own heap: it copies input into the `in` region and reads output from
 /// the `out` region. Not in the header; wasm32 only.
+///
+/// What a host may rely on, so it can keep a region's address and size
+/// between calls and reserve again only when a call needs more (as
+/// `js/comline.mjs` does):
+///
+/// - A region moves, grows or is freed only inside its own reserve call,
+///   and only when that call asks for more bytes than it holds. A reserve
+///   for no more returns the same address and changes nothing, contents
+///   included. Nothing else in the module touches a region: no ABI function
+///   allocates into it, frees it or writes to it except through the
+///   pointers the host passes.
+/// - A region is never shrunk or freed; it lives as long as the instance.
+/// - Reserving one region never moves or changes the other.
+/// - Memory may grow during any call (a reserve, or an allocation such as
+///   `comline_connection_new`'s), which detaches the host's views of it but
+///   moves nothing: every address stays valid, so the host only takes its
+///   views again.
 #[cfg(all(target_arch = "wasm32", not(target_feature = "atomics")))]
 mod wasm {
     use core::cell::UnsafeCell;
@@ -1506,6 +1532,9 @@ mod wasm {
     static IN: Region = Region(UnsafeCell::new(Vec::new()));
     static OUT: Region = Region(UnsafeCell::new(Vec::new()));
 
+    /// The one place a region changes (see the module's doc): it only
+    /// grows, only when `len` is more than it holds, and is never shrunk
+    /// or freed.
     fn reserve(region: &Region, len: usize) -> *mut u8 {
         // SAFETY: one thread, and no reference to the region outlives a
         // call.
@@ -1521,9 +1550,11 @@ mod wasm {
     }
 
     /// A region of at least `len` bytes for input, owned by the module;
-    /// null if memory can't grow. Reserving more may move it (and grow
-    /// memory, which detaches the host's views), so a host reserves up
-    /// front and takes the pointer again after each reserve.
+    /// null if memory can't grow, and then the region is as it was.
+    /// Reserving more than it holds may move it (and grow memory, which
+    /// detaches the host's views), so a host takes the pointer again after
+    /// such a reserve; a reserve for no more returns the same pointer and
+    /// changes nothing.
     #[no_mangle]
     pub extern "C" fn comline_wasm_reserve_in(len: usize) -> *mut u8 {
         reserve(&IN, len)
