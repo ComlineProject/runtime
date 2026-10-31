@@ -162,9 +162,13 @@ struct Vectors {
 #[derive(Deserialize)]
 struct Case {
     id: String,
+    /// `handshake`, or `handshake_check`: our facts against the peer's frame.
+    op: String,
     /// Absent on a `reject` case: bytes no peer may send.
     input: Option<Input>,
     bytes: String,
+    #[serde(default)]
+    expect: Option<String>,
 }
 
 #[derive(Deserialize)]
@@ -218,9 +222,25 @@ async fn comline_handshake_over_async_sends_the_vector_bytes() {
     let vectors: Vectors =
         serde_json::from_str(include_str!("../../conformance/vectors/handshake.json")).unwrap();
     assert!(!vectors.cases.is_empty());
-    let (mut sent, mut rejected) = (0, 0);
+    let (mut sent, mut rejected, mut checked) = (0, 0, 0);
     for case in &vectors.cases {
         let expected = hex(&case.bytes);
+        if case.op == "handshake_check" {
+            // Our facts, the peer's frame: the async exchange agrees or refuses.
+            let i = case.input.as_ref().expect("a check has our facts");
+            let local = Facts::new(i.ir_hash.parse().unwrap(), &i.wire_format, &i.framing)
+                .with_capabilities(i.capabilities);
+            let (mut ours, mut peer) = async_duplex();
+            peer.send(expected).await.unwrap();
+            let ran = AsyncHandshake::respond(&mut ComlineHandshake, &mut ours, &local).await;
+            if case.expect.as_deref() == Some("reject") {
+                assert_eq!(ran, Err(RuntimeError::Handshake), "{}", case.id);
+            } else {
+                assert_eq!(ran, Ok(()), "{}", case.id);
+            }
+            checked += 1;
+            continue;
+        }
         let Some(i) = &case.input else {
             // A frame no peer may send: the async exchange refuses it.
             let (mut ours, mut peer) = async_duplex();
@@ -238,5 +258,5 @@ async fn comline_handshake_over_async_sends_the_vector_bytes() {
         assert_eq!(async_bytes(local, true).await, expected, "{}: async respond", case.id);
         sent += 1;
     }
-    assert!(sent > 0 && rejected > 0);
+    assert!(sent > 0 && rejected > 0 && checked > 0);
 }

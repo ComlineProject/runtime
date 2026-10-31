@@ -39,6 +39,7 @@
 //! | `name_hash ID exact NAME HASH` | `comline_name_hash(NAME)`, 8 bytes little-endian, is `HASH`. |
 //! | `handshake ID exact IR_HASH WIRE FRAMING CAPS BYTES ENCODED` | `comline_handshake_encode` gives `ENCODED` (and 31 for 30 bytes of room); `comline_handshake_check` of `BYTES` gives the input's hashes and bits. When `comline_supports(FRAMING)`, a `comline@1` connection's `start` writes `ENCODED` and `feed(BYTES)` is `HANDSHAKE_OK` with `CAPS`. |
 //! | `handshake ID reject BYTES` | `check` against a valid frame is `ERR_HANDSHAKE` and leaves `*peer_out` alone; a `comline@1` `datagram@2` connection's `feed` is `ERR_HANDSHAKE`, then `ERR_STATE`. |
+//! | `handshake_check ID exact\|reject OURS PEER` | `comline_handshake_check(OURS, PEER)` is `OK` (exact) or `ERR_HANDSHAKE` (reject). `OURS` is the input's frame, as `comline_handshake_encode` writes it. |
 //! | `envelope ID exact ENVELOPE ERROR_ID BODY FRAME ENCODED` | On `datagram@2`, `encode_reply(0, 0, …)` gives `ENCODED`; a connection waiting on request 0 is fed `FRAME` and reads that reply. |
 //! | `envelope ID reject FRAME` | Fed `FRAME`, a connection waiting on request 0 gives `ERR_FRAMING`. |
 //! | `request ID exact\|patched FRAMING PROTOCOL CALL_ID METHOD ONE_WAY REQUEST_ID DRIVE PARAMS BYTES ENCODED` | A connection spends one-way ids up to `DRIVE`, then `encode_request` gives `ENCODED` (at id `DRIVE` unless one-way) and waits unless one-way; a fresh one fed `BYTES` reads the request, `REQUEST_ID`, `PARAMS` and the call. |
@@ -81,7 +82,7 @@ mod cases;
 use std::fmt::Write as _;
 use std::path::Path;
 
-use comline_runtime::contract::{ConnectionFraming, Datagram2Framing, Envelope};
+use comline_runtime::contract::{ConnectionFraming, Datagram2Framing, Envelope, HandshakeFrame};
 use comline_runtime::framing::JsonRpcFraming;
 use comline_runtime_conformance::{json_equal, Case, Compare, Expect, Op};
 use comline_runtime_ffi::{COMLINE_ENVELOPE_ERR, COMLINE_ENVELOPE_FAULT, COMLINE_ENVELOPE_OK};
@@ -184,6 +185,23 @@ fn line(case: &Case) -> Result<String, String> {
                 input["capabilities"].as_u64().ok_or("capabilities")? as u32,
                 bytes(&case.bytes.0),
                 bytes(&case.bytes.0),
+            )
+        }
+        (Op::HandshakeCheck, _) => {
+            let mut ours = Vec::new();
+            HandshakeFrame::new(
+                u64_of(&input["ir_hash"]),
+                name(str_of(&input["wire_format"]))?,
+                name(str_of(&input["framing"]))?,
+                input["capabilities"].as_u64().ok_or("capabilities")? as u32,
+            )
+            .encode(&mut ours);
+            let how = if reject { "reject" } else { "exact" };
+            write!(
+                out,
+                "handshake_check {id} {how} {} {}",
+                bytes(&ours),
+                bytes(&case.bytes.0)
             )
         }
         (_, Some("datagram@1")) => write!(out, "unmapped {id} refused datagram@1"),

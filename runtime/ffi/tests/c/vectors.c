@@ -440,6 +440,21 @@ static enum ran handshake_reject(const bytes *frame) {
     return FULL;
 }
 
+/* One end's frame against its peer's: `OK` when they agree, else
+ * `ERR_HANDSHAKE`. */
+static enum ran case_handshake_check(const line *l) {
+    CHECK(l->n == 2);
+    int reject = strcmp(l->how, "reject") == 0;
+    CHECK(reject || strcmp(l->how, "exact") == 0);
+    FIELD_BYTES(ours, 0);
+    FIELD_BYTES(peer, 1);
+    comline_status status = comline_handshake_check(ours.p, ours.n, peer.p, peer.n, NULL);
+    bytes_free(&ours);
+    bytes_free(&peer);
+    CHECK(status == (reject ? COMLINE_ERR_HANDSHAKE : COMLINE_OK));
+    return FULL;
+}
+
 static enum ran case_handshake(const line *l) {
     if (strcmp(l->how, "reject") == 0) {
         CHECK(l->n == 1);
@@ -822,6 +837,7 @@ static unsigned replay_file(const char *dir, const char *feature) {
         enum ran r = FAILED;
         if (strcmp(op, "name_hash") == 0) r = case_name_hash(&l);
         else if (strcmp(op, "handshake") == 0) r = case_handshake(&l);
+        else if (strcmp(op, "handshake_check") == 0) r = case_handshake_check(&l);
         else if (strcmp(op, "envelope") == 0) r = case_envelope(&l);
         else if (strcmp(op, "request") == 0) r = case_request(&l);
         else if (strcmp(op, "response") == 0) r = case_response(&l);

@@ -199,6 +199,15 @@ function caseNameHash(how, f) {
   return FULL;
 }
 
+/** One end's frame against its peer's: OK when they agree. */
+function caseHandshakeCheck(how, f) {
+  check((how === "exact" || how === "reject") && f.length === 2, "malformed");
+  const { status } = comline.handshakeCheck(bytesField(f[0]), bytesField(f[1]));
+  const want = how === "reject" ? Status.ERR_HANDSHAKE : Status.OK;
+  check(status === want, `check gave ${status}, expected ${want}`);
+  return FULL;
+}
+
 function caseHandshake(how, f) {
   if (how === "reject") {
     check(f.length === 1, "malformed");
@@ -512,6 +521,7 @@ function caseUnmapped(how, f) {
 const OPS = {
   name_hash: caseNameHash,
   handshake: caseHandshake,
+  handshake_check: caseHandshakeCheck,
   envelope: caseEnvelope,
   request: caseRequest,
   response: caseResponse,

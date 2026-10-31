@@ -140,6 +140,7 @@ fn replay(case: &Case) -> Result<Ran, String> {
         // The free handshake functions take any name, `datagram@1` too.
         (Op::NameHash, _) => name_hash_case(case),
         (Op::Handshake, _) => handshake_case(case),
+        (Op::HandshakeCheck, _) => handshake_check_case(case),
         (_, Some("datagram@1")) => Ok(Ran::NotMapped(
             "datagram@1 is lockstep; a connection speaks only the connection framings",
         )),
@@ -186,6 +187,29 @@ fn name_hash_case(case: &Case) -> Result<Ran, String> {
 /// A valid frame to check a rejected one against.
 fn some_frame() -> Vec<u8> {
     handshake_encode(1, "json@1", "datagram@2", 0, 64).bytes
+}
+
+/// One end's frame, from the input, against the peer's: agreeing or not.
+fn handshake_check_case(case: &Case) -> Result<Ran, String> {
+    let input = &case.input;
+    let ours = handshake_encode(
+        u64_of(&input["ir_hash"]),
+        str_of(&input["wire_format"]),
+        str_of(&input["framing"]),
+        input["capabilities"].as_u64().expect("bits") as u32,
+        64,
+    )
+    .bytes;
+    let (status, _) = handshake_check(&ours, &case.bytes.0);
+    let want = if case.expect == Expect::Reject {
+        COMLINE_ERR_HANDSHAKE
+    } else {
+        COMLINE_OK
+    };
+    check(status == want, || {
+        format!("check gave {status}, expected {want}")
+    })?;
+    Ok(Ran::Full)
 }
 
 fn handshake_case(case: &Case) -> Result<Ran, String> {

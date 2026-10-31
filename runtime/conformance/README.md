@@ -30,6 +30,7 @@ The ops, and what their `input` holds:
 |---|---|---|
 | `name_hash` | `name` | the hash, 8 bytes little-endian |
 | `handshake` | `ir_hash`, `wire_format`, `framing` (names, unhashed), `capabilities` | encode and decode |
+| `handshake_check` | one end's `ir_hash`, `wire_format`, `framing`, `capabilities` | decode: `bytes`, the peer's `comline@1` frame, is accepted (giving the input back) when the fingerprint, format and framing agree, and refused when one differs |
 | `envelope` | `kind`: `ok` with `payload`, `err` with `id` and `body`, or `fault` | encode and decode |
 | `request` | `framing`, `call_id`, `method`, `request_id`, `format`, `params`, and `one_way` when `true` | encode and decode |
 | `response` | `framing`, `request_id`, and an envelope's fields | encode and decode |
@@ -126,12 +127,12 @@ review as one.
 CONFORMANCE_BLESS=1 cargo test -p comline-runtime-conformance
 ```
 
-## The spec, version 0.1
+## The spec, version 0.2
 
 The case format above (`vectors/*.json`, `profiles/*.json`, the ops, values
 and types) and the ops protocol
 ([`comline-reference`'s README](../reference/README.md#the-protocol)) are a
-public spec, at version **0.1** (`runner::SPEC_VERSION`). Third-party
+public spec, at version **0.2** (`runner::SPEC_VERSION`). Third-party
 encodings ship vectors in this format, and `comline conformance --impl`
 drives their implementations over this protocol. While Comline is in its
 early days (0.x), a minor version may change anything, and the change is
@@ -149,7 +150,7 @@ What an implementation answers, and how its answers are judged:
 - Each case poses the questions `runner::questions` lists: a rejection asks
   to decode its bytes (a `stream_prefix` rejection also asks to encode its
   input, which must fail); any other case asks to encode its input (unless
-  it's a `decode`) and to decode its bytes (unless it's a `name_hash` or an
+  it's a `decode` or a `handshake_check`) and to decode its bytes (unless it's a `name_hash` or an
   `encode`). The questions never depend on earlier answers.
 - `runner::judge` passes a case when every encode gives its bytes (as JSON,
   for `"compare": "json"`), every decode accepts and gives its input back
@@ -157,7 +158,18 @@ What an implementation answers, and how its answers are judged:
   case not implemented; an `error` fails it.
 - A profile fact is proven when every case it names passes and shows its
   value (`fact_shown`). A format's facts are shown by `decode` cases of the
-  `Point` and `Color` shapes the official profiles use.
+  `Point` and `Color` shapes the official profiles use. A handshake's facts
+  are shown by `handshake_check` cases: one the peer agrees in, accepted,
+  and, per thing the fact covers, one differing in only that, refused.
+
+Changes:
+
+- **0.2:** handshake profiles state `schema_agreement` and
+  `encoding_agreement`, as JSON booleans (`"value": true`); a fact stated
+  `false` names no cases, and a handshake profile may leave a fact out,
+  which reads as `false`. New op `handshake_check` (decode only), whose
+  cases prove them; `comline@1` has a profile.
+- **0.1:** the first published version.
 
 ### The runner as a library
 
@@ -199,10 +211,22 @@ vectors, and the docs' language reference is rendered from it.
 
 [`profiles/`](profiles) holds one profile per official encoding name
 (`json@1.json`, `msgpack@1.json`, `packed@1.json`, `datagram@1.json`,
-`datagram@2.json`, `jsonrpc@1.json`): facts
+`datagram@2.json`, `jsonrpc@1.json`, `comline@1.json`): facts
 about how it encodes, which the version comparison turns into bumps. A format
 states `struct_fields`, `unknown_field`, `missing_optional`, `enum_variants`,
 `unknown_variant` and `integer_width`; a framing states `calls` and `errors`.
+
+A handshake states what it establishes between the two ends, as booleans:
+`schema_agreement` (both were built from the same schema) and
+`encoding_agreement` (both speak the same format and framing). One it
+doesn't state as `true` isn't established, and core makes a protocol using
+the handshake give it up (`@unverified`). `comline@1` states both, proven by
+the `handshake/check-*` cases: it accepts an agreeing peer and refuses one
+whose fingerprint, format or framing differs.
+
+```json
+"schema_agreement": { "value": true, "proven_by": ["handshake/check-agree", "handshake/check-reject-ir-hash"] }
+```
 
 ```json
 "unknown_field": { "value": "rejected", "proven_by": ["format-msgpack/decode-unknown-field"] }
