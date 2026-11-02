@@ -15,6 +15,8 @@ mod json;
 #[cfg(feature = "std")]
 mod msgpack;
 mod packed;
+#[cfg(feature = "std")]
+mod shape;
 
 #[cfg(feature = "std")]
 pub use json::Json;
