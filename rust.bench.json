@@ -1,6 +1,6 @@
 {
   "runtime": "rust",
-  "commit": "67b98d1000c53a765869f3699a9c526f45d5d08a",
+  "commit": "4e6c30511506f2dc1e31a9d08612fccaa4252e84",
   "toolchain": "rustc 1.98.0 (88d9e12ae 2026-08-18)",
   "metric": "instructions",
   "benches": {
@@ -320,49 +320,49 @@
       "ir": 49
     },
     "format/decode/enum-heavy/json@1": {
-      "ir": 13246
+      "ir": 13223
     },
     "format/decode/enum-heavy/msgpack@1": {
-      "ir": 7215
+      "ir": 7270
     },
     "format/decode/enum-heavy/packed@1": {
       "ir": 2187
     },
     "format/decode/large-array/json@1": {
-      "ir": 1888552
+      "ir": 1906553
     },
     "format/decode/large-array/msgpack@1": {
-      "ir": 327250
+      "ir": 330251
     },
     "format/decode/large-array/packed@1": {
-      "ir": 37342
+      "ir": 37339
     },
     "format/decode/nested/json@1": {
-      "ir": 12999
+      "ir": 13038
     },
     "format/decode/nested/msgpack@1": {
-      "ir": 3579
+      "ir": 3535
     },
     "format/decode/nested/packed@1": {
-      "ir": 2490
+      "ir": 2493
     },
     "format/decode/small-scalar/json@1": {
-      "ir": 2451
+      "ir": 2452
     },
     "format/decode/small-scalar/msgpack@1": {
-      "ir": 453
+      "ir": 447
     },
     "format/decode/small-scalar/packed@1": {
-      "ir": 93
+      "ir": 92
     },
     "format/decode/string-heavy/json@1": {
-      "ir": 10551
+      "ir": 10556
     },
     "format/decode/string-heavy/msgpack@1": {
-      "ir": 4052
+      "ir": 4042
     },
     "format/decode/string-heavy/packed@1": {
-      "ir": 3881
+      "ir": 3884
     },
     "format/encode/enum-heavy/json@1": {
       "ir": 18340
