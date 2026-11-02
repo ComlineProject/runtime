@@ -3,6 +3,7 @@ use core::marker::PhantomData;
 use serde::de::DeserializeSeed;
 use serde::{Deserialize, Serialize};
 
+use super::shape::{Shaped, StructShape};
 use super::BufWriter;
 use crate::contract::{BufMut, RuntimeError, WireFormat};
 
@@ -50,7 +51,9 @@ impl MsgPack {
         bytes: &'de [u8],
     ) -> Result<S::Value, RuntimeError> {
         let mut de = rmp_serde::Deserializer::from_read_ref(bytes);
-        seed.deserialize(&mut de)
+        // A struct only by position, and a string never as `bin`
+        // (runtime#74).
+        seed.deserialize(Shaped { de: &mut de, shape: StructShape::Seq })
             .map_err(|_| RuntimeError::Serialization)
     }
 }
