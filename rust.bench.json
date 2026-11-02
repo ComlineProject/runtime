@@ -1,6 +1,6 @@
 {
   "runtime": "rust",
-  "commit": "4e6c30511506f2dc1e31a9d08612fccaa4252e84",
+  "commit": "b101fe98e128cee2c0e35ebfac14c627f5309e4b",
   "toolchain": "rustc 1.98.0 (88d9e12ae 2026-08-18)",
   "metric": "instructions",
   "benches": {
@@ -128,28 +128,28 @@
       "ir": 299
     },
     "ffi/abi/feed/jsonrpc@1/message/16": {
-      "ir": 1703
+      "ir": 1690
     },
     "ffi/abi/feed/jsonrpc@1/message/256": {
-      "ir": 2378
+      "ir": 2365
     },
     "ffi/abi/feed/jsonrpc@1/message/4096": {
-      "ir": 13178
+      "ir": 13165
     },
     "ffi/abi/feed/jsonrpc@1/message/65536": {
-      "ir": 185978
+      "ir": 185965
     },
     "ffi/abi/feed/jsonrpc@1/stream/16": {
-      "ir": 1805
+      "ir": 1792
     },
     "ffi/abi/feed/jsonrpc@1/stream/256": {
-      "ir": 2480
+      "ir": 2467
     },
     "ffi/abi/feed/jsonrpc@1/stream/4096": {
-      "ir": 13280
+      "ir": 13267
     },
     "ffi/abi/feed/jsonrpc@1/stream/65536": {
-      "ir": 186080
+      "ir": 186067
     },
     "ffi/abi/handshake-check": {
       "ir": 138
@@ -284,28 +284,28 @@
       "ir": 150
     },
     "ffi/core/feed/jsonrpc@1/message/16": {
-      "ir": 1550
+      "ir": 1537
     },
     "ffi/core/feed/jsonrpc@1/message/256": {
-      "ir": 2225
+      "ir": 2212
     },
     "ffi/core/feed/jsonrpc@1/message/4096": {
-      "ir": 13025
+      "ir": 13012
     },
     "ffi/core/feed/jsonrpc@1/message/65536": {
-      "ir": 185825
+      "ir": 185812
     },
     "ffi/core/feed/jsonrpc@1/stream/16": {
-      "ir": 1656
+      "ir": 1643
     },
     "ffi/core/feed/jsonrpc@1/stream/256": {
-      "ir": 2331
+      "ir": 2318
     },
     "ffi/core/feed/jsonrpc@1/stream/4096": {
-      "ir": 13131
+      "ir": 13118
     },
     "ffi/core/feed/jsonrpc@1/stream/65536": {
-      "ir": 185931
+      "ir": 185918
     },
     "ffi/core/handshake-check": {
       "ir": 100
@@ -434,16 +434,16 @@
       "ir": 98
     },
     "framing/decode/jsonrpc@1/16": {
-      "ir": 1471
+      "ir": 1487
     },
     "framing/decode/jsonrpc@1/256": {
-      "ir": 2146
+      "ir": 2162
     },
     "framing/decode/jsonrpc@1/4096": {
-      "ir": 12946
+      "ir": 12962
     },
     "framing/decode/jsonrpc@1/65536": {
-      "ir": 185746
+      "ir": 185762
     },
     "framing/encode/datagram@1/16": {
       "ir": 190
