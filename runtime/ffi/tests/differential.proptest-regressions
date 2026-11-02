@@ -1,0 +1,7 @@
+# Seeds for failure cases proptest has generated in the past. It is
+# automatically read and these particular cases re-run before any
+# novel cases are generated.
+#
+# It is recommended to check this file in to source control so that
+# everyone who runs the test benefits from these saved cases.
+cc e507dae2d2e9451a77030bc0c16e36d2da407468c038caa846a11682b9dc9632 # shrinks to (config, ops) = (Config { framing: [106, 115, 111, 110, 114, 112, 99, 64, 49], wire_format: [112, 97, 99, 107, 101, 100, 64, 49], ir_hash: 2583780602122204127, capabilities: 3025499675, max_frame: 0, max_waiting: 16, handshake: 0, stream: 0, unordered: 1, reserved: 0 }, [PeerHello { hello: Trailing(0), capabilities: 0 }, Deliver(0), PeerRaw { framed: false, bytes: [] }, PeerReply { to: Waiting(0), protocol: 0, envelope: Ok, body: [110, 117, 108, 108] }, Start(Plenty), Deliver(0), PeerRequest { protocol: 0, call_id: 0, name: "ping", request_id: 474745489612, one_way: false, body: [123, 34, 97, 34, 58, 116, 114, 117, 101, 125] }, Deliver(0)])
