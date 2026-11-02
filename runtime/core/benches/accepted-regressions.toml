@@ -47,3 +47,9 @@
 # counts, and each removal or rename; each entry is annotated on the pull
 # request's diff.
 
+
+[[accepted]]
+pr = 76
+bench = "framing/decode/jsonrpc@1/16"
+max_percent = 1.10
+reason = "refuse frames that aren't JSON-RPC 2.0: check the version, the params and an error's message (#75)"
