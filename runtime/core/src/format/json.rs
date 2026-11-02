@@ -3,6 +3,7 @@ use core::marker::PhantomData;
 use serde::de::DeserializeSeed;
 use serde::{Deserialize, Serialize};
 
+use super::shape::{Shaped, StructShape};
 use super::BufWriter;
 use crate::contract::{BufMut, RuntimeError, WireFormat};
 
@@ -42,8 +43,9 @@ impl Json {
         bytes: &'de [u8],
     ) -> Result<S::Value, RuntimeError> {
         let mut de = serde_json::Deserializer::from_slice(bytes);
+        // A struct only by name (runtime#74).
         let value = seed
-            .deserialize(&mut de)
+            .deserialize(Shaped { de: &mut de, shape: StructShape::Map })
             .map_err(|_| RuntimeError::Serialization)?;
         de.end().map_err(|_| RuntimeError::Serialization)?;
         Ok(value)

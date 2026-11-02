@@ -2470,6 +2470,39 @@ fn rejections(feature: &str) -> Vec<Case> {
                 ),
             ]
         }
+        // A struct only in the shape its format writes (runtime#74): by name
+        // in JSON, by position in MessagePack, however deeply nested.
+        "format-json" | "format-msgpack" => {
+            let format = if feature == "format-json" { FORMAT_JSON } else { FORMAT_MSGPACK };
+            let r = |id: &str, ty: Type, bytes: &[u8]| {
+                reject(
+                    &format!("{feature}/{id}"),
+                    Op::Decode,
+                    to_json(&DecodeIn { format: format.into(), ty, value: None }),
+                    bytes,
+                )
+            };
+            let points = Type::Array(Box::new(point_type()));
+            if feature == "format-json" {
+                vec![
+                    r("reject-struct-by-position", point_type(), br#"[1,-2]"#),
+                    r("reject-nested-struct-by-position", points, br#"[{"x":1,"y":-2},[3,4]]"#),
+                ]
+            } else {
+                vec![
+                    // {"x": 1, "y": -2}
+                    r("reject-struct-by-name", point_type(), &[0x82, 0xa1, b'x', 0x01, 0xa1, b'y', 0xfe]),
+                    // [[1, -2], {"x": 3, "y": 4}]
+                    r(
+                        "reject-nested-struct-by-name",
+                        points,
+                        &[0x92, 0x92, 0x01, 0xfe, 0x82, 0xa1, b'x', 0x03, 0xa1, b'y', 0x04],
+                    ),
+                    // `bin` 1 "a", where a string is expected.
+                    r("reject-string-as-bin", Type::String, &[0xc4, 0x01, b'a']),
+                ]
+            }
+        }
         "format-packed" => {
             let decode = |ty: Type| {
                 to_json(&DecodeIn {
