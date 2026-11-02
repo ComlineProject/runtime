@@ -2532,6 +2532,50 @@ fn rejections(feature: &str) -> Vec<Case> {
                 framing(FRAMING_JSONRPC),
                 br#"{"jsonrpc":"2.0","result":1}"#,
             ),
+            // JSON-RPC 2.0's own rules (runtime#75): the version, structured
+            // params, a reply to a null id, one outcome, an error's message.
+            reject(
+                "framing-jsonrpc/reject-request-other-version",
+                Op::Request,
+                framing(FRAMING_JSONRPC),
+                br#"{"jsonrpc":"1.0","method":"greet","params":[],"id":1}"#,
+            ),
+            reject(
+                "framing-jsonrpc/reject-request-without-version",
+                Op::Request,
+                framing(FRAMING_JSONRPC),
+                br#"{"method":"greet","params":[],"id":1}"#,
+            ),
+            reject(
+                "framing-jsonrpc/reject-request-scalar-params",
+                Op::Request,
+                framing(FRAMING_JSONRPC),
+                br#"{"jsonrpc":"2.0","method":"greet","params":"x","id":1}"#,
+            ),
+            reject(
+                "framing-jsonrpc/reject-request-null-id",
+                Op::Request,
+                framing(FRAMING_JSONRPC),
+                br#"{"jsonrpc":"2.0","method":"greet","params":[],"id":null}"#,
+            ),
+            reject(
+                "framing-jsonrpc/reject-response-result-and-error",
+                Op::Response,
+                framing(FRAMING_JSONRPC),
+                br#"{"jsonrpc":"2.0","result":1,"error":{"code":1,"message":"x"},"id":1}"#,
+            ),
+            reject(
+                "framing-jsonrpc/reject-response-error-without-message",
+                Op::Response,
+                framing(FRAMING_JSONRPC),
+                br#"{"jsonrpc":"2.0","error":{"code":1},"id":1}"#,
+            ),
+            reject(
+                "framing-jsonrpc/reject-response-without-version",
+                Op::Response,
+                framing(FRAMING_JSONRPC),
+                br#"{"result":1,"id":1}"#,
+            ),
             // Found by comline-typescript's differential tests (#42): JSON
             // text is UTF-8 throughout, so `\xff` is refused even in a member
             // the framing ignores.

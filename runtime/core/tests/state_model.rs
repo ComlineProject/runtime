@@ -93,7 +93,20 @@ struct Body {
     json: Index,
 }
 
+/// JSON-RPC params: an array or an object, as JSON-RPC 2.0 has them, or
+/// `null`, which the framing writes for none (runtime#75).
+const JSON_PARAMS: [&str; 4] = ["null", "[1,2]", "{\"a\":true}", "[]"];
+
 impl Body {
+    /// As a request's params.
+    fn params(&self, json: bool) -> Vec<u8> {
+        if json {
+            self.json.get(&JSON_PARAMS).as_bytes().to_vec()
+        } else {
+            self.raw.clone()
+        }
+    }
+
     fn bytes(&self, json: bool) -> Vec<u8> {
         if json {
             self.json.get(&JSON_TEXTS).as_bytes().to_vec()
@@ -380,7 +393,7 @@ fn run<F: ConnectionFraming>(
                 params,
                 how,
             } => {
-                let params = params.bytes(json);
+                let params = params.params(json);
                 let call = Call::new(*call_id, method.get(&METHODS));
                 let got = match how {
                     How::Serialized => state.encode_request(
@@ -482,7 +495,7 @@ fn run<F: ConnectionFraming>(
                 one_way,
                 params,
             } => {
-                let params = params.bytes(json);
+                let params = params.params(json);
                 let call = Call::new(*call_id, method.get(&METHODS));
                 let mut frame = Vec::new();
                 framing

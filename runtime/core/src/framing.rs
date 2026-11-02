@@ -38,8 +38,74 @@ pub struct JsonRpcFraming;
 #[derive(Deserialize)]
 struct ErrIn<'a> {
     code: i64,
+    /// Required, and a string: an error object without one isn't JSON-RPC
+    /// 2.0. Its text is the sender's, not the schema's, so it isn't kept.
+    #[serde(rename = "message")]
+    _message: Text,
     #[serde(borrow, default)]
     data: Option<&'a RawValue>,
+}
+
+/// `"jsonrpc": "2.0"`, which every JSON-RPC 2.0 message carries: a frame
+/// without it, or naming another version, is refused (runtime#75).
+struct Version;
+
+/// Any JSON string, read without keeping it.
+struct Text;
+
+/// Reads a string and hands it to `check`, without allocating: decoding a
+/// frame allocates nothing.
+struct StrVisitor(fn(&str) -> bool);
+
+impl serde::de::Visitor<'_> for StrVisitor {
+    type Value = ();
+
+    fn expecting(&self, f: &mut core::fmt::Formatter) -> core::fmt::Result {
+        f.write_str("a string")
+    }
+
+    fn visit_str<E: serde::de::Error>(self, v: &str) -> Result<(), E> {
+        if (self.0)(v) {
+            Ok(())
+        } else {
+            Err(E::custom("unexpected string"))
+        }
+    }
+}
+
+impl<'de> Deserialize<'de> for Version {
+    fn deserialize<D: serde::Deserializer<'de>>(d: D) -> Result<Self, D::Error> {
+        d.deserialize_str(StrVisitor(|v| v == "2.0")).map(|()| Version)
+    }
+}
+
+impl<'de> Deserialize<'de> for Text {
+    fn deserialize<D: serde::Deserializer<'de>>(d: D) -> Result<Self, D::Error> {
+        d.deserialize_str(StrVisitor(|_| true)).map(|()| Text)
+    }
+}
+
+/// A request's `id`, which a notification goes without. `"id": null` is
+/// refused rather than read as a notification: the specification still
+/// wants a reply to it, and a notification never gets one (runtime#75).
+fn request_id<'de, D: serde::Deserializer<'de>>(d: D) -> Result<Option<u64>, D::Error> {
+    u64::deserialize(d).map(Some)
+}
+
+/// A request's params, which JSON-RPC 2.0 has be an array or an object
+/// when given at all. `null` is what this framing writes for none, so it's
+/// read as none.
+fn params_of<'f>(params: Option<&'f RawValue>) -> Option<&'f [u8]> {
+    match params.map(RawValue::get) {
+        None => Some(b"null"),
+        Some(text) if text.starts_with(['[', '{']) || text == "null" => Some(text.as_bytes()),
+        Some(_) => None,
+    }
+}
+
+/// A response has its `result` or its `error`, never both.
+fn one_outcome(result: Option<&RawValue>, error: Option<&ErrIn<'_>>) -> Option<()> {
+    (result.is_none() || error.is_none()).then_some(())
 }
 
 /// A response's envelope, from its `result` or `error`.
@@ -197,18 +263,20 @@ impl Framing for JsonRpcFraming {
     fn decode_request<'f>(&self, frame: &'f [u8]) -> Option<Request<'f>> {
         #[derive(Deserialize)]
         struct ReqIn<'a> {
+            #[serde(rename = "jsonrpc")]
+            _version: Version,
             #[serde(borrow)]
             method: &'a RawValue,
             #[serde(borrow, default)]
             params: Option<&'a RawValue>,
-            #[serde(default)]
+            #[serde(default, deserialize_with = "request_id")]
             id: Option<u64>,
         }
         let r: ReqIn = parse(frame)?;
         Some(Request {
             call: RequestCall::Name(method_of(r.method)?),
             request_id: r.id.unwrap_or(0),
-            params: r.params.map(|p| p.get().as_bytes()).unwrap_or(b"null"),
+            params: params_of(r.params)?,
         })
     }
 
@@ -241,6 +309,8 @@ impl Framing for JsonRpcFraming {
     fn decode_response<'f>(&self, frame: &'f [u8]) -> Option<(u64, Envelope<'f>)> {
         #[derive(Deserialize)]
         struct RespIn<'a> {
+            #[serde(rename = "jsonrpc")]
+            _version: Version,
             #[serde(borrow, default)]
             result: Option<&'a RawValue>,
             #[serde(borrow, default)]
@@ -248,6 +318,7 @@ impl Framing for JsonRpcFraming {
             id: u64,
         }
         let r: RespIn = parse(frame)?;
+        one_outcome(r.result, r.error.as_ref())?;
         Some((r.id, envelope_of(r.result, r.error)))
     }
 }
@@ -308,11 +379,13 @@ impl ConnectionFraming for JsonRpcFraming {
     fn decode<'f>(&self, frame: &'f [u8]) -> Option<Frame<'f>> {
         #[derive(Deserialize)]
         struct MessageIn<'a> {
+            #[serde(rename = "jsonrpc")]
+            _version: Version,
             #[serde(borrow, default)]
             method: Option<&'a RawValue>,
             #[serde(borrow, default)]
             params: Option<&'a RawValue>,
-            #[serde(default)]
+            #[serde(default, deserialize_with = "request_id")]
             id: Option<u64>,
             #[serde(borrow, default)]
             result: Option<&'a RawValue>,
@@ -326,15 +399,18 @@ impl ConnectionFraming for JsonRpcFraming {
                 request: Request {
                     call: RequestCall::Name(method_of(method)?),
                     request_id: m.id.unwrap_or(0),
-                    params: m.params.map(|p| p.get().as_bytes()).unwrap_or(b"null"),
+                    params: params_of(m.params)?,
                 },
                 one_way: m.id.is_none(),
             },
-            None => Frame::Reply {
-                protocol: None,
-                request_id: m.id?,
-                envelope: envelope_of(m.result, m.error),
-            },
+            None => {
+                one_outcome(m.result, m.error.as_ref())?;
+                Frame::Reply {
+                    protocol: None,
+                    request_id: m.id?,
+                    envelope: envelope_of(m.result, m.error),
+                }
+            }
         })
     }
 }
@@ -503,13 +579,44 @@ mod tests {
         assert_eq!(f.decode_response(&frame), Some((9, Envelope::Fault)));
     }
 
+    /// Frames JSON-RPC 2.0 forbids, refused by every decoder (runtime#75).
+    #[test]
+    fn frames_that_arent_json_rpc_2_are_refused() {
+        let f = JsonRpcFraming;
+        let requests: [&[u8]; 5] = [
+            br#"{"jsonrpc":"1.0","method":"greet","params":[],"id":1}"#,
+            br#"{"method":"greet","params":[],"id":1}"#,
+            br#"{"jsonrpc":"2.0","method":"greet","params":"x","id":1}"#,
+            br#"{"jsonrpc":"2.0","method":"greet","params":7,"id":1}"#,
+            // Not a notification: one still gets a reply.
+            br#"{"jsonrpc":"2.0","method":"greet","params":[],"id":null}"#,
+        ];
+        for frame in requests {
+            assert!(f.decode_request(frame).is_none(), "{}", str::from_utf8(frame).unwrap());
+            assert!(ConnectionFraming::decode(&f, frame).is_none(), "{}", str::from_utf8(frame).unwrap());
+        }
+        let responses: [&[u8]; 4] = [
+            br#"{"jsonrpc":"2.0","result":1,"error":{"code":1,"message":"x"},"id":1}"#,
+            br#"{"jsonrpc":"2.0","error":{"code":1},"id":1}"#,
+            br#"{"jsonrpc":"2.0","error":{"code":1,"message":7},"id":1}"#,
+            br#"{"result":1,"id":1}"#,
+        ];
+        for frame in responses {
+            assert!(f.decode_response(frame).is_none(), "{}", str::from_utf8(frame).unwrap());
+            assert!(ConnectionFraming::decode(&f, frame).is_none(), "{}", str::from_utf8(frame).unwrap());
+        }
+        // Params as an object, or none written, still decode.
+        assert!(f.decode_request(br#"{"jsonrpc":"2.0","method":"greet","params":{"a":1},"id":1}"#).is_some());
+        assert!(f.decode_request(br#"{"jsonrpc":"2.0","method":"greet","id":1}"#).is_some());
+    }
+
     #[test]
     fn a_code_that_cannot_be_an_ordinal_decodes_as_a_fault() {
         let f = JsonRpcFraming;
         // Any other reserved JSON-RPC code, and a code too wide for a `u16`.
         for frame in [
-            br#"{"jsonrpc":"2.0","error":{"code":-32700},"id":1}"#.to_vec(),
-            br#"{"jsonrpc":"2.0","error":{"code":70000},"id":1}"#.to_vec(),
+            br#"{"jsonrpc":"2.0","error":{"code":-32700,"message":"Parse error"},"id":1}"#.to_vec(),
+            br#"{"jsonrpc":"2.0","error":{"code":70000,"message":"x"},"id":1}"#.to_vec(),
         ] {
             assert_eq!(f.decode_response(&frame), Some((1, Envelope::Fault)));
         }
