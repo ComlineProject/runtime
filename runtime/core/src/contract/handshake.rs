@@ -16,6 +16,9 @@ pub const FRAMING_DATAGRAM: &str = "datagram@1";
 /// protocol number (`contract::Datagram2Framing`), for a
 /// [`Connection`](crate::connection::Connection).
 pub const FRAMING_DATAGRAM2: &str = "datagram@2";
+/// Name of the datagram framing that addresses a call by its protocol's and
+/// function's wire numbers (`contract::Datagram3Framing`, `calls = by_id`).
+pub const FRAMING_DATAGRAM3: &str = "datagram@3";
 
 /// Name of the JSON-RPC 2.0 framing (`framing::JsonRpcFraming`).
 pub const FRAMING_JSONRPC: &str = "jsonrpc@1";
@@ -30,6 +33,10 @@ pub const FORMAT_PACKED: &str = "packed@1";
 /// Name of Comline's own handshake, the fixed [`HandshakeFrame`] each end sends
 /// (`handshake::ComlineHandshake`).
 pub const HANDSHAKE_COMLINE: &str = "comline@1";
+/// Name of the compatibility-checking handshake (`comline2::Comline2Handshake`,
+/// runtime#15): lines, shape hashes and wire numbers instead of an exact IR
+/// match.
+pub const HANDSHAKE_COMLINE2: &str = "comline@2";
 /// Name of the official "no handshake" choice (`handshake::NoHandshake`): no
 /// frame, nothing checked. Unversioned, since there is nothing to evolve.
 pub const HANDSHAKE_NONE: &str = "none";

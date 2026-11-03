@@ -73,6 +73,20 @@ pub enum RuntimeError {
     /// - **On encode** nothing was written: the value isn't one its type
     ///   allows, and a conforming peer would refuse it.
     BoundExceeded { measure: crate::bounds::Measure },
+    /// The `comline@2` handshake refused the connection: `side` refused it,
+    /// for `reason`. Raised on both ends, the refusing side's own included.
+    Refused {
+        reason: crate::contract::Reason,
+        side: crate::contract::Side,
+    },
+    /// The call wasn't made: the `comline@2` handshake found that the peer
+    /// can't take it. Either the peer lacks the function (it's older, and
+    /// `newer_consumer = degrade` let the connection through) or the
+    /// protocol was refused on its own (`scope = protocol`). Nothing was
+    /// written. The caller knows which call it made, so the error doesn't
+    /// repeat it: that keeps this type 4 bytes, which the decode paths
+    /// need.
+    Unavailable,
 }
 
 impl fmt::Display for RuntimeError {
@@ -89,6 +103,12 @@ impl fmt::Display for RuntimeError {
             RuntimeError::FrameTooLarge => f.write_str("frame larger than the limit"),
             RuntimeError::Busy => f.write_str("too many calls waiting"),
             RuntimeError::BufferTooSmall => f.write_str("frame larger than its buffer"),
+            RuntimeError::Refused { reason, side } => {
+                write!(f, "the {} refused the connection: {reason}", side.name())
+            }
+            RuntimeError::Unavailable => f.write_str(
+                "the peer can't take this call: it lacks the function, or refused its protocol",
+            ),
             RuntimeError::BoundExceeded { measure } => {
                 write!(f, "more {} than its type allows", measure.noun())
             }

@@ -196,7 +196,100 @@ impl ConnectionFraming for Datagram2Framing {
     }
 }
 
-fn put_varint(mut value: ProtocolNumber, out: &mut dyn BufMut) {
+// ── datagram@3 ─────────────────────────────────────────────────────────────
+
+/// The Comline datagram framing, version 3: `datagram@2` with a call
+/// addressed by wire numbers (`calls = by_id`, runtime#15). A request names
+/// its protocol and its function by the numbers core assigns them
+/// (core#127), both as varints, so reordering or inserting functions no
+/// longer moves what a call addresses. Replies are `datagram@2`'s.
+/// `no_std`, allocation-free.
+///
+/// - Request: `[0][protocol varint][function varint][request_id u64 LE][params…]`
+/// - Reply: `[1][protocol varint][request_id u64 LE][envelope…]`
+///
+/// Both numbers are `u16`s, as unsigned LEB128 varints in their shortest
+/// form: one byte below 128, at most three. The [`Call`]'s `id` is the
+/// function's wire number.
+#[derive(Debug, Default, Clone, Copy)]
+pub struct Datagram3Framing;
+
+impl ConnectionFraming for Datagram3Framing {
+    fn name(&self) -> &'static str {
+        crate::contract::FRAMING_DATAGRAM3
+    }
+
+    fn encode_request<W, P>(
+        &self,
+        protocol: ProtocolNumber,
+        call: Call,
+        request_id: u64,
+        _one_way: bool,
+        params: &P,
+        fmt: &W,
+        out: &mut dyn BufMut,
+    ) -> Result<(), RuntimeError>
+    where
+        W: WireFormat,
+        P: Serialize + ?Sized,
+    {
+        out.put_u8(KIND_REQUEST);
+        put_varint(protocol, out);
+        put_varint(call.id, out);
+        out.put_u64_le(request_id);
+        fmt.encode(params, out)
+    }
+
+    fn encode_request_body(
+        &self,
+        protocol: ProtocolNumber,
+        call_id: u16,
+        _name: &str,
+        request_id: u64,
+        _one_way: bool,
+        params: &[u8],
+        out: &mut dyn BufMut,
+    ) {
+        out.put_u8(KIND_REQUEST);
+        put_varint(protocol, out);
+        put_varint(call_id, out);
+        out.put_u64_le(request_id);
+        out.put_slice(params);
+    }
+
+    fn encode_reply(
+        &self,
+        protocol: ProtocolNumber,
+        request_id: u64,
+        reply: &Envelope<'_>,
+        out: &mut dyn BufMut,
+    ) {
+        Datagram2Framing.encode_reply(protocol, request_id, reply, out)
+    }
+
+    fn decode<'f>(&self, frame: &'f [u8]) -> Option<Frame<'f>> {
+        let (&kind, rest) = frame.split_first()?;
+        if kind != KIND_REQUEST {
+            return Datagram2Framing.decode(frame);
+        }
+        let (protocol, rest) = take_varint(rest)?;
+        let (function, rest) = take_varint(rest)?;
+        let (head, params) = rest.split_at_checked(8)?;
+        Some(Frame::Request {
+            protocol: Some(protocol),
+            request: Request {
+                call: RequestCall::Id(function),
+                request_id: u64::from_le_bytes(head.try_into().ok()?),
+                params,
+            },
+            one_way: false,
+        })
+    }
+}
+
+/// Write `value` as an unsigned LEB128 varint, in its shortest form: how
+/// `datagram@2`/`@3` and `comline@2` write a wire number.
+pub fn put_varint(mut value: ProtocolNumber, out: &mut dyn BufMut) {
     while value >= 0x80 {
         out.put_u8((value as u8 & 0x7f) | 0x80);
         value >>= 7;
@@ -206,7 +299,7 @@ fn put_varint(mut value: ProtocolNumber, out: &mut dyn BufMut) {
 
 /// An unsigned LEB128 number that fits a [`ProtocolNumber`], in its shortest
 /// form, and the bytes after it.
-fn take_varint(bytes: &[u8]) -> Option<(ProtocolNumber, &[u8])> {
+pub fn take_varint(bytes: &[u8]) -> Option<(ProtocolNumber, &[u8])> {
     let mut value: u32 = 0;
     for (i, &byte) in bytes.iter().enumerate().take(3) {
         value |= u32::from(byte & 0x7f) << (7 * i);
@@ -278,6 +371,28 @@ mod tests {
                 one_way: false,
             })
         );
+    }
+
+    #[test]
+    fn a_datagram3_request_round_trips_by_numbers() {
+        let f = Datagram3Framing;
+        let mut frame = Vec::new();
+        f.encode_request_body(300, 129, "ping", 42, false, b"args", &mut frame);
+        assert_eq!(&frame[..5], &[KIND_REQUEST, 0xac, 0x02, 0x81, 0x01]);
+        assert_eq!(
+            f.decode(&frame),
+            Some(Frame::Request {
+                protocol: Some(300),
+                request: Request { call: RequestCall::Id(129), request_id: 42, params: b"args" },
+                one_way: false,
+            })
+        );
+        assert_eq!(f.decode(&[KIND_REQUEST, 0, 0x80, 0x00, 0, 0, 0, 0, 0, 0, 0, 0]), None, "overlong function");
+        let mut reply = Vec::new();
+        f.encode_reply(1, 7, &Envelope::Fault, &mut reply);
+        let mut two = Vec::new();
+        Datagram2Framing.encode_reply(1, 7, &Envelope::Fault, &mut two);
+        assert_eq!(reply, two, "replies are datagram@2's");
     }
 
     #[test]

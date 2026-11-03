@@ -37,6 +37,9 @@ pub mod connection;
 pub mod async_connection;
 #[cfg(feature = "alloc")]
 pub mod handshake;
+// `comline@2`: the compatibility-checking handshake (runtime#15).
+#[cfg(feature = "alloc")]
+pub mod comline2;
 #[cfg(feature = "alloc")]
 pub mod serve;
 #[cfg(feature = "alloc")]

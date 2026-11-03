@@ -1,0 +1,20 @@
+{
+  "name": "datagram@3",
+  "kind": "framing",
+  "facts": {
+    "calls": {
+      "value": "by_id",
+      "proven_by": [
+        "framing-datagram3/request",
+        "framing-datagram3/request-two-byte-numbers",
+        "framing-datagram3/request-large-ids"
+      ]
+    },
+    "errors": {
+      "value": "by_ordinal",
+      "proven_by": [
+        "framing-datagram3/response-err"
+      ]
+    }
+  }
+}

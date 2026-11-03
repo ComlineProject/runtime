@@ -7,7 +7,7 @@ reproduce, and the Rust runtime's proof that it does.
 
 - [`features.json`](features.json): the wire features, with stable ids:
   `name-hash`, `handshake`, `envelope`, `framing-datagram`, `framing-datagram2`,
-  `framing-jsonrpc`, `stream`, `format-json`, `format-msgpack` and
+  `framing-datagram3`, `handshake-comline2`, `framing-jsonrpc`, `stream`, `format-json`, `format-msgpack` and
   `format-packed`.
 - `vectors/<feature>.json`: that feature's cases.
 - [`benches/`](benches/README.md): the benchmarks every runtime runs, in the
@@ -37,6 +37,8 @@ The ops, and what their `input` holds:
 | `encode` | `format`, `value`, and `type` when its bounds matter | encode; a rejection's encode must fail |
 | `decode` | `format`, `type`, `value` | decode: `bytes` read as `type` give `value` |
 | `stream_prefix` | `len`, `max` | encode and decode: the 4-byte length prefix of a `len`-byte frame under the limit `max` |
+| `comline2_message` | a `comline@2` message: `type` (`hello`, `answer` or `verdict`) and `message` | encode and decode |
+| `comline2_negotiate` | `step`, and as the step needs `side`, `params`, `local` (this end's hello), `pending`; then `reply` and `result` | decode: `bytes`, the peer's message, run through `step` give exactly `reply` (the message this end sends, or `null`) and `result` (`accepted`, or `refused` with its reason and side) |
 | `stream_split` | `max`, `frames`, `rest`, `needed` | encode and decode: a byte stream of `frames`, each behind its prefix, then `rest` |
 
 - **Encode and decode:** encoding the input gives exactly `bytes`, and decoding
@@ -137,12 +139,12 @@ review as one.
 CONFORMANCE_BLESS=1 cargo test -p comline-runtime-conformance
 ```
 
-## The spec, version 0.3
+## The spec, version 0.4
 
 The case format above (`vectors/*.json`, `profiles/*.json`, the ops, values
 and types) and the ops protocol
 ([`comline-reference`'s README](../reference/README.md#the-protocol)) are a
-public spec, at version **0.3** (`runner::SPEC_VERSION`). Third-party
+public spec, at version **0.4** (`runner::SPEC_VERSION`). Third-party
 encodings ship vectors in this format, and `comline conformance --impl`
 drives their implementations over this protocol. While Comline is in its
 early days (0.x), a minor version may change anything, and the change is
@@ -160,7 +162,7 @@ What an implementation answers, and how its answers are judged:
 - Each case poses the questions `runner::questions` lists: a rejection asks
   to decode its bytes (a `stream_prefix` rejection also asks to encode its
   input, which must fail); any other case asks to encode its input (unless
-  it's a `decode` or a `handshake_check`) and to decode its bytes (unless it's a `name_hash` or an
+  it's a `decode`, a `handshake_check` or a `comline2_negotiate`) and to decode its bytes (unless it's a `name_hash` or an
   `encode`). The questions never depend on earlier answers.
 - `runner::judge` passes a case when every encode gives its bytes (as JSON,
   for `"compare": "json"`), every decode accepts and gives its input back
@@ -174,6 +176,16 @@ What an implementation answers, and how its answers are judged:
 
 Changes:
 
+- **0.4:** `datagram@3` and `comline@2` (runtime#15). New features
+  `framing-datagram3` (a `request`'s `call_id` is the function's wire
+  number, and `protocol` the protocol's) and `handshake-comline2`, with the
+  ops `comline2_message` (encode and decode) and `comline2_negotiate`
+  (decode only). A `comline@2` handshake fact is shown by
+  `comline2_negotiate` cases: one accepted with every protocol, and
+  refusals (of the connection or one protocol) for `line_mismatch` and
+  `package_mismatch` (`schema_agreement`) or `encoding_mismatch` and
+  `exchange_mismatch` (`encoding_agreement`). New profiles `datagram@3`
+  (`calls = by_id`) and `comline@2`. Nothing earlier changes.
 - **0.3:** bounds and `char` (core#98). New type descriptions `"char"`,
   `bounded_string`, `bounded_array`, `recursive` and `"self"`, and the value
   `{"char": ...}`. An `encode` case may carry a `type`, and an `encode`
@@ -229,7 +241,8 @@ vectors, and the docs' language reference is rendered from it.
 
 [`profiles/`](profiles) holds one profile per official encoding name
 (`json@1.json`, `msgpack@1.json`, `packed@1.json`, `datagram@1.json`,
-`datagram@2.json`, `jsonrpc@1.json`, `comline@1.json`): facts
+`datagram@2.json`, `datagram@3.json`, `jsonrpc@1.json`, `comline@1.json`,
+`comline@2.json`): facts
 about how it encodes, which the version comparison turns into bumps. A format
 states `struct_fields`, `unknown_field`, `missing_optional`, `enum_variants`,
 `unknown_variant` and `integer_width`; a framing states `calls` and `errors`.
@@ -240,7 +253,10 @@ A handshake states what it establishes between the two ends, as booleans:
 doesn't state as `true` isn't established, and core makes a protocol using
 the handshake give it up (`@unverified`). `comline@1` states both, proven by
 the `handshake/check-*` cases: it accepts an agreeing peer and refuses one
-whose fingerprint, format or framing differs.
+whose fingerprint, format or framing differs. `comline@2` states both too,
+proven by `handshake-comline2/offer-*` negotiations: a peer accepted, and
+peers refused for a moved line, another package, other encodings or
+another exchange.
 
 ```json
 "schema_agreement": { "value": true, "proven_by": ["handshake/check-agree", "handshake/check-reject-ir-hash"] }
