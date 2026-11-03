@@ -53,11 +53,8 @@ impl MsgPack {
         let mut de = rmp_serde::Deserializer::from_read_ref(bytes);
         // A struct only by position, and a string never as `bin`
         // (runtime#74).
-        seed.deserialize(Shaped {
-            de: &mut de,
-            shape: StructShape::Seq,
-        })
-        .map_err(|e| crate::bounds::error_of(&e))
+        seed.deserialize(Shaped { de: &mut de, shape: StructShape::Seq })
+            .map_err(|e| crate::bounds::error_of(&e))
     }
 }
 

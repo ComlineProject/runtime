@@ -63,11 +63,7 @@ use crate::handshake::{AsyncHandshake, ComlineHandshake, Facts};
 /// An async frame channel: a [`Stream`] of received frames (ending, or
 /// yielding an error, once the peer is gone) and a [`Sink`] to send them.
 pub trait AsyncTransport:
-    Stream<Item = Result<Vec<u8>, RuntimeError>>
-    + Sink<Vec<u8>, Error = RuntimeError>
-    + Send
-    + Unpin
-    + 'static
+    Stream<Item = Result<Vec<u8>, RuntimeError>> + Sink<Vec<u8>, Error = RuntimeError> + Send + Unpin + 'static
 {
 }
 
@@ -153,9 +149,7 @@ impl Sink<Vec<u8>> for AsyncInMemory {
         if frame.len() > self.max_frame {
             return Err(RuntimeError::FrameTooLarge);
         }
-        self.tx
-            .unbounded_send(frame)
-            .map_err(|_| RuntimeError::Transport)
+        self.tx.unbounded_send(frame).map_err(|_| RuntimeError::Transport)
     }
 
     fn poll_flush(self: Pin<&mut Self>, _: &mut Context<'_>) -> Poll<Result<(), RuntimeError>> {
@@ -221,35 +215,23 @@ pub struct Answer {
 impl Answer {
     /// A success: `payload` is the serialised return value.
     pub fn ok(payload: Vec<u8>) -> Self {
-        Self {
-            outcome: Outcome::Ok,
-            body: payload,
-        }
+        Self { outcome: Outcome::Ok, body: payload }
     }
 
     /// A raised schema error: `body` is the serialised error struct, `id`
     /// its ordinal.
     pub fn err(id: u16, body: Vec<u8>) -> Self {
-        Self {
-            outcome: Outcome::Err(id),
-            body,
-        }
+        Self { outcome: Outcome::Err(id), body }
     }
 
     /// A failure the schema doesn't describe.
     pub fn fault() -> Self {
-        Self {
-            outcome: Outcome::Fault,
-            body: Vec::new(),
-        }
+        Self { outcome: Outcome::Fault, body: Vec::new() }
     }
 
     /// A one-way call's: nothing is sent back.
     pub fn none() -> Self {
-        Self {
-            outcome: Outcome::None,
-            body: Vec::new(),
-        }
+        Self { outcome: Outcome::None, body: Vec::new() }
     }
 
     pub fn outcome(&self) -> Outcome {
@@ -260,10 +242,7 @@ impl Answer {
         match self.outcome {
             Outcome::None => None,
             Outcome::Ok => Some(Envelope::Ok(&self.body)),
-            Outcome::Err(id) => Some(Envelope::Err {
-                id,
-                body: &self.body,
-            }),
+            Outcome::Err(id) => Some(Envelope::Err { id, body: &self.body }),
             Outcome::Fault => Some(Envelope::Fault),
         }
     }
@@ -429,27 +408,13 @@ where
     /// `transport`, with `datagram@2`. Refuses (`RuntimeError::Handshake`) on
     /// a schema, format or framing mismatch.
     pub async fn connect(transport: T, format: W, ir_hash: u64) -> Result<Self, RuntimeError> {
-        Self::connect_with(
-            transport,
-            format,
-            Datagram2Framing,
-            &mut ComlineHandshake,
-            ir_hash,
-        )
-        .await
+        Self::connect_with(transport, format, Datagram2Framing, &mut ComlineHandshake, ir_hash).await
     }
 
     /// Answer: run the `comline@1` handshake's provider side. It's
     /// symmetric, so the same exchange as [`connect`](Self::connect).
     pub async fn accept(transport: T, format: W, ir_hash: u64) -> Result<Self, RuntimeError> {
-        Self::accept_with(
-            transport,
-            format,
-            Datagram2Framing,
-            &mut ComlineHandshake,
-            ir_hash,
-        )
-        .await
+        Self::accept_with(transport, format, Datagram2Framing, &mut ComlineHandshake, ir_hash).await
     }
 
     /// A connection over `transport` **without a handshake**, with
@@ -496,12 +461,7 @@ where
     /// each end sends its handshake frame and checks the peer's. The
     /// exchange is symmetric, so this is [`connect_with`](Self::connect_with)
     /// (or [`accept_with`](Self::accept_with)) with [`ComlineHandshake`].
-    pub async fn handshake(
-        transport: T,
-        format: W,
-        framing: F,
-        ir_hash: u64,
-    ) -> Result<Self, RuntimeError> {
+    pub async fn handshake(transport: T, format: W, framing: F, ir_hash: u64) -> Result<Self, RuntimeError> {
         Self::connect_with(transport, format, framing, &mut ComlineHandshake, ir_hash).await
     }
 
@@ -707,21 +667,14 @@ where
     fn receive(&mut self, frame: &[u8]) -> Result<(), RuntimeError> {
         let mut calls = self.shared.calls.lock().unwrap();
         match calls.state.receive(&self.shared.framing, frame)? {
-            Event::Reply {
-                request_id,
-                envelope,
-            } => {
+            Event::Reply { request_id, envelope } => {
                 if let Some(waiter) = calls.waiting.remove(&request_id) {
                     // The caller may have given up meanwhile.
                     let _ = waiter.send(envelope.into());
                 }
             }
             Event::Stale => {}
-            Event::Request {
-                protocol,
-                request,
-                one_way,
-            } => {
+            Event::Request { protocol, request, one_way } => {
                 // By number, or, when the framing names only the call, the
                 // protocol that has a call by that name.
                 let numbers = match protocol {
@@ -731,18 +684,10 @@ where
                 let found = numbers.into_iter().find_map(|number| {
                     let provider = self.providers.get(number)?.as_ref()?;
                     let index = call_index(request.call, provider.calls())?;
-                    Some((
-                        ProtocolNumber::try_from(number).ok()?,
-                        Arc::clone(provider),
-                        index,
-                    ))
+                    Some((ProtocolNumber::try_from(number).ok()?, Arc::clone(provider), index))
                 });
                 self.queue.push_back(Incoming {
-                    protocol: found
-                        .as_ref()
-                        .map(|(number, ..)| *number)
-                        .or(protocol)
-                        .unwrap_or_default(),
+                    protocol: found.as_ref().map(|(number, ..)| *number).or(protocol).unwrap_or_default(),
                     request_id: request.request_id,
                     one_way,
                     target: found.map(|(_, provider, index)| (provider, index)),
@@ -793,12 +738,9 @@ where
             }
             let envelope = answer.envelope()?;
             let mut frame = Vec::new();
-            shared.framing.encode_reply(
-                incoming.protocol,
-                incoming.request_id,
-                &envelope,
-                &mut frame,
-            );
+            shared
+                .framing
+                .encode_reply(incoming.protocol, incoming.request_id, &envelope, &mut frame);
             if frame.len() > shared.max_frame() {
                 // Too large to send: the caller hears a fault, not silence.
                 frame.clear();
@@ -908,12 +850,7 @@ where
             (guard, rx)
         });
         drop(calls);
-        if self
-            .shared
-            .commands
-            .unbounded_send(Command::Frame(frame))
-            .is_err()
-        {
+        if self.shared.commands.unbounded_send(Command::Frame(frame)).is_err() {
             // The driver is gone; `waiting`'s guard cleans up.
             return Err(RuntimeError::Transport);
         }
@@ -1029,9 +966,9 @@ pub mod tokio {
     use std::sync::Arc;
     use std::task::{Context, Poll};
 
-    use ::tokio::net::{TcpStream, ToSocketAddrs};
     use bytes::Bytes;
     use futures_util::{Sink, Stream};
+    use ::tokio::net::{TcpStream, ToSocketAddrs};
     use tokio_util::codec::{Framed, LengthDelimitedCodec, LengthDelimitedCodecError};
 
     use super::Timer;
@@ -1148,10 +1085,7 @@ pub mod tokio {
     impl Sink<Vec<u8>> for Tcp {
         type Error = RuntimeError;
 
-        fn poll_ready(
-            mut self: Pin<&mut Self>,
-            cx: &mut Context<'_>,
-        ) -> Poll<Result<(), RuntimeError>> {
+        fn poll_ready(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Result<(), RuntimeError>> {
             self.open()?;
             Sink::<Bytes>::poll_ready(Pin::new(&mut self.framed), cx).map_err(|e| error_of(&e))
         }
@@ -1168,18 +1102,12 @@ pub mod tokio {
                 .map_err(|e| error_of(&e))
         }
 
-        fn poll_flush(
-            mut self: Pin<&mut Self>,
-            cx: &mut Context<'_>,
-        ) -> Poll<Result<(), RuntimeError>> {
+        fn poll_flush(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Result<(), RuntimeError>> {
             self.open()?;
             Sink::<Bytes>::poll_flush(Pin::new(&mut self.framed), cx).map_err(|e| error_of(&e))
         }
 
-        fn poll_close(
-            mut self: Pin<&mut Self>,
-            cx: &mut Context<'_>,
-        ) -> Poll<Result<(), RuntimeError>> {
+        fn poll_close(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Result<(), RuntimeError>> {
             Sink::<Bytes>::poll_close(Pin::new(&mut self.framed), cx).map_err(|e| error_of(&e))
         }
     }

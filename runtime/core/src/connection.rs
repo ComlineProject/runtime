@@ -156,15 +156,7 @@ impl State {
         let request_id = self.next_id;
         self.next_id = self.next_id.wrapping_add(1);
         out.clear();
-        framing.encode_request(
-            protocol,
-            call,
-            request_id,
-            !expects_reply,
-            params,
-            format,
-            out,
-        )?;
+        framing.encode_request(protocol, call, request_id, !expects_reply, params, format, out)?;
         if expects_reply {
             self.waiting.push(request_id);
         }
@@ -236,38 +228,20 @@ impl State {
         frame: &'f [u8],
     ) -> Result<Event<'f>, RuntimeError> {
         match framing.decode(frame).ok_or(RuntimeError::Framing)? {
-            Frame::Request {
-                protocol,
-                request,
-                one_way,
-            } => Ok(Event::Request {
-                protocol,
-                request,
-                one_way,
-            }),
-            Frame::Reply {
-                request_id,
-                envelope,
-                ..
-            } => {
+            Frame::Request { protocol, request, one_way } => Ok(Event::Request { protocol, request, one_way }),
+            Frame::Reply { request_id, envelope, .. } => {
                 if self.unordered {
                     return Ok(match self.waiting.iter().position(|&id| id == request_id) {
                         Some(at) => {
                             self.waiting.swap_remove(at);
-                            Event::Reply {
-                                request_id,
-                                envelope,
-                            }
+                            Event::Reply { request_id, envelope }
                         }
                         None => Event::Stale,
                     });
                 }
                 if self.waiting.last() == Some(&request_id) {
                     self.waiting.pop();
-                    Ok(Event::Reply {
-                        request_id,
-                        envelope,
-                    })
+                    Ok(Event::Reply { request_id, envelope })
                 } else if self.waiting.contains(&request_id) {
                     Err(RuntimeError::Framing)
                 } else {
@@ -337,9 +311,7 @@ impl Extensions {
 
 impl core::fmt::Debug for Extensions {
     fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
-        f.debug_struct("Extensions")
-            .field("len", &self.values.len())
-            .finish()
+        f.debug_struct("Extensions").field("len", &self.values.len()).finish()
     }
 }
 
@@ -464,25 +436,13 @@ impl<T: Transport, W: WireFormat> Connection<T, W, Datagram2Framing> {
     /// with `datagram@2`. Refuses (`RuntimeError::Handshake`) on a schema,
     /// format or framing mismatch.
     pub fn connect(transport: T, format: W, ir_hash: u64) -> Result<Self, RuntimeError> {
-        Self::connect_with(
-            transport,
-            format,
-            Datagram2Framing,
-            &mut ComlineHandshake,
-            ir_hash,
-        )
+        Self::connect_with(transport, format, Datagram2Framing, &mut ComlineHandshake, ir_hash)
     }
 
     /// Answer: run the `comline@1` handshake's provider side over
     /// `transport`, with `datagram@2`.
     pub fn accept(transport: T, format: W, ir_hash: u64) -> Result<Self, RuntimeError> {
-        Self::accept_with(
-            transport,
-            format,
-            Datagram2Framing,
-            &mut ComlineHandshake,
-            ir_hash,
-        )
+        Self::accept_with(transport, format, Datagram2Framing, &mut ComlineHandshake, ir_hash)
     }
 
     /// A connection over `transport` **without a handshake**, with
@@ -596,8 +556,7 @@ impl<T: Transport, W: WireFormat, F: ConnectionFraming> Peer for Connection<T, W
         call: Call,
         params: &P,
     ) -> Result<(Envelope<'_>, &W), RuntimeError> {
-        self.link
-            .call(&self.providers, protocol, call, params, None)
+        self.link.call(&self.providers, protocol, call, params, None)
     }
 
     fn call_with_timeout<P: Serialize + ?Sized>(
@@ -607,8 +566,7 @@ impl<T: Transport, W: WireFormat, F: ConnectionFraming> Peer for Connection<T, W
         params: &P,
         timeout: Duration,
     ) -> Result<(Envelope<'_>, &W), RuntimeError> {
-        self.link
-            .call(&self.providers, protocol, call, params, Some(timeout))
+        self.link.call(&self.providers, protocol, call, params, Some(timeout))
     }
 
     fn notify<P: Serialize + ?Sized>(
@@ -652,8 +610,7 @@ impl<T: Transport, W: WireFormat, F: ConnectionFraming> Peer for Handle<'_, T, W
         params: &P,
         timeout: Duration,
     ) -> Result<(Envelope<'_>, &W), RuntimeError> {
-        self.link
-            .call(self.providers, protocol, call, params, Some(timeout))
+        self.link.call(self.providers, protocol, call, params, Some(timeout))
     }
 
     fn notify<P: Serialize + ?Sized>(
@@ -770,21 +727,14 @@ impl<T: Transport, W: WireFormat, F: ConnectionFraming> Link<T, W, F> {
 
     /// Act on the frame in `self.recv`: serve a request, or report which
     /// waiting call a reply completes (leaving it in `self.recv`).
-    fn handle_frame(
-        &mut self,
-        providers: &Providers<T, W, F>,
-    ) -> Result<Option<u64>, RuntimeError> {
+    fn handle_frame(&mut self, providers: &Providers<T, W, F>) -> Result<Option<u64>, RuntimeError> {
         // A handler may receive frames of its own (a nested call), so the
         // request's bytes move out of `recv` while it runs.
         let frame = core::mem::take(&mut self.recv);
         let handled = match self.state.receive(&self.framing, &frame) {
-            Ok(Event::Request {
-                protocol,
-                request,
-                one_way,
-            }) => self
-                .serve_request(providers, protocol, request, one_way)
-                .map(|()| None),
+            Ok(Event::Request { protocol, request, one_way }) => {
+                self.serve_request(providers, protocol, request, one_way).map(|()| None)
+            }
             Ok(Event::Reply { request_id, .. }) => Ok(Some(request_id)),
             Ok(Event::Stale) => Ok(None),
             Err(error) => Err(error),
@@ -807,10 +757,7 @@ impl<T: Transport, W: WireFormat, F: ConnectionFraming> Link<T, W, F> {
             let mut reply = Reply::new(&mut body);
             let dispatched = match target {
                 Some((_, provider, index)) => {
-                    let mut handle = Handle {
-                        link: self,
-                        providers,
-                    };
+                    let mut handle = Handle { link: self, providers };
                     provider
                         .dispatch(Kind::Id(index), request.params, &mut reply, &mut handle)
                         .map(|()| reply.outcome())
@@ -822,10 +769,7 @@ impl<T: Transport, W: WireFormat, F: ConnectionFraming> Link<T, W, F> {
             };
             dispatched.unwrap_or(Outcome::Fault)
         };
-        let protocol = target
-            .map(|(number, ..)| number)
-            .or(protocol)
-            .unwrap_or_default();
+        let protocol = target.map(|(number, ..)| number).or(protocol).unwrap_or_default();
 
         let envelope = match outcome {
             _ if one_way => None,
@@ -885,18 +829,9 @@ mod tests {
             framing.encode_reply(0, id, &Envelope::Ok(b""), &mut frame);
             frame
         };
-        assert_eq!(
-            state.receive(&framing, &reply(outer)),
-            Err(RuntimeError::Framing)
-        );
-        assert!(matches!(
-            state.receive(&framing, &reply(inner)),
-            Ok(Event::Reply { .. })
-        ));
-        assert!(matches!(
-            state.receive(&framing, &reply(outer)),
-            Ok(Event::Reply { .. })
-        ));
+        assert_eq!(state.receive(&framing, &reply(outer)), Err(RuntimeError::Framing));
+        assert!(matches!(state.receive(&framing, &reply(inner)), Ok(Event::Reply { .. })));
+        assert!(matches!(state.receive(&framing, &reply(outer)), Ok(Event::Reply { .. })));
         assert!(!state.is_waiting());
         assert_eq!(state.receive(&framing, &reply(99)), Ok(Event::Stale));
     }
@@ -917,13 +852,8 @@ mod tests {
             framing.encode_reply(0, id, &Envelope::Ok(b""), &mut frame);
             frame
         };
-        assert!(
-            matches!(state.receive(&framing, &reply(first)), Ok(Event::Reply { request_id, .. }) if request_id == first)
-        );
-        assert!(matches!(
-            state.receive(&framing, &reply(second)),
-            Ok(Event::Reply { .. })
-        ));
+        assert!(matches!(state.receive(&framing, &reply(first)), Ok(Event::Reply { request_id, .. }) if request_id == first));
+        assert!(matches!(state.receive(&framing, &reply(second)), Ok(Event::Reply { .. })));
         assert_eq!(state.receive(&framing, &reply(first)), Ok(Event::Stale));
         assert!(!state.is_waiting());
     }

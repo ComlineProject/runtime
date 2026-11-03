@@ -38,11 +38,7 @@ struct TextParams<'a> {
     text: &'a str,
 }
 
-fn ok<W: WireFormat, T: Serialize>(
-    fmt: &W,
-    value: &T,
-    reply: &mut Reply,
-) -> Result<(), RuntimeError> {
+fn ok<W: WireFormat, T: Serialize>(fmt: &W, value: &T, reply: &mut Reply) -> Result<(), RuntimeError> {
     let mut body = Vec::new();
     fmt.encode(value, &mut body)?;
     reply.ok(&body);
@@ -71,13 +67,7 @@ impl Dispatch for ChatDispatcher {
         CHAT_CALLS
     }
 
-    fn dispatch<W: WireFormat>(
-        &self,
-        _: Kind,
-        _: &[u8],
-        _: &W,
-        _: &mut Reply,
-    ) -> Result<(), RuntimeError> {
+    fn dispatch<W: WireFormat>(&self, _: Kind, _: &[u8], _: &W, _: &mut Reply) -> Result<(), RuntimeError> {
         unreachable!("only served on a connection")
     }
 
@@ -91,11 +81,7 @@ impl Dispatch for ChatDispatcher {
         match call.resolve(CHAT_CALLS).ok_or(RuntimeError::UnknownCall)? {
             0 => {
                 let text = peer.format().decode::<TextParams>(params)?.text.to_string();
-                let shown: bool = decode_ok(peer.call(
-                    EVENTS,
-                    Call::new(0, "message"),
-                    &TextParams { text: &text },
-                )?)?;
+                let shown: bool = decode_ok(peer.call(EVENTS, Call::new(0, "message"), &TextParams { text: &text })?)?;
                 assert!(shown);
                 let sent = match peer.extensions().get_mut::<Sent>() {
                     Some(sent) => {
@@ -136,10 +122,7 @@ impl Dispatch for EventsDispatcher {
         fmt: &W,
         reply: &mut Reply,
     ) -> Result<(), RuntimeError> {
-        match call
-            .resolve(EVENTS_CALLS)
-            .ok_or(RuntimeError::UnknownCall)?
-        {
+        match call.resolve(EVENTS_CALLS).ok_or(RuntimeError::UnknownCall)? {
             0 => {
                 let p: TextParams = fmt.decode(params)?;
                 self.seen.lock().unwrap().push(p.text.to_string());
@@ -179,25 +162,11 @@ fn pair(
 fn a_handler_calls_back_the_peer_that_called_it() {
     let (mut client, events, server) = pair(|conn| conn.serve().unwrap());
 
-    let first: u64 = decode_ok(
-        client
-            .call(CHAT, Call::new(0, "send"), &TextParams { text: "hi" })
-            .unwrap(),
-    )
-    .unwrap();
-    let second: u64 = decode_ok(
-        client
-            .call(CHAT, Call::new(0, "send"), &TextParams { text: "again" })
-            .unwrap(),
-    )
-    .unwrap();
+    let first: u64 = decode_ok(client.call(CHAT, Call::new(0, "send"), &TextParams { text: "hi" }).unwrap()).unwrap();
+    let second: u64 = decode_ok(client.call(CHAT, Call::new(0, "send"), &TextParams { text: "again" }).unwrap()).unwrap();
     let count: u64 = decode_ok(client.call(CHAT, Call::new(1, "count"), &()).unwrap()).unwrap();
 
-    assert_eq!(
-        (first, second, count),
-        (1, 2, 2),
-        "the count is kept on the accepting side's connection"
-    );
+    assert_eq!((first, second, count), (1, 2, 2), "the count is kept on the accepting side's connection");
     assert_eq!(*events.seen.lock().unwrap(), ["hi", "again"]);
     drop(client);
     server.join().unwrap();
@@ -206,15 +175,7 @@ fn a_handler_calls_back_the_peer_that_called_it() {
 #[test]
 fn the_accepting_side_starts_calls_of_its_own() {
     let (mut client, events, server) = pair(|conn| {
-        let shown: bool = decode_ok(
-            conn.call(
-                EVENTS,
-                Call::new(0, "message"),
-                &TextParams { text: "pushed" },
-            )
-            .unwrap(),
-        )
-        .unwrap();
+        let shown: bool = decode_ok(conn.call(EVENTS, Call::new(0, "message"), &TextParams { text: "pushed" }).unwrap()).unwrap();
         assert!(shown);
         conn.notify(EVENTS, Call::new(1, "ping"), &()).unwrap();
     });
@@ -245,8 +206,7 @@ fn a_late_reply_to_a_timed_out_call_is_dropped() {
         conn.serve().unwrap();
     });
 
-    let timed_out =
-        client.call_with_timeout(CHAT, Call::new(1, "count"), &(), Duration::from_millis(20));
+    let timed_out = client.call_with_timeout(CHAT, Call::new(1, "count"), &(), Duration::from_millis(20));
     assert_eq!(timed_out.err(), Some(RuntimeError::Timeout));
     // The first call's reply arrives first, and is skipped.
     let count: u64 = decode_ok(client.call(CHAT, Call::new(1, "count"), &()).unwrap()).unwrap();

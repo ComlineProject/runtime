@@ -15,9 +15,7 @@
 
 use core::fmt;
 
-use serde::de::{
-    self, DeserializeSeed, Deserializer, EnumAccess, MapAccess, SeqAccess, VariantAccess, Visitor,
-};
+use serde::de::{self, DeserializeSeed, Deserializer, EnumAccess, MapAccess, SeqAccess, VariantAccess, Visitor};
 
 /// The one shape a format writes a struct in.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -65,10 +63,7 @@ impl<'de, S: DeserializeSeed<'de>> DeserializeSeed<'de> for ShapedSeed<S> {
     type Value = S::Value;
 
     fn deserialize<D: Deserializer<'de>>(self, de: D) -> Result<S::Value, D::Error> {
-        self.seed.deserialize(Shaped {
-            de,
-            shape: self.shape,
-        })
+        self.seed.deserialize(Shaped { de, shape: self.shape })
     }
 }
 
@@ -119,46 +114,16 @@ impl<'de, D: Deserializer<'de>> Deserializer<'de> for Shaped<D> {
         self.de.deserialize_string(StrVisitor { visitor })
     }
 
-    fn deserialize_unit_struct<V: Visitor<'de>>(
-        self,
-        name: &'static str,
-        visitor: V,
-    ) -> Result<V::Value, D::Error> {
-        self.de.deserialize_unit_struct(
-            name,
-            ShapedVisitor {
-                visitor,
-                shape: self.shape,
-            },
-        )
+    fn deserialize_unit_struct<V: Visitor<'de>>(self, name: &'static str, visitor: V) -> Result<V::Value, D::Error> {
+        self.de.deserialize_unit_struct(name, ShapedVisitor { visitor, shape: self.shape })
     }
 
-    fn deserialize_newtype_struct<V: Visitor<'de>>(
-        self,
-        name: &'static str,
-        visitor: V,
-    ) -> Result<V::Value, D::Error> {
-        self.de.deserialize_newtype_struct(
-            name,
-            ShapedVisitor {
-                visitor,
-                shape: self.shape,
-            },
-        )
+    fn deserialize_newtype_struct<V: Visitor<'de>>(self, name: &'static str, visitor: V) -> Result<V::Value, D::Error> {
+        self.de.deserialize_newtype_struct(name, ShapedVisitor { visitor, shape: self.shape })
     }
 
-    fn deserialize_tuple<V: Visitor<'de>>(
-        self,
-        len: usize,
-        visitor: V,
-    ) -> Result<V::Value, D::Error> {
-        self.de.deserialize_tuple(
-            len,
-            ShapedVisitor {
-                visitor,
-                shape: self.shape,
-            },
-        )
+    fn deserialize_tuple<V: Visitor<'de>>(self, len: usize, visitor: V) -> Result<V::Value, D::Error> {
+        self.de.deserialize_tuple(len, ShapedVisitor { visitor, shape: self.shape })
     }
 
     fn deserialize_tuple_struct<V: Visitor<'de>>(
@@ -167,14 +132,7 @@ impl<'de, D: Deserializer<'de>> Deserializer<'de> for Shaped<D> {
         len: usize,
         visitor: V,
     ) -> Result<V::Value, D::Error> {
-        self.de.deserialize_tuple_struct(
-            name,
-            len,
-            ShapedVisitor {
-                visitor,
-                shape: self.shape,
-            },
-        )
+        self.de.deserialize_tuple_struct(name, len, ShapedVisitor { visitor, shape: self.shape })
     }
 
     fn deserialize_struct<V: Visitor<'de>>(
@@ -183,14 +141,7 @@ impl<'de, D: Deserializer<'de>> Deserializer<'de> for Shaped<D> {
         fields: &'static [&'static str],
         visitor: V,
     ) -> Result<V::Value, D::Error> {
-        self.de.deserialize_struct(
-            name,
-            fields,
-            StructVisitor {
-                visitor,
-                shape: self.shape,
-            },
-        )
+        self.de.deserialize_struct(name, fields, StructVisitor { visitor, shape: self.shape })
     }
 
     fn deserialize_enum<V: Visitor<'de>>(
@@ -199,14 +150,7 @@ impl<'de, D: Deserializer<'de>> Deserializer<'de> for Shaped<D> {
         variants: &'static [&'static str],
         visitor: V,
     ) -> Result<V::Value, D::Error> {
-        self.de.deserialize_enum(
-            name,
-            variants,
-            ShapedVisitor {
-                visitor,
-                shape: self.shape,
-            },
-        )
+        self.de.deserialize_enum(name, variants, ShapedVisitor { visitor, shape: self.shape })
     }
 
     fn is_human_readable(&self) -> bool {
@@ -238,27 +182,15 @@ macro_rules! nested {
         }
 
         fn visit_some<D2: Deserializer<'de>>(self, de: D2) -> Result<Self::Value, D2::Error> {
-            self.visitor.visit_some(Shaped {
-                de,
-                shape: self.shape,
-            })
+            self.visitor.visit_some(Shaped { de, shape: self.shape })
         }
 
-        fn visit_newtype_struct<D2: Deserializer<'de>>(
-            self,
-            de: D2,
-        ) -> Result<Self::Value, D2::Error> {
-            self.visitor.visit_newtype_struct(Shaped {
-                de,
-                shape: self.shape,
-            })
+        fn visit_newtype_struct<D2: Deserializer<'de>>(self, de: D2) -> Result<Self::Value, D2::Error> {
+            self.visitor.visit_newtype_struct(Shaped { de, shape: self.shape })
         }
 
         fn visit_enum<A: EnumAccess<'de>>(self, data: A) -> Result<Self::Value, A::Error> {
-            self.visitor.visit_enum(ShapedAccess {
-                access: data,
-                shape: self.shape,
-            })
+            self.visitor.visit_enum(ShapedAccess { access: data, shape: self.shape })
         }
     };
 }
@@ -304,17 +236,11 @@ impl<'de, V: Visitor<'de>> Visitor<'de> for ShapedVisitor<V> {
     nested!();
 
     fn visit_seq<A: SeqAccess<'de>>(self, seq: A) -> Result<Self::Value, A::Error> {
-        self.visitor.visit_seq(ShapedAccess {
-            access: seq,
-            shape: self.shape,
-        })
+        self.visitor.visit_seq(ShapedAccess { access: seq, shape: self.shape })
     }
 
     fn visit_map<A: MapAccess<'de>>(self, map: A) -> Result<Self::Value, A::Error> {
-        self.visitor.visit_map(ShapedAccess {
-            access: map,
-            shape: self.shape,
-        })
+        self.visitor.visit_map(ShapedAccess { access: map, shape: self.shape })
     }
 }
 
@@ -327,27 +253,15 @@ impl<'de, V: Visitor<'de>> Visitor<'de> for StructVisitor<V> {
 
     fn visit_seq<A: SeqAccess<'de>>(self, seq: A) -> Result<Self::Value, A::Error> {
         match self.shape {
-            StructShape::Seq => self.visitor.visit_seq(ShapedAccess {
-                access: seq,
-                shape: self.shape,
-            }),
-            StructShape::Map => Err(de::Error::invalid_type(
-                de::Unexpected::Seq,
-                &"a struct by name",
-            )),
+            StructShape::Seq => self.visitor.visit_seq(ShapedAccess { access: seq, shape: self.shape }),
+            StructShape::Map => Err(de::Error::invalid_type(de::Unexpected::Seq, &"a struct by name")),
         }
     }
 
     fn visit_map<A: MapAccess<'de>>(self, map: A) -> Result<Self::Value, A::Error> {
         match self.shape {
-            StructShape::Map => self.visitor.visit_map(ShapedAccess {
-                access: map,
-                shape: self.shape,
-            }),
-            StructShape::Seq => Err(de::Error::invalid_type(
-                de::Unexpected::Map,
-                &"a struct by position",
-            )),
+            StructShape::Map => self.visitor.visit_map(ShapedAccess { access: map, shape: self.shape }),
+            StructShape::Seq => Err(de::Error::invalid_type(de::Unexpected::Map, &"a struct by position")),
         }
     }
 }
@@ -374,14 +288,8 @@ impl<'de, V: Visitor<'de>> Visitor<'de> for StrVisitor<V> {
 impl<'de, A: SeqAccess<'de>> SeqAccess<'de> for ShapedAccess<A> {
     type Error = A::Error;
 
-    fn next_element_seed<T: DeserializeSeed<'de>>(
-        &mut self,
-        seed: T,
-    ) -> Result<Option<T::Value>, A::Error> {
-        self.access.next_element_seed(ShapedSeed {
-            seed,
-            shape: self.shape,
-        })
+    fn next_element_seed<T: DeserializeSeed<'de>>(&mut self, seed: T) -> Result<Option<T::Value>, A::Error> {
+        self.access.next_element_seed(ShapedSeed { seed, shape: self.shape })
     }
 
     fn size_hint(&self) -> Option<usize> {
@@ -392,21 +300,12 @@ impl<'de, A: SeqAccess<'de>> SeqAccess<'de> for ShapedAccess<A> {
 impl<'de, A: MapAccess<'de>> MapAccess<'de> for ShapedAccess<A> {
     type Error = A::Error;
 
-    fn next_key_seed<K: DeserializeSeed<'de>>(
-        &mut self,
-        seed: K,
-    ) -> Result<Option<K::Value>, A::Error> {
-        self.access.next_key_seed(ShapedSeed {
-            seed,
-            shape: self.shape,
-        })
+    fn next_key_seed<K: DeserializeSeed<'de>>(&mut self, seed: K) -> Result<Option<K::Value>, A::Error> {
+        self.access.next_key_seed(ShapedSeed { seed, shape: self.shape })
     }
 
     fn next_value_seed<V: DeserializeSeed<'de>>(&mut self, seed: V) -> Result<V::Value, A::Error> {
-        self.access.next_value_seed(ShapedSeed {
-            seed,
-            shape: self.shape,
-        })
+        self.access.next_value_seed(ShapedSeed { seed, shape: self.shape })
     }
 
     fn size_hint(&self) -> Option<usize> {
@@ -418,19 +317,10 @@ impl<'de, A: EnumAccess<'de>> EnumAccess<'de> for ShapedAccess<A> {
     type Error = A::Error;
     type Variant = ShapedAccess<A::Variant>;
 
-    fn variant_seed<V: DeserializeSeed<'de>>(
-        self,
-        seed: V,
-    ) -> Result<(V::Value, Self::Variant), A::Error> {
+    fn variant_seed<V: DeserializeSeed<'de>>(self, seed: V) -> Result<(V::Value, Self::Variant), A::Error> {
         let shape = self.shape;
         let (value, variant) = self.access.variant_seed(ShapedSeed { seed, shape })?;
-        Ok((
-            value,
-            ShapedAccess {
-                access: variant,
-                shape,
-            },
-        ))
+        Ok((value, ShapedAccess { access: variant, shape }))
     }
 }
 
@@ -442,33 +332,14 @@ impl<'de, A: VariantAccess<'de>> VariantAccess<'de> for ShapedAccess<A> {
     }
 
     fn newtype_variant_seed<T: DeserializeSeed<'de>>(self, seed: T) -> Result<T::Value, A::Error> {
-        self.access.newtype_variant_seed(ShapedSeed {
-            seed,
-            shape: self.shape,
-        })
+        self.access.newtype_variant_seed(ShapedSeed { seed, shape: self.shape })
     }
 
     fn tuple_variant<V: Visitor<'de>>(self, len: usize, visitor: V) -> Result<V::Value, A::Error> {
-        self.access.tuple_variant(
-            len,
-            ShapedVisitor {
-                visitor,
-                shape: self.shape,
-            },
-        )
+        self.access.tuple_variant(len, ShapedVisitor { visitor, shape: self.shape })
     }
 
-    fn struct_variant<V: Visitor<'de>>(
-        self,
-        fields: &'static [&'static str],
-        visitor: V,
-    ) -> Result<V::Value, A::Error> {
-        self.access.struct_variant(
-            fields,
-            StructVisitor {
-                visitor,
-                shape: self.shape,
-            },
-        )
+    fn struct_variant<V: Visitor<'de>>(self, fields: &'static [&'static str], visitor: V) -> Result<V::Value, A::Error> {
+        self.access.struct_variant(fields, StructVisitor { visitor, shape: self.shape })
     }
 }

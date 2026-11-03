@@ -152,18 +152,13 @@ mod tests {
         fn validate_into(&self, path: &str, out: &mut Vec<ValidationError>, _first: bool) {
             if self.name.is_empty() {
                 let field = field_path(path, "name");
-                out.push(ValidationError {
-                    message: format!("{field} is empty"),
-                    field,
-                });
+                out.push(ValidationError { message: format!("{field} is empty"), field });
             }
         }
     }
 
     fn user(name: &str) -> User {
-        User {
-            name: name.to_string(),
-        }
+        User { name: name.to_string() }
     }
 
     #[test]
@@ -175,26 +170,14 @@ mod tests {
     #[test]
     fn a_failure_is_named_by_its_path() {
         let errors = user("").validate().unwrap_err();
-        assert_eq!(
-            errors.0,
-            [ValidationError {
-                field: "name".into(),
-                message: "name is empty".into()
-            }]
-        );
+        assert_eq!(errors.0, [ValidationError { field: "name".into(), message: "name is empty".into() }]);
         assert_eq!(errors.to_string(), "name is empty");
     }
 
     #[test]
     fn elements_are_indexed_and_collected() {
         let users = vec![user("ada"), user(""), user("")];
-        let fields: Vec<String> = users
-            .validate()
-            .unwrap_err()
-            .0
-            .into_iter()
-            .map(|e| e.field)
-            .collect();
+        let fields: Vec<String> = users.validate().unwrap_err().0.into_iter().map(|e| e.field).collect();
         assert_eq!(fields, ["[1].name", "[2].name"]);
     }
 
@@ -213,14 +196,8 @@ mod tests {
     #[test]
     fn several_failures_read_as_one_message() {
         let errors = ValidationErrors(vec![
-            ValidationError {
-                field: "a".into(),
-                message: "a is bad".into(),
-            },
-            ValidationError {
-                field: "b".into(),
-                message: "b is bad".into(),
-            },
+            ValidationError { field: "a".into(), message: "a is bad".into() },
+            ValidationError { field: "b".into(), message: "b is bad".into() },
         ]);
         assert_eq!(errors.to_string(), "a is bad; b is bad");
     }

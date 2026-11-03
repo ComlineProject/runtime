@@ -45,10 +45,7 @@ impl Json {
         let mut de = serde_json::Deserializer::from_slice(bytes);
         // A struct only by name (runtime#74).
         let value = seed
-            .deserialize(Shaped {
-                de: &mut de,
-                shape: StructShape::Map,
-            })
+            .deserialize(Shaped { de: &mut de, shape: StructShape::Map })
             .map_err(|e| crate::bounds::error_of(&e))?;
         de.end().map_err(|e| crate::bounds::error_of(&e))?;
         Ok(value)
