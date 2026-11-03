@@ -24,8 +24,9 @@
 //! Everything here is `no_std` and allocation-free except the `serde`
 //! adapters that build a `String` or a `Vec` (`decode`, with `alloc`).
 //!
-//! A bound failure surfaces as [`RuntimeError::BoundExceeded`] from every
-//! format's `encode` and `decode`: the adapters raise it through `serde`'s
+//! A bound failure surfaces as [`RuntimeError::BoundExceeded`] (which
+//! measure; the maximum is in the type) from every format's `encode` and
+//! `decode`: the adapters raise it through `serde`'s
 //! error as [`BoundExceeded`]'s message, which each format recognises
 //! ([`BoundExceeded::from_message`]).
 
@@ -50,6 +51,15 @@ pub enum Measure {
 }
 
 impl Measure {
+    /// What's counted: "characters", "items" or "levels".
+    pub fn noun(self) -> &'static str {
+        match self {
+            Measure::Chars => "characters",
+            Measure::Items => "items",
+            Measure::Depth => "levels",
+        }
+    }
+
     fn words(self) -> &'static str {
         match self {
             Measure::Chars => "characters",
@@ -104,10 +114,7 @@ impl core::error::Error for BoundExceeded {}
 
 impl From<BoundExceeded> for RuntimeError {
     fn from(b: BoundExceeded) -> Self {
-        RuntimeError::BoundExceeded {
-            measure: b.measure,
-            max: b.max,
-        }
+        RuntimeError::BoundExceeded { measure: b.measure }
     }
 }
 
@@ -527,8 +534,7 @@ mod tests {
         assert_eq!(
             chars_from_utf8(&[b'a'; 13], 3),
             Err(RuntimeError::BoundExceeded {
-                measure: Measure::Chars,
-                max: 3
+                measure: Measure::Chars
             })
         );
         assert_eq!(
@@ -602,11 +608,9 @@ mod tests {
         fn check<F: WireFormat>(f: F) {
             let chars = RuntimeError::BoundExceeded {
                 measure: Measure::Chars,
-                max: 3,
             };
             let items = RuntimeError::BoundExceeded {
                 measure: Measure::Items,
-                max: 2,
             };
             let encode = |name: &str, tags: &[u8]| {
                 let mut out = Vec::new();

@@ -25,7 +25,7 @@ use serde::de::{self, DeserializeSeed, IntoDeserializer, Visitor};
 use serde::ser::{self, Serialize};
 use serde::Deserialize;
 
-use crate::bounds::{BoundExceeded, MessageHead};
+use crate::bounds::{Measure, MessageHead};
 use crate::contract::{BufMut, RuntimeError, WireFormat};
 
 /// [`WireFormat`] for `packed@1`: the smallest and fastest of the formats,
@@ -94,20 +94,22 @@ enum Error {
     Unsupported,
     /// A message from the value's own `Serialize` or `Deserialize`.
     Custom,
-    /// A value over its type's bound, from [`crate::bounds`].
-    Bound(BoundExceeded),
+    /// A value over its type's bound, from [`crate::bounds`]. Only the
+    /// measure: with the maximum too, this error would take 8 bytes instead
+    /// of 1, and every `Result` on the decode path would grow with it.
+    Bound(Measure),
 }
 
 impl Error {
     fn into_runtime(self) -> RuntimeError {
         match self {
-            Error::Bound(b) => b.into(),
+            Error::Bound(measure) => RuntimeError::BoundExceeded { measure },
             _ => RuntimeError::Serialization,
         }
     }
 
     fn custom_of(message: &dyn fmt::Display) -> Self {
-        MessageHead::of(message).map_or(Error::Custom, Error::Bound)
+        MessageHead::of(message).map_or(Error::Custom, |b| Error::Bound(b.measure))
     }
 }
 
@@ -121,7 +123,9 @@ impl fmt::Display for Error {
             Error::BadUtf8 => "a string that isn't UTF-8",
             Error::Unsupported => "a shape packed@1 can't encode",
             Error::Custom => "the value refused itself",
-            Error::Bound(b) => return b.fmt(f),
+            Error::Bound(Measure::Chars) => "more characters than the type allows",
+            Error::Bound(Measure::Items) => "more items than the type allows",
+            Error::Bound(Measure::Depth) => "nested deeper than the type allows",
         })
     }
 }
@@ -847,6 +851,14 @@ mod tests {
             [7, 0, 0, 0, 100, 0, 2, b'a', b'b', 0, 1, 0, 0, 0x80, 0x3f, 0, 0, 0, 0x40]
         );
         assert_eq!(Packed.decode::<Player>(&bytes).unwrap(), player);
+    }
+
+    /// The decode path returns `Result<_, Error>` everywhere: a bigger
+    /// error makes each of them bigger, and decoding measurably slower.
+    #[test]
+    fn the_error_is_one_byte() {
+        assert_eq!(core::mem::size_of::<Error>(), 1);
+        assert_eq!(core::mem::size_of::<RuntimeError>(), 4);
     }
 
     #[test]
