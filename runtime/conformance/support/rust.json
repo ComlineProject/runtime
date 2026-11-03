@@ -7,6 +7,8 @@
     "framing-datagram": { "state": "supported" },
     "framing-datagram2": { "state": "supported" },
     "framing-jsonrpc": { "state": "supported" },
+    "framing-datagram3": { "state": "supported" },
+    "handshake-comline2": { "state": "supported" },
     "stream": { "state": "supported" },
     "format-json": { "state": "supported" },
     "format-msgpack": { "state": "supported" },

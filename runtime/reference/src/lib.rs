@@ -18,7 +18,7 @@ use serde_json::{json, Map, Value as Json};
 
 use comline_runtime::contract::{
     FORMAT_JSON, FORMAT_MSGPACK, FORMAT_PACKED, FRAMING_DATAGRAM, FRAMING_DATAGRAM2,
-    FRAMING_JSONRPC,
+    FRAMING_DATAGRAM3, FRAMING_JSONRPC,
 };
 use comline_runtime_conformance::{answer, check, Answer, Hex, Op, Type, Value};
 
@@ -40,6 +40,8 @@ pub const CORPUS_OPS: &[&str] = &[
     "decode",
     "stream_prefix",
     "stream_split",
+    "comline2_message",
+    "comline2_negotiate",
 ];
 
 /// Every op this reference answers: the corpus's, then its own.
@@ -52,7 +54,12 @@ pub fn ops() -> Vec<&'static str> {
 }
 
 pub const FORMATS: &[&str] = &[FORMAT_JSON, FORMAT_MSGPACK, FORMAT_PACKED];
-pub const FRAMINGS: &[&str] = &[FRAMING_DATAGRAM, FRAMING_DATAGRAM2, FRAMING_JSONRPC];
+pub const FRAMINGS: &[&str] = &[
+    FRAMING_DATAGRAM,
+    FRAMING_DATAGRAM2,
+    FRAMING_DATAGRAM3,
+    FRAMING_JSONRPC,
+];
 
 /// Answers one line: a request object, or an array of them. The reply is one
 /// line's JSON, without the newline. A malformed line gets an `error` reply.
@@ -275,7 +282,7 @@ mod tests {
         );
         assert_eq!(
             version["framings"],
-            json!(["datagram@1", "datagram@2", "jsonrpc@1"])
+            json!(["datagram@1", "datagram@2", "datagram@3", "jsonrpc@1"])
         );
     }
 

@@ -290,7 +290,7 @@ fn the_runner_passes_the_reference() {
         .filter(|(_, o)| **o != Outcome::Pass)
         .collect();
     assert!(failed.is_empty(), "{failed:#?}");
-    assert_eq!(corpus.profiles.len(), 7);
+    assert_eq!(corpus.profiles.len(), 9);
     for profile in corpus.profiles.values() {
         assert!(!corpus.cases_for(profile).is_empty(), "{}", profile.name);
         for proof in corpus.prove(profile, &outcomes) {
@@ -341,4 +341,17 @@ fn handshake_facts_need_their_refusals() {
         Ok(())
     );
     assert!(fact_shown("encoding_agreement", "true", &[agree, format]).is_err());
+
+    // comline@2: an accepted negotiation, and a refusal for each thing the
+    // fact covers.
+    let accept = case("handshake-comline2/offer-accept");
+    let line = case("handshake-comline2/offer-line-mismatch");
+    let package = case("handshake-comline2/offer-package-mismatch");
+    let encoding = case("handshake-comline2/offer-encoding-mismatch");
+    let exchange = case("handshake-comline2/offer-exchange-mismatch");
+    assert_eq!(fact_shown("schema_agreement", "true", &[accept, line, package]), Ok(()));
+    assert!(fact_shown("schema_agreement", "true", &[accept, line]).is_err());
+    assert!(fact_shown("schema_agreement", "true", &[line, package]).is_err());
+    assert_eq!(fact_shown("encoding_agreement", "true", &[accept, encoding, exchange]), Ok(()));
+    assert!(fact_shown("encoding_agreement", "true", &[accept, encoding]).is_err());
 }

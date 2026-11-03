@@ -13,6 +13,7 @@
 
 use std::collections::BTreeMap;
 
+mod comline2;
 mod intern;
 pub mod runner;
 mod seed;
@@ -26,9 +27,9 @@ use serde::{Deserialize, Deserializer, Serialize, Serializer};
 use comline_runtime::contract::stream::{self, Split, DEFAULT_MAX_FRAME, PREFIX_LEN};
 use comline_runtime::contract::SliceBuf;
 use comline_runtime::contract::{
-    name_hash, Call, ConnectionFraming, Datagram2Framing, DatagramFraming, Envelope, Frame,
+    name_hash, Call, ConnectionFraming, Datagram2Framing, Datagram3Framing, DatagramFraming, Envelope, Frame,
     Framing, HandshakeFrame, RequestCall, WireFormat, FORMAT_JSON, FORMAT_MSGPACK, FORMAT_PACKED,
-    FRAMING_DATAGRAM, FRAMING_DATAGRAM2, FRAMING_JSONRPC,
+    FRAMING_DATAGRAM, FRAMING_DATAGRAM2, FRAMING_DATAGRAM3, FRAMING_JSONRPC,
 };
 use comline_runtime::format::{Json, MsgPack, Packed};
 use comline_runtime::framing::JsonRpcFraming;
@@ -244,6 +245,18 @@ pub enum Op {
     /// incomplete. A rejection's bytes declare a frame over `max`; its
     /// input is `{max}`.
     StreamSplit,
+    /// A `comline@2` message, `{"type": "hello" | "answer" | "verdict",
+    /// "message": {...}}`, as `comline_runtime::comline2::Message`
+    /// serialises it. Encode and decode.
+    Comline2Message,
+    /// One `comline@2` negotiation step, `{step, side, params, local,
+    /// pending, reply, result}`, and `bytes`, the message the peer sent.
+    /// Decoding runs the step and gives the input back when its `reply` (the
+    /// message this end sends, or `null`) and `result` (`{"accepted":
+    /// {...}}` or `{"refused": {reason, side, protocol}}`) are what the
+    /// runtime concludes. Decode only. `comline@2`'s profile facts are
+    /// about this.
+    Comline2Negotiate,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
@@ -260,7 +273,7 @@ impl Op {
     /// Whether a case of this op only asks to decode its bytes, never to
     /// encode its input.
     pub fn decode_only(self) -> bool {
-        matches!(self, Op::Decode | Op::HandshakeCheck)
+        matches!(self, Op::Decode | Op::HandshakeCheck | Op::Comline2Negotiate)
     }
 }
 
@@ -603,6 +616,13 @@ fn handshake_fact_shown(fact: &str, value: &str, cases: &[&Case]) -> Result<(), 
     if value == "false" {
         return Ok(());
     }
+    if cases.iter().any(|c| c.op == Op::Comline2Negotiate) {
+        return if comline2::fact_shown(fact, cases) {
+            Ok(())
+        } else {
+            Err(format!("its cases don't show `{fact}: {value}`"))
+        };
+    }
     // (ir_hash, format, framing) differ, of the peer's frame from the input.
     let differs = |case: &Case| -> Option<(bool, bool, bool)> {
         if case.op != Op::HandshakeCheck {
@@ -745,6 +765,29 @@ macro_rules! with_framing {
     };
 }
 
+#[derive(Clone, Copy)]
+enum AnyDatagram {
+    D2(Datagram2Framing),
+    D3(Datagram3Framing),
+}
+
+fn datagram_of(name: &str) -> Option<AnyDatagram> {
+    match name {
+        FRAMING_DATAGRAM2 => Some(AnyDatagram::D2(Datagram2Framing)),
+        FRAMING_DATAGRAM3 => Some(AnyDatagram::D3(Datagram3Framing)),
+        _ => None,
+    }
+}
+
+macro_rules! with_datagram {
+    ($f:expr, |$x:ident| $body:expr) => {
+        match $f {
+            AnyDatagram::D2($x) => $body,
+            AnyDatagram::D3($x) => $body,
+        }
+    };
+}
+
 fn encode_reply(reply: &Reply, out: &mut Vec<u8>) {
     match reply {
         Reply::Ok { payload } => Envelope::encode_ok(&payload.0, out),
@@ -805,15 +848,16 @@ fn encode_request_bodies(
             "Framing::encode_request_body",
             framed(&|out| DatagramFraming.encode_request_body(call, name, id, &params, out)),
         )),
-        FRAMING_DATAGRAM2 => {
+        FRAMING_DATAGRAM2 | FRAMING_DATAGRAM3 => {
             let protocol = i
                 .protocol
                 .ok_or_else(|| Outcome::Fail("no `protocol`".into()))?;
+            let dg = datagram_of(&i.framing).unwrap();
             bodies.push((
                 "ConnectionFraming::encode_request_body",
                 framed(&|out| {
-                    Datagram2Framing
-                        .encode_request_body(protocol, call, name, id, i.one_way, &params, out)
+                    with_datagram!(dg, |f| f
+                        .encode_request_body(protocol, call, name, id, i.one_way, &params, out))
                 }),
             ));
         }
@@ -863,14 +907,13 @@ fn encode(op: Op, input: &serde_json::Value) -> Result<Vec<u8>, Outcome> {
         Op::Envelope => encode_reply(&parse(input)?, &mut out),
         Op::Request => {
             let i: RequestIn = parse(input)?;
-            if i.framing == FRAMING_DATAGRAM2 {
+            if let Some(dg) = datagram_of(&i.framing) {
                 let protocol = i
                     .protocol
                     .ok_or_else(|| Outcome::Fail("no `protocol`".into()))?;
                 let call = Call::new(i.call_id, intern::name(&i.method));
-                let f = Datagram2Framing;
                 let encoded = match i.format.as_str() {
-                    FORMAT_JSON => f.encode_request(
+                    FORMAT_JSON => with_datagram!(dg, |f| f.encode_request(
                         protocol,
                         call,
                         i.request_id,
@@ -878,8 +921,8 @@ fn encode(op: Op, input: &serde_json::Value) -> Result<Vec<u8>, Outcome> {
                         &Wire(&i.params),
                         &Json,
                         &mut out,
-                    ),
-                    FORMAT_MSGPACK => f.encode_request(
+                    )),
+                    FORMAT_MSGPACK => with_datagram!(dg, |f| f.encode_request(
                         protocol,
                         call,
                         i.request_id,
@@ -887,7 +930,7 @@ fn encode(op: Op, input: &serde_json::Value) -> Result<Vec<u8>, Outcome> {
                         &Wire(&i.params),
                         &MsgPack,
                         &mut out,
-                    ),
+                    )),
                     other => return Err(Outcome::NotImplemented(format!("format `{other}`"))),
                 };
                 encoded.map_err(|e| Outcome::Fail(format!("encoding failed: {e:?}")))?;
@@ -939,16 +982,16 @@ fn encode(op: Op, input: &serde_json::Value) -> Result<Vec<u8>, Outcome> {
         }
         Op::Response => {
             let i: ResponseIn = parse(input)?;
-            if i.framing == FRAMING_DATAGRAM2 {
+            if let Some(dg) = datagram_of(&i.framing) {
                 let protocol = i
                     .protocol
                     .ok_or_else(|| Outcome::Fail("no `protocol`".into()))?;
-                Datagram2Framing.encode_reply(
+                with_datagram!(dg, |f| f.encode_reply(
                     protocol,
                     i.request_id,
                     &envelope_of(&i.reply),
                     &mut out,
-                );
+                ));
                 return Ok(out);
             }
             let framing = framing_of(&i.framing)
@@ -974,6 +1017,7 @@ fn encode(op: Op, input: &serde_json::Value) -> Result<Vec<u8>, Outcome> {
                 .ok_or_else(|| Outcome::NotImplemented(format!("format `{}`", i.format)));
         }
         Op::Decode => return Err(Outcome::Fail("`decode` cases are decode only".into())),
+        Op::Comline2Message | Op::Comline2Negotiate => return comline2::encode(op, input),
         Op::HandshakeCheck => {
             return Err(Outcome::Fail(
                 "`handshake_check` cases are decode only".into(),
@@ -1017,6 +1061,7 @@ fn decode(
     let json = |v: serde_json::Value| -> Result<Option<serde_json::Value>, Outcome> { Ok(Some(v)) };
     match op {
         Op::NameHash | Op::Encode => Ok(None),
+        Op::Comline2Message | Op::Comline2Negotiate => comline2::decode(op, input, bytes),
         Op::StreamPrefix => {
             #[derive(Deserialize)]
             struct Max {
@@ -1099,11 +1144,12 @@ fn decode(
             None => Ok(None),
         },
         Op::Request if is_datagram2(input) => {
+            let dg = datagram_of(input["framing"].as_str().unwrap_or_default()).unwrap();
             let Some(Frame::Request {
                 protocol: Some(protocol),
                 request,
                 ..
-            }) = Datagram2Framing.decode(bytes)
+            }) = with_datagram!(dg, |f| f.decode(bytes))
             else {
                 return Ok(None);
             };
@@ -1130,13 +1176,16 @@ fn decode(
                 "params": params,
             }))
         }
-        Op::Response if is_datagram2(input) => match Datagram2Framing.decode(bytes) {
+        Op::Response if is_datagram2(input) => match with_datagram!(
+            datagram_of(input["framing"].as_str().unwrap_or_default()).unwrap(),
+            |f| f.decode(bytes)
+        ) {
             Some(Frame::Reply {
                 protocol,
                 request_id,
                 envelope,
             }) => json(to_json(&ResponseIn {
-                framing: FRAMING_DATAGRAM2.into(),
+                framing: input["framing"].as_str().unwrap_or_default().into(),
                 protocol,
                 request_id,
                 reply: reply_of(envelope),
@@ -1212,9 +1261,13 @@ fn decode(
     }
 }
 
+/// Whether the input names a connection datagram framing (`datagram@2` or
+/// `@3`), which carries the protocol number.
 fn is_datagram2(input: &serde_json::Value) -> bool {
-    input["framing"] == FRAMING_DATAGRAM2
+    datagram_of(input["framing"].as_str().unwrap_or_default()).is_some()
 }
+
+
 
 /// For a rejection case, whose input names only the framing: whether the
 /// framing accepted the bytes.
@@ -1717,6 +1770,45 @@ pub fn reference_cases() -> Vec<Vectors> {
         ],
     );
 
+    // datagram@3: calls by wire number, both numbers varints.
+    let p = |id: &str| format!("framing-datagram3/{id}");
+    let d3 = |(id, op, mut input): (String, Op, serde_json::Value), protocol: u16| {
+        input["protocol"] = protocol.into();
+        (id, op, input)
+    };
+    feature(
+        "framing-datagram3",
+        vec![
+            d3(request(p("request"), FRAMING_DATAGRAM3, 3, "greet", 42, &params), 0),
+            // 300 is two varint bytes, 65535 three.
+            d3(
+                request(
+                    p("request-two-byte-numbers"),
+                    FRAMING_DATAGRAM3,
+                    300,
+                    "ping",
+                    5,
+                    &Value::Array(vec![]),
+                ),
+                300,
+            ),
+            d3(
+                request(
+                    p("request-large-ids"),
+                    FRAMING_DATAGRAM3,
+                    u16::MAX,
+                    "ping",
+                    u64::MAX,
+                    &Value::Array(vec![]),
+                ),
+                u16::MAX,
+            ),
+            d3(response(p("response-ok"), FRAMING_DATAGRAM3, 7, ok(br#"{"body":"hi"}"#)), 0),
+            d3(response(p("response-err"), FRAMING_DATAGRAM3, 7, err(2, br#"{"why":"no"}"#)), 1),
+            d3(response(p("response-fault"), FRAMING_DATAGRAM3, 9, Reply::Fault), 200),
+        ],
+    );
+
     feature("stream", stream_cases());
 
     feature("format-json", format_cases("format-json", FORMAT_JSON));
@@ -1754,6 +1846,10 @@ pub fn reference_cases() -> Vec<Vectors> {
             _ => {}
         }
     }
+    vectors.push(Vectors {
+        feature: "handshake-comline2".into(),
+        cases: comline2::cases(),
+    });
     vectors
 }
 
@@ -2677,6 +2773,31 @@ fn rejections(feature: &str) -> Vec<Case> {
                 &[7, 0, 0, 0, 0, 0, 0, 0],
             ),
         ],
+        "framing-datagram3" => {
+            let mut request = Vec::new();
+            Datagram3Framing
+                .encode_request(0, Call::from(3), 42, false, &(), &Json, &mut request)
+                .unwrap();
+            let mut reply = Vec::new();
+            Datagram3Framing.encode_reply(0, 7, &Envelope::Fault, &mut reply);
+            let d3 = || framing(FRAMING_DATAGRAM3);
+            let raw = |head: &[u8]| {
+                let mut b = head.to_vec();
+                b.extend_from_slice(&request[3..]);
+                b
+            };
+            let p = |id: &str| format!("framing-datagram3/{id}");
+            vec![
+                reject(&p("reject-unknown-kind"), Op::Request, d3(), &raw(&[2, 0, 3])),
+                reject(&p("reject-overlong-protocol"), Op::Request, d3(), &raw(&[0, 0x80, 0x00, 3])),
+                reject(&p("reject-overlong-function"), Op::Request, d3(), &raw(&[0, 0, 0x83, 0x00])),
+                reject(&p("reject-function-past-u16"), Op::Request, d3(), &raw(&[0, 0, 0xff, 0xff, 0x04])),
+                reject(&p("reject-reply-as-request"), Op::Request, d3(), &reply),
+                reject(&p("reject-request-as-reply"), Op::Response, d3(), &request),
+                reject(&p("reject-short-request"), Op::Request, d3(), &request[..10]),
+                reject(&p("reject-reply-without-envelope"), Op::Response, d3(), &reply[..10]),
+            ]
+        }
         "framing-datagram2" => {
             let mut request = Vec::new();
             Datagram2Framing

@@ -32,7 +32,7 @@ A request is `{"id": ..., "op": ..., "input": {...}, "bytes": "..."}`:
 - `id` is any JSON value, echoed in the reply;
 - `op` is a corpus op (`name_hash`, `handshake`, `handshake_check`,
   `envelope`, `request`, `response`, `encode`, `decode`, `stream_prefix`,
-  `stream_split`), `check`,
+  `stream_split`, `comline2_message`, `comline2_negotiate`), `check`,
   `version` or `session`;
 - `input` is the op's input, as a vector case states it;
 - `bytes`, lowercase hex, is optional.
@@ -64,7 +64,7 @@ input:
 - The input selects the decoder, and supplies what the bytes don't carry, as
   in the corpus: a `decode` needs `format` and `type`, a rejection needs only
   the framing, a datagram request takes its method name from the input.
-- `decode` and `handshake_check` are decode-only: with no `bytes` they get an
+- `decode`, `handshake_check` and `comline2_negotiate` are decode-only: with no `bytes` they get an
   `error`. `name_hash` and
   `encode` are encode-only: given `bytes`, they get an `error`
   (`"name_hash is encode-only: send it without bytes"`), never a refusal.
@@ -101,9 +101,10 @@ it:
 {"id": 6, "op": "version"}
 → {"id": 6, "version": {"protocol": 1, "crate": "0.1.0",
      "ops": ["name_hash", "handshake", "handshake_check", "envelope", "request", "response",
-             "encode", "decode", "stream_prefix", "stream_split", "check", "version", "session"],
+             "encode", "decode", "stream_prefix", "stream_split", "comline2_message",
+             "comline2_negotiate", "check", "version", "session"],
      "formats": ["json@1", "msgpack@1", "packed@1"],
-     "framings": ["datagram@1", "datagram@2", "jsonrpc@1"]}}
+     "framings": ["datagram@1", "datagram@2", "datagram@3", "jsonrpc@1"]}}
 ```
 
 ### `session`
