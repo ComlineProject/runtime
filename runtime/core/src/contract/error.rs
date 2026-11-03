@@ -58,6 +58,18 @@ pub enum RuntimeError {
     /// ([`BufMut::overflowed`](crate::contract::BufMut::overflowed)). Nothing
     /// was committed; the caller can retry with more room.
     BufferTooSmall,
+    /// A value over its type's bound (core#98): a string of more than `max`
+    /// characters, an array of more than `max` items, or a type that
+    /// contains itself nested more than `max` levels deep.
+    ///
+    /// - **On decode** it's malformed input, refused like any other, before
+    ///   the value is allocated.
+    /// - **On encode** nothing was written: the value isn't one its type
+    ///   allows, and a conforming peer would refuse it.
+    BoundExceeded {
+        measure: crate::bounds::Measure,
+        max: u64,
+    },
 }
 
 impl fmt::Display for RuntimeError {
@@ -74,6 +86,9 @@ impl fmt::Display for RuntimeError {
             RuntimeError::FrameTooLarge => f.write_str("frame larger than the limit"),
             RuntimeError::Busy => f.write_str("too many calls waiting"),
             RuntimeError::BufferTooSmall => f.write_str("frame larger than its buffer"),
+            RuntimeError::BoundExceeded { measure, max } => {
+                write!(f, "{}", crate::bounds::BoundExceeded::new(*measure, *max))
+            }
         }
     }
 }

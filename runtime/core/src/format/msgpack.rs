@@ -26,7 +26,7 @@ impl WireFormat for MsgPack {
         let mut serializer = rmp_serde::Serializer::new(BufWriter(out));
         value
             .serialize(&mut serializer)
-            .map_err(|_| RuntimeError::Serialization)
+            .map_err(|e| crate::bounds::error_of(&e))
     }
 
     fn decode<'de, T: Deserialize<'de>>(&self, bytes: &'de [u8]) -> Result<T, RuntimeError> {
@@ -54,7 +54,7 @@ impl MsgPack {
         // A struct only by position, and a string never as `bin`
         // (runtime#74).
         seed.deserialize(Shaped { de: &mut de, shape: StructShape::Seq })
-            .map_err(|_| RuntimeError::Serialization)
+            .map_err(|e| crate::bounds::error_of(&e))
     }
 }
 

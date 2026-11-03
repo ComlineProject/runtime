@@ -17,6 +17,10 @@ pub mod contract;
 // MessagePack need `std`.
 pub mod format;
 
+// Bounds on types: the checks generated code calls while decoding and
+// encoding, the depth limit, and a single `char`'s UTF-8.
+pub mod bounds;
+
 // Alternative `Framing` implementations that need `alloc` and extra deps
 // (JSON-RPC, behind `jsonrpc`). The datagram framing is in `contract`.
 #[cfg(feature = "jsonrpc")]
