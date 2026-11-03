@@ -20,10 +20,10 @@
 
 use alloc::vec::Vec;
 
-use crate::contract::{HandshakeFrame, RuntimeError, HANDSHAKE_COMLINE, HANDSHAKE_NONE};
-use crate::transport::Transport;
 #[cfg(feature = "async")]
 use crate::async_connection::AsyncTransport;
+use crate::contract::{HandshakeFrame, RuntimeError, HANDSHAKE_COMLINE, HANDSHAKE_NONE};
+use crate::transport::Transport;
 #[cfg(feature = "async")]
 use core::future::Future;
 #[cfg(feature = "async")]
@@ -260,11 +260,19 @@ impl AsyncHandshake for NoHandshake {
         HANDSHAKE_NONE
     }
 
-    async fn initiate<T: AsyncTransport>(&mut self, _: &mut T, _: &Facts<'_>) -> Result<(), RuntimeError> {
+    async fn initiate<T: AsyncTransport>(
+        &mut self,
+        _: &mut T,
+        _: &Facts<'_>,
+    ) -> Result<(), RuntimeError> {
         Ok(())
     }
 
-    async fn respond<T: AsyncTransport>(&mut self, _: &mut T, _: &Facts<'_>) -> Result<(), RuntimeError> {
+    async fn respond<T: AsyncTransport>(
+        &mut self,
+        _: &mut T,
+        _: &Facts<'_>,
+    ) -> Result<(), RuntimeError> {
         Ok(())
     }
 }

@@ -68,6 +68,8 @@ input:
   `error`. `name_hash` and
   `encode` are encode-only: given `bytes`, they get an `error`
   (`"name_hash is encode-only: send it without bytes"`), never a refusal.
+- An `encode` of a value over its `type`'s bounds (core#98) gets an
+  `error`: the encoder refused it, and wrote nothing.
 
 ### Other replies
 

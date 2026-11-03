@@ -251,7 +251,10 @@ mod tests {
         let f = Datagram2Framing;
         for envelope in [
             Envelope::Ok(b"payload"),
-            Envelope::Err { id: 2, body: b"fields" },
+            Envelope::Err {
+                id: 2,
+                body: b"fields",
+            },
             Envelope::Fault,
         ] {
             let mut frame = Vec::new();
@@ -259,7 +262,11 @@ mod tests {
             assert_eq!(frame[0], KIND_REPLY);
             assert_eq!(
                 f.decode(&frame),
-                Some(Frame::Reply { protocol: Some(200), request_id: 7, envelope })
+                Some(Frame::Reply {
+                    protocol: Some(200),
+                    request_id: 7,
+                    envelope
+                })
             );
         }
     }
@@ -274,7 +281,11 @@ mod tests {
             Datagram2Framing.decode(&frame),
             Some(Frame::Request {
                 protocol: Some(3),
-                request: Request { call: RequestCall::Id(5), request_id: 42, params: b"args" },
+                request: Request {
+                    call: RequestCall::Id(5),
+                    request_id: 42,
+                    params: b"args"
+                },
                 one_way: false,
             })
         );
@@ -286,6 +297,10 @@ mod tests {
         assert_eq!(f.decode(&[]), None);
         assert_eq!(f.decode(&[2, 0]), None, "unknown kind");
         assert_eq!(f.decode(&[KIND_REQUEST, 0, 1, 0]), None, "short request");
-        assert_eq!(f.decode(&[KIND_REPLY, 0, 0, 0, 0, 0, 0, 0, 0, 0]), None, "no envelope");
+        assert_eq!(
+            f.decode(&[KIND_REPLY, 0, 0, 0, 0, 0, 0, 0, 0, 0]),
+            None,
+            "no envelope"
+        );
     }
 }

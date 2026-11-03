@@ -53,7 +53,12 @@ pub trait Peer {
         P: Serialize + ?Sized;
 
     /// Send a one-way call: no reply is awaited.
-    fn notify<P>(&mut self, protocol: ProtocolNumber, call: Call, params: &P) -> Result<(), RuntimeError>
+    fn notify<P>(
+        &mut self,
+        protocol: ProtocolNumber,
+        call: Call,
+        params: &P,
+    ) -> Result<(), RuntimeError>
     where
         P: Serialize + ?Sized;
 

@@ -11,8 +11,8 @@ use comline_runtime::async_connection::{
     async_duplex, Answer, AsyncConnection, AsyncDispatch, AsyncPeer, AsyncTransport,
 };
 use comline_runtime::contract::{
-    Call, ConnectionFraming, Datagram2Framing, Envelope, Kind, RuntimeError, WireFormat, HANDSHAKE_COMLINE,
-    HANDSHAKE_NONE,
+    Call, ConnectionFraming, Datagram2Framing, Envelope, Kind, RuntimeError, WireFormat,
+    HANDSHAKE_COMLINE, HANDSHAKE_NONE,
 };
 use comline_runtime::format::MsgPack;
 use comline_runtime::handshake::{AsyncHandshake, ComlineHandshake, Facts, Handshake, NoHandshake};
@@ -63,16 +63,31 @@ impl AsyncHandshake for Hello {
         "com.acme.hello@1"
     }
 
-    async fn initiate<T: AsyncTransport>(&mut self, transport: &mut T, local: &Facts<'_>) -> Result<(), RuntimeError> {
+    async fn initiate<T: AsyncTransport>(
+        &mut self,
+        transport: &mut T,
+        local: &Facts<'_>,
+    ) -> Result<(), RuntimeError> {
         self.ran = true;
-        transport.send(format!("HELLO {}", local.ir_hash).into_bytes()).await?;
-        match transport.next().await.ok_or(RuntimeError::Transport)??.as_slice() {
+        transport
+            .send(format!("HELLO {}", local.ir_hash).into_bytes())
+            .await?;
+        match transport
+            .next()
+            .await
+            .ok_or(RuntimeError::Transport)??
+            .as_slice()
+        {
             b"WELCOME" => Ok(()),
             _ => Err(RuntimeError::Handshake),
         }
     }
 
-    async fn respond<T: AsyncTransport>(&mut self, transport: &mut T, local: &Facts<'_>) -> Result<(), RuntimeError> {
+    async fn respond<T: AsyncTransport>(
+        &mut self,
+        transport: &mut T,
+        local: &Facts<'_>,
+    ) -> Result<(), RuntimeError> {
         self.ran = true;
         let hello = transport.next().await.ok_or(RuntimeError::Transport)??;
         let ok = hello == format!("HELLO {}", local.ir_hash).into_bytes();
@@ -95,7 +110,10 @@ async fn bump_over<T: AsyncTransport>(
     let handle = client.handle();
     let client = tokio::spawn(client.run());
     let server = tokio::spawn(server.run());
-    let reply = handle.call(ECHO, Call::new(0, "bump"), &41u32).await.unwrap();
+    let reply = handle
+        .call(ECHO, Call::new(0, "bump"), &41u32)
+        .await
+        .unwrap();
     let n = match reply.envelope() {
         Envelope::Ok(payload) => MsgPack.decode(payload).unwrap(),
         _ => panic!("bump failed"),
@@ -180,7 +198,10 @@ struct Input {
 }
 
 fn hex(s: &str) -> Vec<u8> {
-    (0..s.len()).step_by(2).map(|i| u8::from_str_radix(&s[i..i + 2], 16).unwrap()).collect()
+    (0..s.len())
+        .step_by(2)
+        .map(|i| u8::from_str_radix(&s[i..i + 2], 16).unwrap())
+        .collect()
 }
 
 /// What `comline@1` sends over a blocking transport for `local`: the peer
@@ -254,8 +275,18 @@ async fn comline_handshake_over_async_sends_the_vector_bytes() {
         let local = Facts::new(i.ir_hash.parse().unwrap(), &i.wire_format, &i.framing)
             .with_capabilities(i.capabilities);
         assert_eq!(sync_bytes(local), expected, "{}: blocking", case.id);
-        assert_eq!(async_bytes(local, false).await, expected, "{}: async initiate", case.id);
-        assert_eq!(async_bytes(local, true).await, expected, "{}: async respond", case.id);
+        assert_eq!(
+            async_bytes(local, false).await,
+            expected,
+            "{}: async initiate",
+            case.id
+        );
+        assert_eq!(
+            async_bytes(local, true).await,
+            expected,
+            "{}: async respond",
+            case.id
+        );
         sent += 1;
     }
     assert!(sent > 0 && rejected > 0 && checked > 0);

@@ -64,10 +64,16 @@ struct Expected {
     /// Whether the reply's `bytes` may be any JSON text equal to the
     /// expected one's, as for a case that compares as JSON.
     json_bytes: bool,
+    /// Whether the reply must be an `error`, whatever its words: an encode
+    /// refused, as for a value over its type's bounds.
+    refused: bool,
 }
 
 impl Expected {
     fn matches(&self, got: &Json) -> bool {
+        if self.refused {
+            return got["id"] == self.reply["id"] && got.get("error").is_some_and(Json::is_string);
+        }
         if !self.json_bytes || self.reply == *got {
             return self.reply == *got;
         }
@@ -91,11 +97,23 @@ fn expectations(case: &Case) -> Vec<Expected> {
     let id = |what: &str| format!("{}/{what}", case.id);
     let bytes = serde_json::to_value(&case.bytes).unwrap();
     let mut out = Vec::new();
+    if case.expect == Expect::Reject && case.op == Op::Encode {
+        // A value over its type's bounds: encoding it is refused, and no
+        // bytes stand for it.
+        out.push(Expected {
+            request: json!({ "id": id("refuse"), "op": case.op, "input": case.input }),
+            reply: json!({ "id": id("refuse"), "error": "" }),
+            json_bytes: false,
+            refused: true,
+        });
+        return out;
+    }
     if case.expect == Expect::Reject {
         out.push(Expected {
             request: json!({ "id": id("reject"), "op": case.op, "input": case.input, "bytes": bytes }),
             reply: json!({ "id": id("reject"), "accept": false }),
             json_bytes: false,
+            refused: false,
         });
         return out;
     }
@@ -104,6 +122,7 @@ fn expectations(case: &Case) -> Vec<Expected> {
             request: json!({ "id": id("encode"), "op": case.op, "input": case.input }),
             reply: json!({ "id": id("encode"), "bytes": bytes }),
             json_bytes: case.compare == Compare::Json,
+            refused: false,
         });
     }
     if !matches!(case.op, Op::NameHash | Op::Encode) {
@@ -111,6 +130,7 @@ fn expectations(case: &Case) -> Vec<Expected> {
             request: json!({ "id": id("decode"), "op": case.op, "input": case.input, "bytes": bytes }),
             reply: json!({ "id": id("decode"), "accept": true, "input": case.input }),
             json_bytes: false,
+            refused: false,
         });
     }
     out

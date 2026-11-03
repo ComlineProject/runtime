@@ -34,7 +34,7 @@ The ops, and what their `input` holds:
 | `envelope` | `kind`: `ok` with `payload`, `err` with `id` and `body`, or `fault` | encode and decode |
 | `request` | `framing`, `call_id`, `method`, `request_id`, `format`, `params`, and `one_way` when `true` | encode and decode |
 | `response` | `framing`, `request_id`, and an envelope's fields | encode and decode |
-| `encode` | `format`, `value` | encode |
+| `encode` | `format`, `value`, and `type` when its bounds matter | encode; a rejection's encode must fail |
 | `decode` | `format`, `type`, `value` | decode: `bytes` read as `type` give `value` |
 | `stream_prefix` | `len`, `max` | encode and decode: the 4-byte length prefix of a `len`-byte frame under the limit `max` |
 | `stream_split` | `max`, `frames`, `rest`, `needed` | encode and decode: a byte stream of `frames`, each behind its prefix, then `rest` |
@@ -60,6 +60,9 @@ The ops, and what their `input` holds:
     another way, which every runtime must read.
 - **`"expect": "reject"`:** decoding `bytes` must fail. The input then names
   only the framing, where there is one.
+  - An `encode` rejection is a value over its `type`'s bounds: encoding it
+    must fail, before anything is written. Its `bytes` are empty and aren't
+    decoded.
 - **Stream framing** (`stream`): a frame on a byte stream is
   `[len: u32 LE][len bytes]`, and a runtime refuses a `len` over its limit:
   by default 16 MiB (16,777,216 bytes) in every runtime, and `len == max` is
@@ -88,9 +91,16 @@ another version wrote, which is what [profiles](#encoding-profiles) are about.
 `type` describes the reader so any runtime can build one, in every shape a
 generated type can have:
 - the scalars `"bool"`, `"u8"` to `"u128"`, `"i8"` to `"i128"`, `"f32"`,
-  `"f64"`, `"string"` and `"unit"`;
+  `"f64"`, `"string"`, `"char"` (one Unicode scalar value) and `"unit"`;
 - `{"option": T}`, `{"array": T}` for `T[]`, and `{"fixed": {"of": T, "len": N}}`
   for `T[N]`;
+- bounds (core#98): `{"bounded_string": {"max": N}}` for `char[max N]`, at
+  most N characters (Unicode scalar values, not bytes);
+  `{"bounded_array": {"of": T, "max": N}}` for `T[max N]`; and
+  `{"recursive": {"max_depth": D, "of": T}}` for a type that can contain
+  itself, under `@max_depth = D`, where `"self"` inside `T` stands for the
+  recursive type again. The outermost value is level 1, and a value at level
+  D + 1 is refused;
 - `{"struct": {"name": "Point", "fields": [["x", "i32"], ["y", "i32"]]}}`;
 - `{"enum": {"name": "Color", "variants": ["Red", "Green", "Blue"]}}`.
 
@@ -108,7 +118,7 @@ find become `found-*` vectors; the fuzz README says how.
 
 A value is typed, so a runtime knows which width and shape to encode:
 `{"u8": 255}`, `{"u64": "18446744073709551615"}` (and `u128`, `i128`, also as
-decimal strings), `{"string": "x"}`, `{"tuple": [...]}` for `T[N]`,
+decimal strings), `{"string": "x"}`, `{"char": "é"}`, `{"tuple": [...]}` for `T[N]`,
 `{"unit": null}`,
 `{"array": [...]}`, `{"option": null}`,
 `{"struct": {"name": "Point", "fields": [["x", {"i32": 1}]]}}` and
@@ -127,12 +137,12 @@ review as one.
 CONFORMANCE_BLESS=1 cargo test -p comline-runtime-conformance
 ```
 
-## The spec, version 0.2
+## The spec, version 0.3
 
 The case format above (`vectors/*.json`, `profiles/*.json`, the ops, values
 and types) and the ops protocol
 ([`comline-reference`'s README](../reference/README.md#the-protocol)) are a
-public spec, at version **0.2** (`runner::SPEC_VERSION`). Third-party
+public spec, at version **0.3** (`runner::SPEC_VERSION`). Third-party
 encodings ship vectors in this format, and `comline conformance --impl`
 drives their implementations over this protocol. While Comline is in its
 early days (0.x), a minor version may change anything, and the change is
@@ -164,6 +174,14 @@ What an implementation answers, and how its answers are judged:
 
 Changes:
 
+- **0.3:** bounds and `char` (core#98). New type descriptions `"char"`,
+  `bounded_string`, `bounded_array`, `recursive` and `"self"`, and the value
+  `{"char": ...}`. An `encode` case may carry a `type`, and an `encode`
+  rejection asks only to encode, which must fail. Each format's vectors
+  gain a single `char` (ASCII, 2-, 3- and 4-byte, and bytes that aren't one
+  character), bounded strings and arrays at, under and over their maximum
+  (multi-byte characters near it, a byte length over 4 × N), and the depth
+  limit, decoded and encoded. No profile facts change.
 - **0.2:** handshake profiles state `schema_agreement` and
   `encoding_agreement`, as JSON booleans (`"value": true`); a fact stated
   `false` names no cases, and a handshake profile may leave a fact out,

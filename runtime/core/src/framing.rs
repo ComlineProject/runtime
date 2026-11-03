@@ -75,7 +75,8 @@ impl serde::de::Visitor<'_> for StrVisitor {
 
 impl<'de> Deserialize<'de> for Version {
     fn deserialize<D: serde::Deserializer<'de>>(d: D) -> Result<Self, D::Error> {
-        d.deserialize_str(StrVisitor(|v| v == "2.0")).map(|()| Version)
+        d.deserialize_str(StrVisitor(|v| v == "2.0"))
+            .map(|()| Version)
     }
 }
 
@@ -592,8 +593,16 @@ mod tests {
             br#"{"jsonrpc":"2.0","method":"greet","params":[],"id":null}"#,
         ];
         for frame in requests {
-            assert!(f.decode_request(frame).is_none(), "{}", str::from_utf8(frame).unwrap());
-            assert!(ConnectionFraming::decode(&f, frame).is_none(), "{}", str::from_utf8(frame).unwrap());
+            assert!(
+                f.decode_request(frame).is_none(),
+                "{}",
+                str::from_utf8(frame).unwrap()
+            );
+            assert!(
+                ConnectionFraming::decode(&f, frame).is_none(),
+                "{}",
+                str::from_utf8(frame).unwrap()
+            );
         }
         let responses: [&[u8]; 4] = [
             br#"{"jsonrpc":"2.0","result":1,"error":{"code":1,"message":"x"},"id":1}"#,
@@ -602,12 +611,24 @@ mod tests {
             br#"{"result":1,"id":1}"#,
         ];
         for frame in responses {
-            assert!(f.decode_response(frame).is_none(), "{}", str::from_utf8(frame).unwrap());
-            assert!(ConnectionFraming::decode(&f, frame).is_none(), "{}", str::from_utf8(frame).unwrap());
+            assert!(
+                f.decode_response(frame).is_none(),
+                "{}",
+                str::from_utf8(frame).unwrap()
+            );
+            assert!(
+                ConnectionFraming::decode(&f, frame).is_none(),
+                "{}",
+                str::from_utf8(frame).unwrap()
+            );
         }
         // Params as an object, or none written, still decode.
-        assert!(f.decode_request(br#"{"jsonrpc":"2.0","method":"greet","params":{"a":1},"id":1}"#).is_some());
-        assert!(f.decode_request(br#"{"jsonrpc":"2.0","method":"greet","id":1}"#).is_some());
+        assert!(f
+            .decode_request(br#"{"jsonrpc":"2.0","method":"greet","params":{"a":1},"id":1}"#)
+            .is_some());
+        assert!(f
+            .decode_request(br#"{"jsonrpc":"2.0","method":"greet","id":1}"#)
+            .is_some());
     }
 
     #[test]

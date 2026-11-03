@@ -17,11 +17,17 @@
 //!   index below the count, or a declared name;
 //! - `T[N]` is `deserialize_tuple(N)` and needs N elements, `T[]` is
 //!   `deserialize_seq`;
-//! - scalars, strings, options and unit go through `serde`'s own impls.
+//! - scalars, strings, options and unit go through `serde`'s own impls;
+//! - a bounded string, a bounded array and a recursive type's depth go
+//!   through `comline-runtime`'s [`bounds`](comline_runtime::bounds), as
+//!   generated code will.
 //!
 //! `tests/seed_vs_derive.rs` holds it to that against real derives.
 
+use std::cell::Cell;
 use std::fmt;
+
+use comline_runtime::bounds::{self, BoundExceeded, CharsSeed, Depth, ItemsSeed};
 
 use serde::de::{
     self, DeserializeSeed, EnumAccess, IgnoredAny, MapAccess, SeqAccess, Unexpected, VariantAccess,
@@ -39,7 +45,57 @@ impl<'de> DeserializeSeed<'de> for TypeSeed<'_> {
     type Value = Value;
 
     fn deserialize<D: Deserializer<'de>>(self, d: D) -> Result<Value, D::Error> {
-        Ok(match self.0 {
+        Seed {
+            ty: self.0,
+            rec: None,
+        }
+        .deserialize(d)
+    }
+}
+
+/// The innermost [`Type::Recursive`] being read: what `"self"` stands for,
+/// and how deep it is.
+struct Recursion<'t> {
+    of: &'t Type,
+    depth: Cell<Depth>,
+}
+
+impl Recursion<'_> {
+    /// Reads one more level of the recursive type, refused past its depth.
+    fn level<'de, D: Deserializer<'de>>(&self, d: D) -> Result<Value, D::Error> {
+        let mut depth = self.depth.get();
+        depth.enter().map_err(bounds::de_error)?;
+        self.depth.set(depth);
+        let value = Seed {
+            ty: self.of,
+            rec: Some(self),
+        }
+        .deserialize(d);
+        let mut depth = self.depth.get();
+        depth.leave();
+        self.depth.set(depth);
+        value
+    }
+}
+
+/// A [`TypeSeed`] inside a recursive type.
+#[derive(Clone, Copy)]
+struct Seed<'t> {
+    ty: &'t Type,
+    rec: Option<&'t Recursion<'t>>,
+}
+
+impl<'t> Seed<'t> {
+    fn of(self, ty: &'t Type) -> Self {
+        Seed { ty, rec: self.rec }
+    }
+}
+
+impl<'de> DeserializeSeed<'de> for Seed<'_> {
+    type Value = Value;
+
+    fn deserialize<D: Deserializer<'de>>(self, d: D) -> Result<Value, D::Error> {
+        Ok(match self.ty {
             Type::Bool => Value::Bool(bool::deserialize(d)?),
             Type::U8 => Value::U8(u8::deserialize(d)?),
             Type::U16 => Value::U16(u16::deserialize(d)?),
@@ -54,21 +110,48 @@ impl<'de> DeserializeSeed<'de> for TypeSeed<'_> {
             Type::F32 => Value::F32(f32::deserialize(d)?),
             Type::F64 => Value::F64(f64::deserialize(d)?),
             Type::String => Value::String(String::deserialize(d)?),
+            Type::Char => Value::Char(char::deserialize(d)?),
+            Type::BoundedString { max } => {
+                Value::String(CharsSeed::<String>::new(*max).deserialize(d)?)
+            }
+            Type::BoundedArray { of, max } => {
+                Value::Array(ItemsSeed::<_, Vec<Value>>::new(self.of(of), *max).deserialize(d)?)
+            }
+            Type::Recursive { max_depth, of } => {
+                let rec = Recursion {
+                    of,
+                    depth: Cell::new(Depth::new(*max_depth)),
+                };
+                rec.level(d)?
+            }
+            Type::SelfRef => match self.rec {
+                Some(rec) => rec.level(d)?,
+                None => return Err(de::Error::custom("`self` outside a recursive type")),
+            },
             Type::Unit => {
                 <()>::deserialize(d)?;
                 Value::Unit(())
             }
-            Type::Option(inner) => {
-                Value::Option(d.deserialize_option(OptionVisitor(inner))?.map(Box::new))
-            }
-            Type::Array(element) => Value::Array(d.deserialize_seq(SeqVisitor(element))?),
-            Type::Fixed { of, len } => {
-                Value::Tuple(d.deserialize_tuple(*len, FixedVisitor { of, len: *len })?)
-            }
+            Type::Option(inner) => Value::Option(
+                d.deserialize_option(OptionVisitor(self.of(inner)))?
+                    .map(Box::new),
+            ),
+            Type::Array(element) => Value::Array(d.deserialize_seq(SeqVisitor(self.of(element)))?),
+            Type::Fixed { of, len } => Value::Tuple(d.deserialize_tuple(
+                *len,
+                FixedVisitor {
+                    of: self.of(of),
+                    len: *len,
+                },
+            )?),
             Type::Struct { name, fields } => d.deserialize_struct(
                 intern::name(name),
                 intern::list(fields.iter().map(|(f, _)| f.as_str())),
-                StructVisitor { name, fields },
+                StructVisitor {
+                    name,
+                    fields,
+                    seed: self,
+                },
             )?,
             Type::Enum { name, variants } => d.deserialize_enum(
                 intern::name(name),
@@ -79,7 +162,7 @@ impl<'de> DeserializeSeed<'de> for TypeSeed<'_> {
     }
 }
 
-struct OptionVisitor<'t>(&'t Type);
+struct OptionVisitor<'t>(Seed<'t>);
 
 impl<'de> Visitor<'de> for OptionVisitor<'_> {
     type Value = Option<Value>;
@@ -97,11 +180,11 @@ impl<'de> Visitor<'de> for OptionVisitor<'_> {
     }
 
     fn visit_some<D: Deserializer<'de>>(self, d: D) -> Result<Self::Value, D::Error> {
-        TypeSeed(self.0).deserialize(d).map(Some)
+        self.0.deserialize(d).map(Some)
     }
 }
 
-struct SeqVisitor<'t>(&'t Type);
+struct SeqVisitor<'t>(Seed<'t>);
 
 impl<'de> Visitor<'de> for SeqVisitor<'_> {
     type Value = Vec<Value>;
@@ -114,7 +197,7 @@ impl<'de> Visitor<'de> for SeqVisitor<'_> {
         // A size hint is the input's claim, so it only bounds the first
         // allocation, as serde's own `Vec` impl does.
         let mut items = Vec::with_capacity(seq.size_hint().unwrap_or(0).min(4096));
-        while let Some(item) = seq.next_element_seed(TypeSeed(self.0))? {
+        while let Some(item) = seq.next_element_seed(self.0)? {
             items.push(item);
         }
         Ok(items)
@@ -122,7 +205,7 @@ impl<'de> Visitor<'de> for SeqVisitor<'_> {
 }
 
 struct FixedVisitor<'t> {
-    of: &'t Type,
+    of: Seed<'t>,
     len: usize,
 }
 
@@ -136,7 +219,7 @@ impl<'de> Visitor<'de> for FixedVisitor<'_> {
     fn visit_seq<A: SeqAccess<'de>>(self, mut seq: A) -> Result<Self::Value, A::Error> {
         let mut items = Vec::with_capacity(self.len.min(4096));
         for i in 0..self.len {
-            match seq.next_element_seed(TypeSeed(self.of))? {
+            match seq.next_element_seed(self.of)? {
                 Some(item) => items.push(item),
                 None => return Err(de::Error::invalid_length(i, &self)),
             }
@@ -148,6 +231,7 @@ impl<'de> Visitor<'de> for FixedVisitor<'_> {
 struct StructVisitor<'t> {
     name: &'t str,
     fields: &'t [(String, Type)],
+    seed: Seed<'t>,
 }
 
 impl<'de> Visitor<'de> for StructVisitor<'_> {
@@ -165,7 +249,7 @@ impl<'de> Visitor<'de> for StructVisitor<'_> {
     fn visit_seq<A: SeqAccess<'de>>(self, mut seq: A) -> Result<Value, A::Error> {
         let mut values = Vec::with_capacity(self.fields.len());
         for (i, (field, ty)) in self.fields.iter().enumerate() {
-            match seq.next_element_seed(TypeSeed(ty))? {
+            match seq.next_element_seed(self.seed.of(ty))? {
                 Some(value) => values.push((field.clone(), value)),
                 None => return Err(de::Error::invalid_length(i, &self)),
             }
@@ -185,7 +269,7 @@ impl<'de> Visitor<'de> for StructVisitor<'_> {
                     if slots[i].is_some() {
                         return Err(de::Error::duplicate_field(intern::name(field)));
                     }
-                    slots[i] = Some(map.next_value_seed(TypeSeed(ty))?);
+                    slots[i] = Some(map.next_value_seed(self.seed.of(ty))?);
                 }
                 None => {
                     map.next_value::<IgnoredAny>()?;
@@ -315,10 +399,25 @@ impl<'de> Visitor<'de> for VariantSeed<'_> {
     }
 }
 
-/// Whether `value` is a value of `ty`: what a generated type could hold.
+/// Whether `value` is a value of `ty`'s shape: what a generated type could
+/// hold, bounds aside ([`within_bounds`] checks those).
 pub fn check(value: &Value, ty: &Type) -> Result<(), String> {
+    check_in(value, ty, None)
+}
+
+fn check_in(value: &Value, ty: &Type, rec: Option<&Type>) -> Result<(), String> {
+    let check = |value: &Value, ty: &Type| check_in(value, ty, rec);
     let mismatch = || Err(format!("{value:?} isn't a {ty:?}"));
     match (ty, value) {
+        (Type::Recursive { of, .. }, _) => check_in(value, of, Some(ty)),
+        (Type::SelfRef, _) => match rec {
+            Some(rec) => check_in(value, rec, None),
+            None => Err("`self` outside a recursive type".into()),
+        },
+        (Type::BoundedString { .. }, Value::String(_)) | (Type::Char, Value::Char(_)) => Ok(()),
+        (Type::BoundedArray { of, .. }, Value::Array(items)) => {
+            items.iter().try_for_each(|item| check(item, of))
+        }
         (Type::Bool, Value::Bool(_))
         | (Type::U8, Value::U8(_))
         | (Type::U16, Value::U16(_))
@@ -369,4 +468,51 @@ pub fn check(value: &Value, ty: &Type) -> Result<(), String> {
         }
         _ => mismatch(),
     }
+}
+
+/// Whether `value`, a value of `ty`'s shape ([`check`]), is within its
+/// bounds: the check an encoder makes before writing anything, through
+/// `comline-runtime`'s [`bounds`].
+pub fn within_bounds(value: &Value, ty: &Type) -> Result<(), BoundExceeded> {
+    fn walk<'t>(
+        value: &Value,
+        ty: &'t Type,
+        rec: Option<(&'t Type, &Cell<Depth>)>,
+    ) -> Result<(), BoundExceeded> {
+        let level = |value: &Value, of: &'t Type, depth: &Cell<Depth>| {
+            let mut d = depth.get();
+            d.enter()?;
+            depth.set(d);
+            let result = walk(value, of, Some((of, depth)));
+            let mut d = depth.get();
+            d.leave();
+            depth.set(d);
+            result
+        };
+        match (ty, value) {
+            (Type::Recursive { max_depth, of }, _) => {
+                level(value, of, &Cell::new(Depth::new(*max_depth)))
+            }
+            (Type::SelfRef, _) => match rec {
+                Some((of, depth)) => level(value, of, depth),
+                None => Ok(()),
+            },
+            (Type::BoundedString { max }, Value::String(s)) => bounds::check_chars(s, *max),
+            (Type::BoundedArray { of, max }, Value::Array(items)) => {
+                bounds::check_items(items.len(), *max)?;
+                items.iter().try_for_each(|item| walk(item, of, rec))
+            }
+            (Type::Option(inner), Value::Option(Some(v))) => walk(v, inner, rec),
+            (Type::Array(of), Value::Array(items))
+            | (Type::Fixed { of, .. }, Value::Tuple(items)) => {
+                items.iter().try_for_each(|item| walk(item, of, rec))
+            }
+            (Type::Struct { fields, .. }, Value::Struct { fields: values, .. }) => fields
+                .iter()
+                .zip(values)
+                .try_for_each(|((_, t), (_, v))| walk(v, t, rec)),
+            _ => Ok(()),
+        }
+    }
+    walk(value, ty, None)
 }

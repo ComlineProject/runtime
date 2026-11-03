@@ -57,6 +57,8 @@ pub enum Value {
     F32(f32),
     F64(f64),
     String(String),
+    /// A single `char`: one Unicode scalar value, `{"char": "é"}`.
+    Char(char),
     Array(Vec<Value>),
     /// A fixed-size array, `T[N]`: its length is in the type, so formats
     /// that can leave it out do.
@@ -98,6 +100,7 @@ impl Serialize for Wire<'_> {
             Value::F32(v) => s.serialize_f32(*v),
             Value::F64(v) => s.serialize_f64(*v),
             Value::String(v) => s.serialize_str(v),
+            Value::Char(v) => s.serialize_char(*v),
             Value::Array(items) => {
                 let mut seq = s.serialize_seq(Some(items.len()))?;
                 for item in items {
@@ -368,6 +371,11 @@ fn stream_max(max: u64) -> usize {
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 struct EncodeIn {
     format: String,
+    /// The type the value is encoded as, when its bounds matter: encoding
+    /// a value over them must fail (a rejection), and one within them gives
+    /// the bytes. Without it, the value's own shape is its type.
+    #[serde(rename = "type", default, skip_serializing_if = "Option::is_none")]
+    ty: Option<Type>,
     value: Value,
 }
 
@@ -392,7 +400,14 @@ pub enum Type {
     F32,
     F64,
     String,
+    /// A single `char`: one Unicode scalar value.
+    Char,
     Unit,
+    /// `char[max N]`: a string of at most `max` characters (Unicode scalar
+    /// values, not bytes).
+    BoundedString {
+        max: u64,
+    },
     Option(Box<Type>),
     /// `T[]`.
     Array(Box<Type>),
@@ -401,6 +416,21 @@ pub enum Type {
         of: Box<Type>,
         len: usize,
     },
+    /// `T[max N]`: at most `max` items.
+    BoundedArray {
+        of: Box<Type>,
+        max: u64,
+    },
+    /// A type that can contain itself, `@max_depth = max_depth`: `of`, in
+    /// which `"self"` stands for the recursive type again. The outermost
+    /// value is level 1; a value at level `max_depth + 1` is refused.
+    Recursive {
+        max_depth: u64,
+        of: Box<Type>,
+    },
+    /// The nearest enclosing [`Recursive`](Type::Recursive) type.
+    #[serde(rename = "self")]
+    SelfRef,
     Struct {
         name: String,
         fields: Vec<(String, Type)>,
@@ -933,6 +963,13 @@ fn encode(op: Op, input: &serde_json::Value) -> Result<Vec<u8>, Outcome> {
         }
         Op::Encode => {
             let i: EncodeIn = parse(input)?;
+            if let Some(ty) = &i.ty {
+                seed::check(&i.value, ty).map_err(Outcome::Fail)?;
+                // An encoder refuses a value over its bounds before writing
+                // any of it.
+                seed::within_bounds(&i.value, ty)
+                    .map_err(|b| Outcome::Fail(format!("refused to encode: {b}")))?;
+            }
             return encode_with(&i.format, &i.value)
                 .ok_or_else(|| Outcome::NotImplemented(format!("format `{}`", i.format)));
         }
@@ -1246,13 +1283,16 @@ pub fn run(case: &Case) -> Outcome {
 fn run_inner(case: &Case) -> Result<(), Outcome> {
     let bytes = &case.bytes.0;
     if case.expect == Expect::Reject {
-        if case.op == Op::StreamPrefix {
+        if matches!(case.op, Op::StreamPrefix | Op::Encode) {
             if let Ok(encoded) = encode(case.op, &case.input) {
                 return Err(Outcome::Fail(format!(
-                    "prefixed a frame over the limit, as {}",
+                    "encoded what it must refuse, as {}",
                     to_json(&Hex(encoded))
                 )));
             }
+        }
+        if case.op == Op::Encode {
+            return Ok(());
         }
         return match decode(case.op, &case.input, bytes)? {
             None => Ok(()),
@@ -1691,6 +1731,15 @@ pub fn reference_cases() -> Vec<Vectors> {
 
     for v in &mut vectors {
         v.cases.extend(rejections(&v.feature));
+        if let Some(format) = match v.feature.as_str() {
+            "format-json" => Some(FORMAT_JSON),
+            "format-msgpack" => Some(FORMAT_MSGPACK),
+            "format-packed" => Some(FORMAT_PACKED),
+            _ => None,
+        } {
+            v.cases.extend(char_cases(&v.feature, format));
+            v.cases.extend(bound_cases(&v.feature, format));
+        }
         match v.feature.as_str() {
             "format-json" => {
                 v.cases.extend(decode_cases("format-json", FORMAT_JSON));
@@ -1944,12 +1993,19 @@ fn format_cases(feature_id: &str, format: &str) -> Vec<(String, Op, serde_json::
             ]),
         ),
         ("unit", Value::Unit(())),
+        // A single `char`, 1 to 4 bytes of UTF-8: raw in `packed@1`, a
+        // one-character string in `msgpack@1` and `json@1`.
+        ("char-ascii", Value::Char('a')),
+        ("char-2-byte", Value::Char('é')),
+        ("char-3-byte", Value::Char('€')),
+        ("char-4-byte", Value::Char('😀')),
     ];
     samples
         .into_iter()
         .map(|(id, value)| {
             let input = EncodeIn {
                 format: format.into(),
+                ty: None,
                 value,
             };
             (format!("{feature_id}/{id}"), Op::Encode, to_json(&input))
@@ -2001,6 +2057,7 @@ fn packed_cases() -> Vec<(String, Op, serde_json::Value)> {
         .map(|(id, value)| {
             let input = EncodeIn {
                 format: FORMAT_PACKED.into(),
+                ty: None,
                 value,
             };
             (format!("format-packed/{id}"), Op::Encode, to_json(&input))
@@ -2075,6 +2132,207 @@ fn decode_case(id: String, format: &str, written: &Value, ty: Type) -> Case {
         ),
         Err(outcome) => panic!("reference case `{id}` doesn't decode: {outcome:?}"),
     }
+}
+
+// --- A single `char`, and bounds (core#98) ---
+
+/// `bytes` read as `ty`: an exact `decode` case with what the reference
+/// decoded, or a rejection, which `rejected` says it must be.
+fn decode_bytes_case(id: String, format: &str, bytes: &[u8], ty: Type, rejected: bool) -> Case {
+    let value = decode_typed(format, &ty, bytes)
+        .unwrap_or_else(|outcome| panic!("reference case `{id}` doesn't decode: {outcome:?}"));
+    assert_eq!(value.is_none(), rejected, "reference case `{id}`");
+    let case = |value| {
+        to_json(&DecodeIn {
+            format: format.into(),
+            ty: ty.clone(),
+            value,
+        })
+    };
+    match value {
+        Some(value) => Case {
+            id,
+            op: Op::Decode,
+            input: case(Some(value)),
+            bytes: Hex(bytes.to_vec()),
+            expect: Expect::Exact,
+            compare: Compare::Bytes,
+        },
+        None => reject(&id, Op::Decode, case(None), bytes),
+    }
+}
+
+/// A single `char` read back, and bytes that aren't exactly one character.
+fn char_cases(feature_id: &str, format: &str) -> Vec<Case> {
+    let p = |id: &str| format!("{feature_id}/{id}");
+    let mut cases: Vec<Case> = [
+        ("ascii", 'a'),
+        ("2-byte", 'é'),
+        ("3-byte", '€'),
+        ("4-byte", '😀'),
+    ]
+    .into_iter()
+    .map(|(id, c)| {
+        decode_case(
+            p(&format!("decode-char-{id}")),
+            format,
+            &Value::Char(c),
+            Type::Char,
+        )
+    })
+    .collect();
+    let bad: &[(&str, &[u8])] = match format {
+        FORMAT_PACKED => &[
+            ("empty", b""),
+            ("continuation-byte", b"\x80"),
+            ("truncated", b"\xc3"),
+            ("overlong", b"\xc0\x80"),
+            ("surrogate", b"\xed\xa0\x80"),
+            ("past-max", b"\xf4\x90\x80\x80"),
+            // A character, then one more byte: a value uses every byte.
+            ("two", b"ab"),
+        ],
+        FORMAT_MSGPACK => &[
+            ("empty", b"\xa0"),
+            ("two", b"\xa2ab"),
+            ("overlong", b"\xa2\xc0\x80"),
+            ("surrogate", b"\xa3\xed\xa0\x80"),
+            ("bin", b"\xc4\x01a"),
+            ("integer", b"\x61"),
+        ],
+        FORMAT_JSON => &[
+            ("empty", b"\"\""),
+            ("two", b"\"ab\""),
+            ("lone-surrogate", b"\"\\ud800\""),
+            ("integer", b"97"),
+        ],
+        _ => &[],
+    };
+    cases.extend(bad.iter().map(|(id, bytes)| {
+        decode_bytes_case(
+            p(&format!("decode-char-reject-{id}")),
+            format,
+            bytes,
+            Type::Char,
+            true,
+        )
+    }));
+    cases
+}
+
+/// Bounds: a value at its type's maximum, one over it, multi-byte
+/// characters near it, and the depth limit, on decode and on encode.
+fn bound_cases(feature_id: &str, format: &str) -> Vec<Case> {
+    let p = |id: &str| format!("{feature_id}/{id}");
+    let string = |s: &str| Value::String(s.into());
+    let chars = |max| Type::BoundedString { max };
+    let u8s = |items: &[u8]| Value::Array(items.iter().copied().map(Value::U8).collect());
+    let items = |of: Type, max| Type::BoundedArray {
+        of: Box::new(of),
+        max,
+    };
+    // `@max_depth = 3`: `struct Node { next: optional Node }`.
+    let chain_type = || Type::Recursive {
+        max_depth: 3,
+        of: Box::new(Type::Struct {
+            name: "Node".into(),
+            fields: vec![("next".into(), Type::Option(Box::new(Type::SelfRef)))],
+        }),
+    };
+    let chain = |n: usize| {
+        (0..n).fold(Value::Option(None), |next, _| {
+            Value::Option(Some(Box::new(Value::Struct {
+                name: "Node".into(),
+                fields: vec![("next".into(), next)],
+            })))
+        })
+    };
+    let chain = |n: usize| match chain(n) {
+        Value::Option(Some(node)) => *node,
+        _ => unreachable!("n > 0"),
+    };
+    // `@max_depth = 2`: `struct Tree { children: Tree[max 2] }`.
+    let tree_type = || Type::Recursive {
+        max_depth: 2,
+        of: Box::new(Type::Struct {
+            name: "Tree".into(),
+            fields: vec![("children".into(), items(Type::SelfRef, 2))],
+        }),
+    };
+    let tree = |children: Vec<Value>| Value::Struct {
+        name: "Tree".into(),
+        fields: vec![("children".into(), Value::Array(children))],
+    };
+    let leaf = || tree(vec![]);
+
+    let read: Vec<(&str, Value, Type)> = vec![
+        ("chars-empty", string(""), chars(4)),
+        ("chars-at-max", string("abcd"), chars(4)),
+        ("chars-over-max", string("abcde"), chars(4)),
+        // 4 characters in 10 bytes: under by characters, over by bytes.
+        ("chars-multibyte-at-max", string("é€😀a"), chars(4)),
+        // 4 characters in 16 bytes, 4 × N: the most N characters take.
+        ("chars-4-byte-at-max", string("😀😀😀😀"), chars(4)),
+        // 5 characters in 10 bytes: over by characters, under 4 × N bytes.
+        ("chars-multibyte-over-max", string("ééééé"), chars(4)),
+        // 17 bytes: a length over 4 × N, refused before it's read.
+        ("chars-bytes-over-4n", string("😀😀😀😀a"), chars(4)),
+        ("chars-max-0", string(""), chars(0)),
+        ("chars-max-0-over", string("a"), chars(0)),
+        ("items-empty", u8s(&[]), items(Type::U8, 3)),
+        ("items-at-max", u8s(&[1, 2, 3]), items(Type::U8, 3)),
+        ("items-over-max", u8s(&[1, 2, 3, 4]), items(Type::U8, 3)),
+        (
+            "items-of-chars-at-max",
+            Value::Array(vec![string("ab"), string("é😀")]),
+            items(chars(2), 2),
+        ),
+        (
+            "items-of-chars-over-max",
+            Value::Array(vec![string("ab"), string("abc")]),
+            items(chars(2), 2),
+        ),
+        ("depth-at-max", chain(3), chain_type()),
+        ("depth-over-max", chain(4), chain_type()),
+        ("depth-tree-at-max", tree(vec![leaf(), leaf()]), tree_type()),
+        (
+            "depth-tree-over-max",
+            tree(vec![leaf(), tree(vec![leaf()])]),
+            tree_type(),
+        ),
+    ];
+    let mut cases: Vec<Case> = read
+        .iter()
+        .map(|(id, written, ty)| {
+            decode_case(p(&format!("decode-{id}")), format, written, ty.clone())
+        })
+        .collect();
+    for case in &cases {
+        let over = case.id.contains("over");
+        assert_eq!(
+            case.expect == Expect::Reject,
+            over,
+            "reference case `{}`",
+            case.id
+        );
+    }
+
+    // The same values encoded as their types: within the bounds, the bytes;
+    // over them, refused before anything is written.
+    for (id, value, ty) in read {
+        let id = p(&format!("encode-{id}"));
+        let input = to_json(&EncodeIn {
+            format: format.into(),
+            ty: Some(ty),
+            value,
+        });
+        cases.push(if id.contains("over") {
+            reject(&id, Op::Encode, input, &[])
+        } else {
+            exact(id, Op::Encode, input)
+        });
+    }
+    cases
 }
 
 /// What a newer or older peer wrote, read by today's types: the cases an
@@ -2473,12 +2731,20 @@ fn rejections(feature: &str) -> Vec<Case> {
         // A struct only in the shape its format writes (runtime#74): by name
         // in JSON, by position in MessagePack, however deeply nested.
         "format-json" | "format-msgpack" => {
-            let format = if feature == "format-json" { FORMAT_JSON } else { FORMAT_MSGPACK };
+            let format = if feature == "format-json" {
+                FORMAT_JSON
+            } else {
+                FORMAT_MSGPACK
+            };
             let r = |id: &str, ty: Type, bytes: &[u8]| {
                 reject(
                     &format!("{feature}/{id}"),
                     Op::Decode,
-                    to_json(&DecodeIn { format: format.into(), ty, value: None }),
+                    to_json(&DecodeIn {
+                        format: format.into(),
+                        ty,
+                        value: None,
+                    }),
                     bytes,
                 )
             };
@@ -2486,17 +2752,27 @@ fn rejections(feature: &str) -> Vec<Case> {
             if feature == "format-json" {
                 vec![
                     r("reject-struct-by-position", point_type(), br#"[1,-2]"#),
-                    r("reject-nested-struct-by-position", points, br#"[{"x":1,"y":-2},[3,4]]"#),
+                    r(
+                        "reject-nested-struct-by-position",
+                        points,
+                        br#"[{"x":1,"y":-2},[3,4]]"#,
+                    ),
                 ]
             } else {
                 vec![
                     // {"x": 1, "y": -2}
-                    r("reject-struct-by-name", point_type(), &[0x82, 0xa1, b'x', 0x01, 0xa1, b'y', 0xfe]),
+                    r(
+                        "reject-struct-by-name",
+                        point_type(),
+                        &[0x82, 0xa1, b'x', 0x01, 0xa1, b'y', 0xfe],
+                    ),
                     // [[1, -2], {"x": 3, "y": 4}]
                     r(
                         "reject-nested-struct-by-name",
                         points,
-                        &[0x92, 0x92, 0x01, 0xfe, 0x82, 0xa1, b'x', 0x03, 0xa1, b'y', 0x04],
+                        &[
+                            0x92, 0x92, 0x01, 0xfe, 0x82, 0xa1, b'x', 0x03, 0xa1, b'y', 0x04,
+                        ],
                     ),
                     // `bin` 1 "a", where a string is expected.
                     r("reject-string-as-bin", Type::String, &[0xc4, 0x01, b'a']),

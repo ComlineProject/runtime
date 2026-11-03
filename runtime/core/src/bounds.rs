@@ -22,7 +22,7 @@
 //!   outermost is level 1, and a value at level D + 1 is refused ([`Depth`]).
 //!
 //! Everything here is `no_std` and allocation-free except the `serde`
-//! adapters that build a `String` or a `Vec` ([`decode`], `alloc`).
+//! adapters that build a `String` or a `Vec` (`decode`, with `alloc`).
 //!
 //! A bound failure surfaces as [`RuntimeError::BoundExceeded`] from every
 //! format's `encode` and `decode`: the adapters raise it through `serde`'s
@@ -33,7 +33,7 @@ use core::fmt;
 
 use serde::de::{self, DeserializeSeed, IgnoredAny, SeqAccess, Visitor};
 use serde::ser::{self, SerializeSeq};
-use serde::{Deserialize, Deserializer, Serialize, Serializer};
+use serde::{Deserializer, Serialize, Serializer};
 
 use crate::contract::RuntimeError;
 
@@ -441,11 +441,12 @@ where
 
 /// `serde` adapters for a generated field, by `deserialize_with` and
 /// `serialize_with`: `#[serde(deserialize_with = "bounds::decode::string::<_, 32>")]`.
+#[cfg(feature = "alloc")]
 pub mod decode {
     use super::*;
+    use serde::Deserialize;
 
     /// A `String` of at most `MAX` characters.
-    #[cfg(feature = "alloc")]
     pub fn string<'de, D: Deserializer<'de>, const MAX: u64>(
         d: D,
     ) -> Result<alloc::string::String, D::Error> {
@@ -453,7 +454,6 @@ pub mod decode {
     }
 
     /// A `Vec<T>` of at most `MAX` items.
-    #[cfg(feature = "alloc")]
     pub fn vec<'de, D: Deserializer<'de>, T: Deserialize<'de>, const MAX: u64>(
         d: D,
     ) -> Result<alloc::vec::Vec<T>, D::Error> {
@@ -461,7 +461,7 @@ pub mod decode {
     }
 }
 
-/// The encode side of [`decode`]: an over-bound value is refused before any of
+/// The encode side of `decode`: an over-bound value is refused before any of
 /// it is written.
 pub mod encode {
     use super::*;
@@ -528,7 +528,10 @@ mod tests {
                 max: 3
             })
         );
-        assert_eq!(chars_from_utf8(&[0xff], 3), Err(RuntimeError::Serialization));
+        assert_eq!(
+            chars_from_utf8(&[0xff], 3),
+            Err(RuntimeError::Serialization)
+        );
     }
 
     #[test]
@@ -539,14 +542,18 @@ mod tests {
         assert_eq!(char_from_utf8("😀x".as_bytes()), Ok(('😀', 4)));
         for bad in [
             &[][..],
-            &[0x80],             // a continuation byte
-            &[0xc3],             // truncated
-            &[0xc0, 0x80],       // overlong
-            &[0xed, 0xa0, 0x80], // a surrogate
+            &[0x80],                   // a continuation byte
+            &[0xc3],                   // truncated
+            &[0xc0, 0x80],             // overlong
+            &[0xed, 0xa0, 0x80],       // a surrogate
             &[0xf4, 0x90, 0x80, 0x80], // past U+10FFFF
             &[0xff],
         ] {
-            assert_eq!(char_from_utf8(bad), Err(RuntimeError::Serialization), "{bad:x?}");
+            assert_eq!(
+                char_from_utf8(bad),
+                Err(RuntimeError::Serialization),
+                "{bad:x?}"
+            );
         }
     }
 
@@ -555,10 +562,7 @@ mod tests {
         let mut depth = Depth::new(2);
         assert!(depth.enter().is_ok());
         assert!(depth.enter().is_ok());
-        assert_eq!(
-            depth.enter(),
-            Err(BoundExceeded::new(Measure::Depth, 2))
-        );
+        assert_eq!(depth.enter(), Err(BoundExceeded::new(Measure::Depth, 2)));
         depth.leave();
         assert!(depth.enter().is_ok());
     }
@@ -571,6 +575,7 @@ mod tests {
         use crate::format::{Json, MsgPack, Packed};
         use alloc::string::String;
         use alloc::vec::Vec;
+        use serde::Deserialize;
 
         #[derive(Serialize, Deserialize, Debug, PartialEq)]
         struct Named {
@@ -592,8 +597,14 @@ mod tests {
         }
 
         fn check<F: WireFormat>(f: F) {
-            let chars = RuntimeError::BoundExceeded { measure: Measure::Chars, max: 3 };
-            let items = RuntimeError::BoundExceeded { measure: Measure::Items, max: 2 };
+            let chars = RuntimeError::BoundExceeded {
+                measure: Measure::Chars,
+                max: 3,
+            };
+            let items = RuntimeError::BoundExceeded {
+                measure: Measure::Items,
+                max: 2,
+            };
             let encode = |name: &str, tags: &[u8]| {
                 let mut out = Vec::new();
                 f.encode(&Unbounded { name, tags }, &mut out).map(|()| out)
@@ -601,14 +612,26 @@ mod tests {
             let fits = encode("é😀a", &[1, 2]).unwrap();
             assert_eq!(
                 f.decode::<Named>(&fits),
-                Ok(Named { name: "é😀a".into(), tags: vec![1, 2] })
+                Ok(Named {
+                    name: "é😀a".into(),
+                    tags: vec![1, 2]
+                })
             );
             assert_eq!(f.decode::<Named>(&encode("abcd", &[]).unwrap()), Err(chars));
-            assert_eq!(f.decode::<Named>(&encode("", &[1, 2, 3]).unwrap()), Err(items));
+            assert_eq!(
+                f.decode::<Named>(&encode("", &[1, 2, 3]).unwrap()),
+                Err(items)
+            );
             let mut out = Vec::new();
-            let over = Named { name: "ééée".into(), tags: vec![] };
+            let over = Named {
+                name: "ééée".into(),
+                tags: vec![],
+            };
             assert_eq!(f.encode(&over, &mut out), Err(chars));
-            let over = Named { name: "".into(), tags: vec![1, 2, 3] };
+            let over = Named {
+                name: "".into(),
+                tags: vec![1, 2, 3],
+            };
             assert_eq!(f.encode(&over, &mut out), Err(items));
         }
         check(Packed);

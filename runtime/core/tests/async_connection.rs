@@ -9,8 +9,8 @@ use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
 use comline_runtime::async_connection::{
-    async_duplex, tokio as rt_tokio, Answer, AsyncConnection, AsyncDispatch, AsyncInMemory, AsyncPeer,
-    OwnedEnvelope,
+    async_duplex, tokio as rt_tokio, Answer, AsyncConnection, AsyncDispatch, AsyncInMemory,
+    AsyncPeer, OwnedEnvelope,
 };
 use comline_runtime::contract::{Call, Envelope, Kind, RuntimeError, WireFormat};
 use comline_runtime::format::MsgPack;
@@ -76,7 +76,8 @@ impl AsyncDispatch for ChatDispatcher {
         match call.resolve(CHAT_CALLS).ok_or(RuntimeError::UnknownCall)? {
             0 => {
                 let p: TextParams = peer.format().decode(params)?;
-                let shown: bool = decode_ok(&peer.call(EVENTS, Call::new(0, "message"), &p).await?)?;
+                let shown: bool =
+                    decode_ok(&peer.call(EVENTS, Call::new(0, "message"), &p).await?)?;
                 assert!(shown);
                 let sent = {
                     let mut extensions = peer.extensions();
@@ -126,7 +127,10 @@ impl AsyncDispatch for EventsDispatcher {
         params: &'a [u8],
         peer: &'a P,
     ) -> Result<Answer, RuntimeError> {
-        match call.resolve(EVENTS_CALLS).ok_or(RuntimeError::UnknownCall)? {
+        match call
+            .resolve(EVENTS_CALLS)
+            .ok_or(RuntimeError::UnknownCall)?
+        {
             0 => {
                 let p: TextParams = peer.format().decode(params)?;
                 if p.text == "nest" {
@@ -163,7 +167,9 @@ async fn pair(chat: ChatDispatcher) -> (Conn, Conn, EventsDispatcher) {
 }
 
 fn text(text: &str) -> TextParams {
-    TextParams { text: text.to_string() }
+    TextParams {
+        text: text.to_string(),
+    }
 }
 
 #[tokio::test(flavor = "multi_thread")]
@@ -173,11 +179,28 @@ async fn a_handler_calls_back_the_peer_that_called_it() {
     let client = tokio::spawn(client.run());
     let server = tokio::spawn(server.run());
 
-    let first: u64 = decode_ok(&chat.call(CHAT, Call::new(0, "send"), &text("hi")).await.unwrap()).unwrap();
-    let second: u64 = decode_ok(&chat.call(CHAT, Call::new(0, "send"), &text("again")).await.unwrap()).unwrap();
-    let count: u64 = decode_ok(&chat.call(CHAT, Call::new(1, "count"), &()).await.unwrap()).unwrap();
+    let first: u64 = decode_ok(
+        &chat
+            .call(CHAT, Call::new(0, "send"), &text("hi"))
+            .await
+            .unwrap(),
+    )
+    .unwrap();
+    let second: u64 = decode_ok(
+        &chat
+            .call(CHAT, Call::new(0, "send"), &text("again"))
+            .await
+            .unwrap(),
+    )
+    .unwrap();
+    let count: u64 =
+        decode_ok(&chat.call(CHAT, Call::new(1, "count"), &()).await.unwrap()).unwrap();
 
-    assert_eq!((first, second, count), (1, 2, 2), "the count is kept on the accepting side's connection");
+    assert_eq!(
+        (first, second, count),
+        (1, 2, 2),
+        "the count is kept on the accepting side's connection"
+    );
     assert_eq!(*events.seen.lock().unwrap(), ["hi", "again"]);
     chat.close();
     client.await.unwrap().unwrap();
@@ -194,18 +217,25 @@ async fn the_accepting_side_calls_from_another_task_while_serving() {
     // The server pushes from its own task while the client's calls are served.
     let push = tokio::spawn(async move {
         for i in 0..5 {
-            let shown: bool =
-                decode_ok(&pusher.call(EVENTS, Call::new(0, "message"), &text(&format!("push {i}"))).await.unwrap())
-                    .unwrap();
+            let shown: bool = decode_ok(
+                &pusher
+                    .call(EVENTS, Call::new(0, "message"), &text(&format!("push {i}")))
+                    .await
+                    .unwrap(),
+            )
+            .unwrap();
             assert!(shown);
         }
         pusher.notify(EVENTS, Call::new(1, "ping"), &()).unwrap();
     });
     for _ in 0..5 {
-        chat.call(CHAT, Call::new(0, "send"), &text("call")).await.unwrap();
+        chat.call(CHAT, Call::new(0, "send"), &text("call"))
+            .await
+            .unwrap();
     }
     push.await.unwrap();
-    let count: u64 = decode_ok(&chat.call(CHAT, Call::new(1, "count"), &()).await.unwrap()).unwrap();
+    let count: u64 =
+        decode_ok(&chat.call(CHAT, Call::new(1, "count"), &()).await.unwrap()).unwrap();
     assert_eq!(count, 5);
 
     let seen = events.seen.lock().unwrap().clone();
@@ -227,10 +257,13 @@ async fn a_nested_request_starts_while_its_handler_waits() {
     let chat = client.handle();
     tokio::spawn(client.run());
     tokio::spawn(server.run());
-    let sent = tokio::time::timeout(Duration::from_secs(5), chat.call(CHAT, Call::new(0, "send"), &text("nest")))
-        .await
-        .expect("the nested call deadlocked")
-        .unwrap();
+    let sent = tokio::time::timeout(
+        Duration::from_secs(5),
+        chat.call(CHAT, Call::new(0, "send"), &text("nest")),
+    )
+    .await
+    .expect("the nested call deadlocked")
+    .unwrap();
     assert_eq!(decode_ok::<u64>(&sent).unwrap(), 1);
     assert_eq!(*events.seen.lock().unwrap(), ["nest"]);
 }
@@ -248,14 +281,20 @@ async fn requests_run_in_order_unless_concurrent() {
         let calls: Vec<_> = (0..4)
             .map(|_| {
                 let caller = caller.clone();
-                tokio::spawn(async move { caller.call(CHAT, Call::new(2, "slow"), &()).await.unwrap() })
+                tokio::spawn(
+                    async move { caller.call(CHAT, Call::new(2, "slow"), &()).await.unwrap() },
+                )
             })
             .collect();
         let mut most = 0;
         for call in calls {
             most = most.max(decode_ok::<u64>(&call.await.unwrap()).unwrap());
         }
-        assert_eq!(most > 1, expect_overlap, "concurrent({limit}): at most {most} at once");
+        assert_eq!(
+            most > 1,
+            expect_overlap,
+            "concurrent({limit}): at most {most} at once"
+        );
     }
 }
 
@@ -277,7 +316,8 @@ async fn a_timed_out_call_s_late_reply_is_dropped() {
     let mut server = AsyncConnection::new_unverified(acceptor, MsgPack);
     server.provide(CHAT, ChatDispatcher::default());
     tokio::spawn(server.run());
-    let count: u64 = decode_ok(&caller.call(CHAT, Call::new(1, "count"), &()).await.unwrap()).unwrap();
+    let count: u64 =
+        decode_ok(&caller.call(CHAT, Call::new(1, "count"), &()).await.unwrap()).unwrap();
     assert_eq!(count, 0);
 }
 
@@ -287,8 +327,12 @@ async fn a_protocol_this_side_does_not_provide_is_a_fault() {
     let caller = client.handle();
     tokio::spawn(client.run());
     tokio::spawn(server.run());
-    assert_eq!(caller.call(7, Call::new(0, "anything"), &()).await, Ok(OwnedEnvelope::Fault));
-    let count: u64 = decode_ok(&caller.call(CHAT, Call::new(1, "count"), &()).await.unwrap()).unwrap();
+    assert_eq!(
+        caller.call(7, Call::new(0, "anything"), &()).await,
+        Ok(OwnedEnvelope::Fault)
+    );
+    let count: u64 =
+        decode_ok(&caller.call(CHAT, Call::new(1, "count"), &()).await.unwrap()).unwrap();
     assert_eq!(count, 0, "the connection survives it");
 }
 
@@ -302,7 +346,10 @@ async fn calls_waiting_when_the_transport_closes_fail() {
     drop(acceptor);
     assert_eq!(waiting.await, Err(RuntimeError::Transport));
     run.await.unwrap().unwrap();
-    assert_eq!(caller.notify(CHAT, Call::new(1, "count"), &()), Err(RuntimeError::Transport));
+    assert_eq!(
+        caller.notify(CHAT, Call::new(1, "count"), &()),
+        Err(RuntimeError::Transport)
+    );
 }
 
 #[tokio::test]
@@ -331,7 +378,13 @@ async fn an_async_end_talks_to_a_blocking_one_over_tcp() {
             CHAT_CALLS
         }
 
-        fn dispatch<W: WireFormat>(&self, _: Kind, _: &[u8], _: &W, _: &mut Reply) -> Result<(), RuntimeError> {
+        fn dispatch<W: WireFormat>(
+            &self,
+            _: Kind,
+            _: &[u8],
+            _: &W,
+            _: &mut Reply,
+        ) -> Result<(), RuntimeError> {
             unreachable!("only served on a connection")
         }
 
@@ -365,18 +418,28 @@ async fn an_async_end_talks_to_a_blocking_one_over_tcp() {
     });
 
     let transport = rt_tokio::Tcp::connect(addr).await.unwrap();
-    let mut client = AsyncConnection::connect(transport, MsgPack, IR_HASH).await.unwrap();
+    let mut client = AsyncConnection::connect(transport, MsgPack, IR_HASH)
+        .await
+        .unwrap();
     let events = EventsDispatcher::default();
     client.provide(EVENTS, events.clone());
     let caller = client.handle();
     let run = tokio::spawn(client.run());
 
-    let answer: u64 = decode_ok(&caller.call(CHAT, Call::new(0, "send"), &text("over tcp")).await.unwrap()).unwrap();
+    let answer: u64 = decode_ok(
+        &caller
+            .call(CHAT, Call::new(0, "send"), &text("over tcp"))
+            .await
+            .unwrap(),
+    )
+    .unwrap();
     assert_eq!(answer, 42);
     assert_eq!(*events.seen.lock().unwrap(), ["over tcp"]);
     caller.close();
     run.await.unwrap().unwrap();
-    tokio::task::spawn_blocking(move || blocking.join().unwrap()).await.unwrap();
+    tokio::task::spawn_blocking(move || blocking.join().unwrap())
+        .await
+        .unwrap();
 }
 
 #[test]

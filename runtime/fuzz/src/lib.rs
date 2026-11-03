@@ -280,6 +280,7 @@ pub fn type_of(value: &Value) -> Type {
         Value::F32(_) => Type::F32,
         Value::F64(_) => Type::F64,
         Value::String(_) => Type::String,
+        Value::Char(_) => Type::Char,
         Value::Unit(()) => Type::Unit,
         Value::Option(v) => Type::Option(Box::new(v.as_deref().map_or(Type::U8, type_of))),
         Value::Array(items) => Type::Array(Box::new(items.first().map_or(Type::U8, type_of))),

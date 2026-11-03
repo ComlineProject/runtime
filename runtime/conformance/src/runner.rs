@@ -45,7 +45,7 @@ use crate::{Profile, Vectors};
 /// early days: a minor bump may change anything, and says so in the
 /// changelog. The ops protocol also carries its own number (`protocol` in
 /// the `version` reply, [`OPS_PROTOCOL`]).
-pub const SPEC_VERSION: &str = "0.2";
+pub const SPEC_VERSION: &str = "0.3";
 
 /// The ops protocol's number, as a `version` reply states it. Ops and reply
 /// fields are only ever added under it.
@@ -261,10 +261,14 @@ pub fn questions(case: &Case) -> Vec<Question> {
     };
     let mut asked = Vec::new();
     if case.expect == Expect::Reject {
-        if case.op == Op::StreamPrefix {
+        if matches!(case.op, Op::StreamPrefix | Op::Encode) {
             asked.push(ask(None));
         }
-        asked.push(ask(Some(&case.bytes.0)));
+        // An `encode` rejection is a value over its type's bounds, which no
+        // bytes stand for.
+        if case.op != Op::Encode {
+            asked.push(ask(Some(&case.bytes.0)));
+        }
         return asked;
     }
     if !case.op.decode_only() {
@@ -307,7 +311,7 @@ pub fn judge(case: &Case, answers: &[Answer]) -> Outcome {
             (None, Answer::Bad(_)) if case.expect == Expect::Reject => Ok(()),
             (_, Answer::Bad(why)) => Err(format!("answered with an error: {why}")),
             (None, Answer::Bytes(got)) if case.expect == Expect::Reject => {
-                Err(format!("prefixed a frame over the limit, as {}", hex(got)))
+                Err(format!("encoded what it must refuse, as {}", hex(got)))
             }
             (None, Answer::Bytes(got)) => {
                 let want = &case.bytes.0;
