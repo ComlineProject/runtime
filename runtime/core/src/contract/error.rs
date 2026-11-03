@@ -68,7 +68,7 @@ pub enum RuntimeError {
     ///   allows, and a conforming peer would refuse it.
     BoundExceeded {
         measure: crate::bounds::Measure,
-        max: u64,
+        max: u32,
     },
 }
 

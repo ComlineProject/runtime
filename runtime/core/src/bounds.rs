@@ -39,6 +39,7 @@ use crate::contract::RuntimeError;
 
 /// What a bound limits.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+#[repr(u8)]
 pub enum Measure {
     /// A string's characters (`char[max N]`).
     Chars,
@@ -58,11 +59,12 @@ impl Measure {
     }
 }
 
-/// A value over its type's bound: more than `max` of `measure`.
+/// A value over its type's bound: more than `max` of `measure`. A maximum
+/// is at most `u32::MAX`, as core allows.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub struct BoundExceeded {
     pub measure: Measure,
-    pub max: u64,
+    pub max: u32,
 }
 
 /// The prefix of [`BoundExceeded`]'s message, by which a format tells a bound
@@ -70,7 +72,7 @@ pub struct BoundExceeded {
 const MESSAGE_PREFIX: &str = "more than ";
 
 impl BoundExceeded {
-    pub const fn new(measure: Measure, max: u64) -> Self {
+    pub const fn new(measure: Measure, max: u32) -> Self {
         Self { measure, max }
     }
 
@@ -159,8 +161,8 @@ impl fmt::Write for MessageHead {
 
 /// Whether `count` items fit a maximum of `max`.
 #[inline]
-pub fn check_items(count: usize, max: u64) -> Result<(), BoundExceeded> {
-    if count as u64 > max {
+pub fn check_items(count: usize, max: u32) -> Result<(), BoundExceeded> {
+    if count as u64 > u64::from(max) {
         Err(BoundExceeded::new(Measure::Items, max))
     } else {
         Ok(())
@@ -170,17 +172,18 @@ pub fn check_items(count: usize, max: u64) -> Result<(), BoundExceeded> {
 /// Whether `s` holds at most `max` characters. A string of at most `max`
 /// bytes needs no count.
 #[inline]
-pub fn check_chars(s: &str, max: u64) -> Result<(), BoundExceeded> {
+pub fn check_chars(s: &str, max: u32) -> Result<(), BoundExceeded> {
     let over = || BoundExceeded::new(Measure::Chars, max);
-    if s.len() as u64 <= max {
+    let (len, max_bytes) = (s.len() as u64, u64::from(max) * 4);
+    if len <= u64::from(max) {
         return Ok(());
     }
-    if s.len() as u64 > max.saturating_mul(4) {
+    if len > max_bytes {
         return Err(over());
     }
     // Every byte that isn't a UTF-8 continuation byte starts a character.
     let chars = s.bytes().filter(|&b| (b as i8) >= -0x40).count();
-    if chars as u64 > max {
+    if chars as u64 > u64::from(max) {
         Err(over())
     } else {
         Ok(())
@@ -191,8 +194,8 @@ pub fn check_chars(s: &str, max: u64) -> Result<(), BoundExceeded> {
 /// `max` characters. A byte length above 4 × `max` is refused before reading
 /// any of it; invalid UTF-8 is [`RuntimeError::Serialization`], as every
 /// format reports it.
-pub fn chars_from_utf8(bytes: &[u8], max: u64) -> Result<&str, RuntimeError> {
-    if bytes.len() as u64 > max.saturating_mul(4) {
+pub fn chars_from_utf8(bytes: &[u8], max: u32) -> Result<&str, RuntimeError> {
+    if bytes.len() as u64 > u64::from(max) * 4 {
         return Err(BoundExceeded::new(Measure::Chars, max).into());
     }
     let s = core::str::from_utf8(bytes).map_err(|_| RuntimeError::Serialization)?;
@@ -234,21 +237,21 @@ pub fn char_from_utf8(bytes: &[u8]) -> Result<(char, usize), RuntimeError> {
 /// before reading any deeper, so a hostile input can't recurse past it.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct Depth {
-    level: u64,
-    max: u64,
+    level: u32,
+    max: u32,
 }
 
 impl Depth {
-    pub const fn new(max: u64) -> Self {
+    pub const fn new(max: u32) -> Self {
         Self { level: 0, max }
     }
 
     /// The level the next [`enter`](Self::enter) would reach, less one.
-    pub const fn level(&self) -> u64 {
+    pub const fn level(&self) -> u32 {
         self.level
     }
 
-    pub const fn max(&self) -> u64 {
+    pub const fn max(&self) -> u32 {
         self.max
     }
 
@@ -286,12 +289,12 @@ pub fn ser_error<E: ser::Error>(b: BoundExceeded) -> E {
 /// isn't counted at all.
 #[derive(Debug, Clone, Copy)]
 pub struct CharsSeed<T> {
-    pub max: u64,
+    pub max: u32,
     marker: core::marker::PhantomData<fn() -> T>,
 }
 
 impl<T> CharsSeed<T> {
-    pub const fn new(max: u64) -> Self {
+    pub const fn new(max: u32) -> Self {
         Self {
             max,
             marker: core::marker::PhantomData,
@@ -360,12 +363,12 @@ impl<'de, T: FromBoundedStr<'de>> Visitor<'de> for CharsSeed<T> {
 #[derive(Debug, Clone, Copy)]
 pub struct ItemsSeed<S, C> {
     pub of: S,
-    pub max: u64,
+    pub max: u32,
     marker: core::marker::PhantomData<fn() -> C>,
 }
 
 impl<S, C> ItemsSeed<S, C> {
-    pub const fn new(of: S, max: u64) -> Self {
+    pub const fn new(of: S, max: u32) -> Self {
         Self {
             of,
             max,
@@ -421,7 +424,7 @@ where
         // The hint is the input's claim: it only sizes the first allocation,
         // as `serde`'s own `Vec` does.
         let mut items = C::with_capacity(hint.min(4096));
-        let mut count: u64 = 0;
+        let mut count: u32 = 0;
         loop {
             if count == self.max {
                 // One more is one too many: skip it unbuilt to find out.
@@ -447,14 +450,14 @@ pub mod decode {
     use serde::Deserialize;
 
     /// A `String` of at most `MAX` characters.
-    pub fn string<'de, D: Deserializer<'de>, const MAX: u64>(
+    pub fn string<'de, D: Deserializer<'de>, const MAX: u32>(
         d: D,
     ) -> Result<alloc::string::String, D::Error> {
         CharsSeed::new(MAX).deserialize(d)
     }
 
     /// A `Vec<T>` of at most `MAX` items.
-    pub fn vec<'de, D: Deserializer<'de>, T: Deserialize<'de>, const MAX: u64>(
+    pub fn vec<'de, D: Deserializer<'de>, T: Deserialize<'de>, const MAX: u32>(
         d: D,
     ) -> Result<alloc::vec::Vec<T>, D::Error> {
         ItemsSeed::new(core::marker::PhantomData::<T>, MAX).deserialize(d)
@@ -467,13 +470,13 @@ pub mod encode {
     use super::*;
 
     /// A string of at most `MAX` characters.
-    pub fn string<S: Serializer, const MAX: u64>(v: &str, s: S) -> Result<S::Ok, S::Error> {
+    pub fn string<S: Serializer, const MAX: u32>(v: &str, s: S) -> Result<S::Ok, S::Error> {
         check_chars(v, MAX).map_err(ser_error)?;
         s.serialize_str(v)
     }
 
     /// A slice of at most `MAX` items.
-    pub fn vec<S: Serializer, T: Serialize, const MAX: u64>(
+    pub fn vec<S: Serializer, T: Serialize, const MAX: u32>(
         v: &[T],
         s: S,
     ) -> Result<S::Ok, S::Error> {

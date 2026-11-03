@@ -406,7 +406,7 @@ pub enum Type {
     /// `char[max N]`: a string of at most `max` characters (Unicode scalar
     /// values, not bytes).
     BoundedString {
-        max: u64,
+        max: u32,
     },
     Option(Box<Type>),
     /// `T[]`.
@@ -419,13 +419,13 @@ pub enum Type {
     /// `T[max N]`: at most `max` items.
     BoundedArray {
         of: Box<Type>,
-        max: u64,
+        max: u32,
     },
     /// A type that can contain itself, `@max_depth = max_depth`: `of`, in
     /// which `"self"` stands for the recursive type again. The outermost
     /// value is level 1; a value at level `max_depth + 1` is refused.
     Recursive {
-        max_depth: u64,
+        max_depth: u32,
         of: Box<Type>,
     },
     /// The nearest enclosing [`Recursive`](Type::Recursive) type.
