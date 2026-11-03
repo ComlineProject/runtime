@@ -122,6 +122,8 @@ impl From<BoundExceeded> for RuntimeError {
 /// [`RuntimeError::Serialization`] for anything else. Reads only the head of
 /// the message, with no allocation.
 #[allow(dead_code)] // `no_std` builds have no `serde` formats with their own errors.
+#[cold]
+#[inline(never)]
 pub(crate) fn error_of(error: &dyn fmt::Display) -> RuntimeError {
     MessageHead::of(error).map_or(RuntimeError::Serialization, Into::into)
 }

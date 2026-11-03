@@ -101,6 +101,10 @@ enum Error {
 }
 
 impl Error {
+    // Both only run on the error path: kept out of line, so the decode and
+    // encode paths stay as they were.
+    #[cold]
+    #[inline(never)]
     fn into_runtime(self) -> RuntimeError {
         match self {
             Error::Bound(measure) => RuntimeError::BoundExceeded { measure },
@@ -108,6 +112,8 @@ impl Error {
         }
     }
 
+    #[cold]
+    #[inline(never)]
     fn custom_of(message: &dyn fmt::Display) -> Self {
         MessageHead::of(message).map_or(Error::Custom, |b| Error::Bound(b.measure))
     }
