@@ -2,7 +2,8 @@
 //!
 //! - Integers and floats are fixed-width little-endian; `bool` is one byte,
 //!   `00` or `01`.
-//! - Strings and byte strings are a varint length, then the bytes.
+//! - Strings and byte strings are a varint length, then the bytes. A single
+//!   `char` is its UTF-8 bytes alone, 1 to 4: the first byte gives the width.
 //! - Sequences and maps are a varint count, then the elements; tuples and
 //!   fixed-size arrays have no count, their length is in the type.
 //! - An option is `00`, or `01` and the value.
@@ -24,6 +25,7 @@ use serde::de::{self, DeserializeSeed, IntoDeserializer, Visitor};
 use serde::ser::{self, Serialize};
 use serde::Deserialize;
 
+use crate::bounds::{Measure, MessageHead};
 use crate::contract::{BufMut, RuntimeError, WireFormat};
 
 /// [`WireFormat`] for `packed@1`: the smallest and fastest of the formats,
@@ -44,7 +46,7 @@ impl WireFormat for Packed {
     ) -> Result<(), RuntimeError> {
         value
             .serialize(&mut Serializer { out })
-            .map_err(|_| RuntimeError::Serialization)
+            .map_err(Error::into_runtime)
     }
 
     fn decode<'de, T: Deserialize<'de>>(&self, bytes: &'de [u8]) -> Result<T, RuntimeError> {
@@ -63,9 +65,7 @@ impl Packed {
         bytes: &'de [u8],
     ) -> Result<S::Value, RuntimeError> {
         let mut de = Deserializer { input: bytes };
-        let value = seed
-            .deserialize(&mut de)
-            .map_err(|_| RuntimeError::Serialization)?;
+        let value = seed.deserialize(&mut de).map_err(Error::into_runtime)?;
         if !de.input.is_empty() {
             return Err(RuntimeError::Serialization);
         }
@@ -73,8 +73,10 @@ impl Packed {
     }
 }
 
-/// Why encoding or decoding failed. Callers only ever see
-/// [`RuntimeError::Serialization`]; the reason is for this module's tests.
+/// Why encoding or decoding failed. Callers see
+/// [`RuntimeError::BoundExceeded`] for a bound and
+/// [`RuntimeError::Serialization`] for everything else; the reason is for
+/// this module's tests.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum Error {
     /// The input ended inside a value.
@@ -92,6 +94,23 @@ enum Error {
     Unsupported,
     /// A message from the value's own `Serialize` or `Deserialize`.
     Custom,
+    /// A value over its type's bound, from [`crate::bounds`]. Only the
+    /// measure: with the maximum too, this error would take 8 bytes instead
+    /// of 1, and every `Result` on the decode path would grow with it.
+    Bound(Measure),
+}
+
+impl Error {
+    fn into_runtime(self) -> RuntimeError {
+        match self {
+            Error::Bound(measure) => RuntimeError::BoundExceeded { measure },
+            _ => RuntimeError::Serialization,
+        }
+    }
+
+    fn custom_of(message: &dyn fmt::Display) -> Self {
+        MessageHead::of(message).map_or(Error::Custom, |b| Error::Bound(b.measure))
+    }
 }
 
 impl fmt::Display for Error {
@@ -104,6 +123,9 @@ impl fmt::Display for Error {
             Error::BadUtf8 => "a string that isn't UTF-8",
             Error::Unsupported => "a shape packed@1 can't encode",
             Error::Custom => "the value refused itself",
+            Error::Bound(Measure::Chars) => "more characters than the type allows",
+            Error::Bound(Measure::Items) => "more items than the type allows",
+            Error::Bound(Measure::Depth) => "nested deeper than the type allows",
         })
     }
 }
@@ -111,14 +133,14 @@ impl fmt::Display for Error {
 impl de::StdError for Error {}
 
 impl ser::Error for Error {
-    fn custom<T: fmt::Display>(_: T) -> Self {
-        Error::Custom
+    fn custom<T: fmt::Display>(message: T) -> Self {
+        Error::custom_of(&message)
     }
 }
 
 impl de::Error for Error {
-    fn custom<T: fmt::Display>(_: T) -> Self {
-        Error::Custom
+    fn custom<T: fmt::Display>(message: T) -> Self {
+        Error::custom_of(&message)
     }
 }
 
@@ -220,8 +242,11 @@ impl ser::Serializer for &mut Serializer<'_> {
         Ok(())
     }
 
+    /// A single `char` is its UTF-8 bytes, 1 to 4, with no length: the
+    /// first byte says how many follow.
     fn serialize_char(self, v: char) -> Result<(), Error> {
-        self.serialize_str(v.encode_utf8(&mut [0; 4]))
+        self.out.put_slice(v.encode_utf8(&mut [0; 4]).as_bytes());
+        Ok(())
     }
 
     fn serialize_str(self, v: &str) -> Result<(), Error> {
@@ -539,12 +564,16 @@ impl<'de> de::Deserializer<'de> for &mut Deserializer<'de> {
         deserialize_f64 => visit_f64(f64),
     );
 
+    /// One character's UTF-8 bytes, checked strictly: no overlong form,
+    /// surrogate or truncated character.
     fn deserialize_char<V: Visitor<'de>>(self, visitor: V) -> Result<V::Value, Error> {
-        let mut chars = self.str()?.chars();
-        match (chars.next(), chars.next()) {
-            (Some(c), None) => visitor.visit_char(c),
-            _ => Err(Error::Custom),
-        }
+        let (c, width) = match crate::bounds::char_from_utf8(self.input) {
+            Ok(read) => read,
+            Err(_) if self.input.is_empty() => return Err(Error::Truncated),
+            Err(_) => return Err(Error::BadUtf8),
+        };
+        self.take(width)?;
+        visitor.visit_char(c)
     }
 
     fn deserialize_str<V: Visitor<'de>>(self, visitor: V) -> Result<V::Value, Error> {
@@ -822,6 +851,14 @@ mod tests {
             [7, 0, 0, 0, 100, 0, 2, b'a', b'b', 0, 1, 0, 0, 0x80, 0x3f, 0, 0, 0, 0x40]
         );
         assert_eq!(Packed.decode::<Player>(&bytes).unwrap(), player);
+    }
+
+    /// The decode path returns `Result<_, Error>` everywhere: a bigger
+    /// error makes each of them bigger, and decoding measurably slower.
+    #[test]
+    fn the_error_is_one_byte() {
+        assert_eq!(core::mem::size_of::<Error>(), 1);
+        assert_eq!(core::mem::size_of::<RuntimeError>(), 4);
     }
 
     #[test]

@@ -23,7 +23,7 @@ impl WireFormat for Json {
         value: &T,
         out: &mut dyn BufMut,
     ) -> Result<(), RuntimeError> {
-        serde_json::to_writer(BufWriter(out), value).map_err(|_| RuntimeError::Serialization)
+        serde_json::to_writer(BufWriter(out), value).map_err(|e| crate::bounds::error_of(&e))
     }
 
     fn decode<'de, T: Deserialize<'de>>(&self, bytes: &'de [u8]) -> Result<T, RuntimeError> {
@@ -46,8 +46,8 @@ impl Json {
         // A struct only by name (runtime#74).
         let value = seed
             .deserialize(Shaped { de: &mut de, shape: StructShape::Map })
-            .map_err(|_| RuntimeError::Serialization)?;
-        de.end().map_err(|_| RuntimeError::Serialization)?;
+            .map_err(|e| crate::bounds::error_of(&e))?;
+        de.end().map_err(|e| crate::bounds::error_of(&e))?;
         Ok(value)
     }
 }

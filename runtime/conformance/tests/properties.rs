@@ -146,6 +146,7 @@ fn type_strategy(c: Carries) -> impl Strategy<Value = Type> {
         Just(Type::F32),
         Just(Type::F64),
         Just(Type::String),
+        Just(Type::Char),
         Just(Type::Unit),
         (0..ENUM_NAMES.len(), 1..=VARIANT_NAMES.len()).prop_map(|(name, n)| Type::Enum {
             name: ENUM_NAMES[name].into(),
@@ -299,7 +300,12 @@ fn value_strategy(ty: &Type, c: Carries) -> BoxedStrategy<Value> {
         Type::String => prop::collection::vec(any::<char>(), 0..16)
             .prop_map(|chars| Value::String(chars.into_iter().collect()))
             .boxed(),
+        Type::Char => any::<char>().prop_map(Value::Char).boxed(),
         Type::Unit => Just(Value::Unit(())).boxed(),
+        Type::BoundedString { .. }
+        | Type::BoundedArray { .. }
+        | Type::Recursive { .. }
+        | Type::SelfRef => unreachable!("bounds aren't generated"),
         Type::Option(inner) => prop_oneof![
             Just(Value::Option(None)),
             value_strategy(inner, c).prop_map(|v| Value::Option(Some(Box::new(v)))),
