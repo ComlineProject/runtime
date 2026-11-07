@@ -214,18 +214,22 @@ fn fits(i: &RequestIn) -> Result<(), Outcome> {
     else {
         return Ok(());
     };
-    let carried = payload.carries(output)
-        && encode_with(&i.format, &i.params).is_none_or(|params| payload.carries_params(&params));
-    if carried {
-        return Ok(());
+    if !payload.carries(output) {
+        return Err(Outcome::NotImplemented(format!(
+            "`{}` on `{}`: it takes `{}`, and that format writes `{}`",
+            i.format,
+            i.framing,
+            payload.as_str(),
+            output.as_str(),
+        )));
     }
-    Err(Outcome::NotImplemented(format!(
-        "these params in `{}` on `{}`: it takes `{}`, and they're `{}`",
-        i.format,
-        i.framing,
-        payload.as_str(),
-        output.as_str(),
-    )))
+    if encode_with(&i.format, &i.params).is_some_and(|params| !payload.carries_params(&params)) {
+        return Err(Outcome::NotImplemented(format!(
+            "these params in `{}` on `{}`: it takes an array, an object or `null`",
+            i.format, i.framing,
+        )));
+    }
+    Ok(())
 }
 
 /// Encodes `input` for `op` with `comline-runtime`.
@@ -728,5 +732,29 @@ mod tests {
             run(&case(Op::Encode, value, &[], Expect::Reject)),
             Outcome::NotImplemented(_)
         ));
+    }
+
+    /// A format that can't fit its framing, and params that can't in a format
+    /// that can, are refused for different reasons, and each says its own.
+    #[test]
+    fn fits_says_why_it_refuses() {
+        let request = |format: &str| {
+            json!({
+                "framing": "jsonrpc@1", "call_id": 1, "method": "m", "request_id": "1",
+                "format": format, "params": { "u8": 1 },
+            })
+        };
+        let refusal = |input: &serde_json::Value| match answer(Op::Request, input, None) {
+            Answer::NotImplemented(why) => why,
+            _ => panic!("{input} wasn't refused"),
+        };
+        assert_eq!(
+            refusal(&request("msgpack@1")),
+            "`msgpack@1` on `jsonrpc@1`: it takes `json`, and that format writes `bytes`"
+        );
+        assert_eq!(
+            refusal(&request("json@1")),
+            "these params in `json@1` on `jsonrpc@1`: it takes an array, an object or `null`"
+        );
     }
 }
