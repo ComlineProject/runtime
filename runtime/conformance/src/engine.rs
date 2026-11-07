@@ -17,22 +17,47 @@ use comline_runtime::contract::{
 use comline_runtime::format::{Json, MsgPack, Packed};
 use comline_runtime::framing::JsonRpcFraming;
 
+use crate::runner::{judge, questions};
 use crate::{
-    comline2, intern, json_equal, seed, Case, Compare, DecodeIn, Expect, Framed, Hex, Input, Op,
+    comline2, hex, intern, json_equal, seed, Case, Compare, DecodeIn, Expect, Framed, Hex, Input, Op,
     Outcome, Reply, RequestIn, ResponseIn, StreamPrefixIn, StreamSplit, StreamSplitIn, Type, TypeSeed,
     Value, Wire,
 };
 
-pub(crate) fn encode_with(format: &str, value: &Value) -> Option<Vec<u8>> {
+/// `value` in `format`: `None` for a format this doesn't ship, or a value the
+/// format refuses.
+pub fn encode_as(format: &str, value: &(impl Serialize + ?Sized)) -> Option<Vec<u8>> {
     let mut out = Vec::new();
     match format {
-        FORMAT_JSON => Json.encode(&Wire(value), &mut out),
-        FORMAT_MSGPACK => MsgPack.encode(&Wire(value), &mut out),
-        FORMAT_PACKED => Packed.encode(&Wire(value), &mut out),
+        FORMAT_JSON => Json.encode(value, &mut out),
+        FORMAT_MSGPACK => MsgPack.encode(value, &mut out),
+        FORMAT_PACKED => Packed.encode(value, &mut out),
         _ => return None,
     }
     .ok()?;
     Some(out)
+}
+
+pub(crate) fn encode_with(format: &str, value: &Value) -> Option<Vec<u8>> {
+    encode_as(format, &Wire(value))
+}
+
+/// Runs `$body` with `$f` as the format `$name` names, among those a
+/// request's params are written in here.
+macro_rules! with_params_format {
+    ($name:expr, |$f:ident| $body:expr) => {
+        match $name {
+            FORMAT_JSON => {
+                let $f = Json;
+                $body
+            }
+            FORMAT_MSGPACK => {
+                let $f = MsgPack;
+                $body
+            }
+            other => return Err(Outcome::NotImplemented(format!("format `{other}`"))),
+        }
+    };
 }
 
 fn framing_of(name: &str) -> Option<AnyFraming> {
@@ -119,11 +144,7 @@ fn reply_of(envelope: Envelope) -> Reply {
 /// binding's is.
 fn encode_request_bodies(i: &RequestIn) -> Result<Vec<(&'static str, Vec<u8>)>, Outcome> {
     let mut params = Vec::new();
-    match i.format.as_str() {
-        FORMAT_JSON => Json.encode(&Wire(&i.params), &mut params),
-        FORMAT_MSGPACK => MsgPack.encode(&Wire(&i.params), &mut params),
-        other => return Err(Outcome::NotImplemented(format!("format `{other}`"))),
-    }
+    with_params_format!(i.format.as_str(), |f| f.encode(&Wire(&i.params), &mut params))
     .map_err(|e| Outcome::Fail(format!("encoding the params failed: {e:?}")))?;
     let (call, name, id) = (i.call_id, i.method.as_str(), i.request_id);
     let framed = |encode: &dyn Fn(&mut Vec<u8>)| {
@@ -198,27 +219,18 @@ pub(crate) fn encode(input: &Input) -> Result<Vec<u8>, Outcome> {
                     .protocol
                     .ok_or_else(|| Outcome::Fail("no `protocol`".into()))?;
                 let call = Call::new(i.call_id, intern::name(&i.method));
-                let encoded = match i.format.as_str() {
-                    FORMAT_JSON => with_datagram!(dg, |f| f.encode_request(
+                let encoded = with_params_format!(i.format.as_str(), |format| with_datagram!(
+                    dg,
+                    |f| f.encode_request(
                         protocol,
                         call,
                         i.request_id,
                         i.one_way,
                         &Wire(&i.params),
-                        &Json,
+                        &format,
                         &mut out,
-                    )),
-                    FORMAT_MSGPACK => with_datagram!(dg, |f| f.encode_request(
-                        protocol,
-                        call,
-                        i.request_id,
-                        i.one_way,
-                        &Wire(&i.params),
-                        &MsgPack,
-                        &mut out,
-                    )),
-                    other => return Err(Outcome::NotImplemented(format!("format `{other}`"))),
-                };
+                    )
+                ));
                 encoded.map_err(|e| Outcome::Fail(format!("encoding failed: {e:?}")))?;
                 return Ok(out);
             }
@@ -245,25 +257,17 @@ pub(crate) fn encode(input: &Input) -> Result<Vec<u8>, Outcome> {
             let framing = framing_of(&i.framing)
                 .ok_or_else(|| Outcome::NotImplemented(format!("framing `{}`", i.framing)))?;
             let call = Call::new(i.call_id, intern::name(&i.method));
-            let encoded = match i.format.as_str() {
-                FORMAT_JSON => with_framing!(framing, |f| Framing::encode_request(
+            let encoded = with_params_format!(i.format.as_str(), |format| with_framing!(
+                framing,
+                |f| Framing::encode_request(
                     &f,
                     call,
                     i.request_id,
                     &Wire(&i.params),
-                    &Json,
+                    &format,
                     &mut out
-                )),
-                FORMAT_MSGPACK => with_framing!(framing, |f| Framing::encode_request(
-                    &f,
-                    call,
-                    i.request_id,
-                    &Wire(&i.params),
-                    &MsgPack,
-                    &mut out
-                )),
-                other => return Err(Outcome::NotImplemented(format!("format `{other}`"))),
-            };
+                )
+            ));
             encoded.map_err(|e| Outcome::Fail(format!("encoding failed: {e:?}")))?;
         }
         Input::Response(Framed::Full(i)) => {
@@ -592,71 +596,39 @@ pub fn answer(op: Op, input: &serde_json::Value, bytes: Option<&[u8]>) -> Answer
     })
 }
 
-/// Runs one case against `comline-runtime`.
+/// Runs one case against `comline-runtime`: its questions, judged as any
+/// implementation's answers are, and then what only this crate can ask.
 pub fn run(case: &Case) -> Outcome {
-    match run_inner(case) {
-        Ok(()) => Outcome::Pass,
-        Err(outcome) => outcome,
+    let answers: Vec<Answer> = questions(case)
+        .iter()
+        .map(|q| answer(q.op, &q.input, q.bytes.as_deref()))
+        .collect();
+    match judge(case, &answers) {
+        Outcome::Pass => request_bodies_match(case).err().unwrap_or(Outcome::Pass),
+        failed => failed,
     }
 }
 
-fn run_inner(case: &Case) -> Result<(), Outcome> {
-    let bytes = &case.bytes.0;
+/// A request's frame comes out the same however it's written: a case's input
+/// through each path a caller that serialises the params itself takes.
+fn request_bodies_match(case: &Case) -> Result<(), Outcome> {
+    let Input::Request(Framed::Full(i)) = &case.input else {
+        return Ok(());
+    };
     if case.expect == Expect::Reject {
-        if matches!(case.op(), Op::StreamPrefix | Op::Encode) {
-            if let Ok(encoded) = encode(&case.input) {
-                return Err(Outcome::Fail(format!(
-                    "encoded what it must refuse, as {}",
-                    to_json(&Hex(encoded))
-                )));
-            }
-        }
-        if case.op() == Op::Encode {
-            return Ok(());
-        }
-        return match decode(&case.input, bytes)? {
-            None => Ok(()),
-            Some(got) => Err(Outcome::Fail(format!(
-                "accepted bytes it must reject, as {got}"
-            ))),
-        };
+        return Ok(());
     }
-
-    if !case.op().decode_only() {
-        let same = |encoded: &[u8]| {
-            encoded == bytes || (case.compare == Compare::Json && json_equal(encoded, bytes))
-        };
-        let encoded = encode(&case.input)?;
-        if !same(&encoded) {
+    let want = &case.bytes.0;
+    for (path, encoded) in encode_request_bodies(i)? {
+        if encoded != *want && !(case.compare == Compare::Json && json_equal(&encoded, want)) {
             return Err(Outcome::Fail(format!(
-                "encodes to {}, expected {}",
-                to_json(&Hex(encoded)),
-                to_json(&case.bytes),
+                "{path} encodes to {}, expected {}",
+                hex(&encoded),
+                hex(want),
             )));
         }
-        if let Input::Request(Framed::Full(i)) = &case.input {
-            for (path, encoded) in encode_request_bodies(i)? {
-                if !same(&encoded) {
-                    return Err(Outcome::Fail(format!(
-                        "{path} encodes to {}, expected {}",
-                        to_json(&Hex(encoded)),
-                        to_json(&case.bytes),
-                    )));
-                }
-            }
-        }
-        if matches!(case.op(), Op::NameHash | Op::Encode) {
-            return Ok(());
-        }
     }
-    match decode(&case.input, bytes)? {
-        Some(got) if case.input.given_back_by(&got) => Ok(()),
-        Some(got) => Err(Outcome::Fail(format!(
-            "decodes to {got}, expected {}",
-            to_json(&case.input)
-        ))),
-        None => Err(Outcome::Fail("refused bytes it must decode".into())),
-    }
+    Ok(())
 }
 
 /// Decodes `bytes` as `ty` the way a generated type with that shape would,
@@ -669,4 +641,43 @@ pub fn decode_typed(format: &str, ty: &Type, bytes: &[u8]) -> Result<Option<Valu
         FORMAT_PACKED => Packed.decode_seed(seed, bytes).ok(),
         other => return Err(Outcome::NotImplemented(format!("format `{other}`"))),
     })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use serde_json::json;
+
+    fn case(op: Op, input: serde_json::Value, bytes: &[u8], expect: Expect) -> Case {
+        Case {
+            id: "x/y".into(),
+            input: Input::parse(op, &input).unwrap(),
+            bytes: Hex(bytes.to_vec()),
+            expect,
+            compare: Compare::Bytes,
+        }
+    }
+
+    #[test]
+    fn run_judges_the_reference_as_any_implementation() {
+        let name = json!({ "name": "" });
+        let hash = comline_runtime::contract::name_hash("").to_le_bytes();
+        assert_eq!(run(&case(Op::NameHash, name.clone(), &hash, Expect::Exact)), Outcome::Pass);
+        assert!(matches!(
+            run(&case(Op::NameHash, name, &[0], Expect::Exact)),
+            Outcome::Fail(why) if why.contains("encodes wrong")
+        ));
+        // Bytes that decode, under a case that says they mustn't.
+        let reply = json!({ "kind": "fault" });
+        assert!(matches!(
+            run(&case(Op::Envelope, reply, &[2], Expect::Reject)),
+            Outcome::Fail(why) if why.contains("accepted bytes")
+        ));
+        // A format it doesn't ship isn't a pass, even for a rejection.
+        let value = json!({ "format": "nope@1", "value": { "u8": 1 } });
+        assert!(matches!(
+            run(&case(Op::Encode, value, &[], Expect::Reject)),
+            Outcome::NotImplemented(_)
+        ));
+    }
 }

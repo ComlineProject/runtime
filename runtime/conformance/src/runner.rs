@@ -30,14 +30,13 @@
 //! ```
 
 use std::collections::BTreeMap;
-use std::fmt::Write as _;
 use std::io::{BufRead, Write};
 use std::path::Path;
 
 use serde::Deserialize;
 use serde_json::{json, Value as Json};
 
-use crate::{answer, fact_shown, json_equal, to_json, Answer, Case, Compare, Expect, Hex, Op};
+use crate::{answer, fact_shown, hex, json_equal, to_json, Answer, Case, Compare, Expect, Hex, Op};
 use crate::{Outcome, Profile, Vectors};
 
 /// The version of the public spec: the case format (`vectors/*.json`,
@@ -378,13 +377,6 @@ fn describe(answer: &Answer) -> &'static str {
         Answer::NotImplemented(_) => "not_implemented",
         Answer::Bad(_) => "an error",
     }
-}
-
-fn hex(bytes: &[u8]) -> String {
-    bytes.iter().fold(String::new(), |mut s, b| {
-        let _ = write!(s, "{b:02x}");
-        s
-    })
 }
 
 /// Two byte strings side by side, in hex, with the first difference marked:

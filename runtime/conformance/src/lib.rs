@@ -24,11 +24,11 @@ pub mod runner;
 mod seed;
 
 pub use case::{
-    Case, Compare, DecodeIn, EncodeIn, Expect, Framed, HandshakeIn, Hex, Input, NameHashIn, Op,
+    hex, Case, Compare, DecodeIn, EncodeIn, Expect, Framed, HandshakeIn, Hex, Input, NameHashIn, Op,
     Reply, RequestIn, ResponseIn, StreamPrefixIn, StreamSplit, StreamSplitIn,
 };
 pub use comline2::{NegotiateIn, NegotiateResult, Step};
-pub use engine::{answer, decode_typed, run, Answer};
+pub use engine::{answer, decode_typed, encode_as, run, Answer};
 pub(crate) use engine::to_json;
 pub use json_equal::json_equal;
 pub use profile::{

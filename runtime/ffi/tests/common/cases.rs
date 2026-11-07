@@ -11,6 +11,8 @@
 
 #![allow(dead_code)]
 
+#[allow(unused_imports)] // Not every target that includes this file needs it.
+pub use comline_runtime_conformance::hex;
 use comline_runtime_conformance::{Framed, Input, Reply, RequestIn, Vectors, Wire};
 use comline_runtime_ffi::{COMLINE_ENVELOPE_ERR, COMLINE_ENVELOPE_FAULT, COMLINE_ENVELOPE_OK};
 
@@ -57,10 +59,6 @@ pub fn vectors(feature: &str) -> Vectors {
         .find(|(name, _)| *name == feature)
         .unwrap_or_else(|| panic!("no vectors for {feature}"));
     serde_json::from_str(text).unwrap_or_else(|e| panic!("{feature}: {e}"))
-}
-
-pub fn hex(bytes: &[u8]) -> String {
-    bytes.iter().map(|b| format!("{b:02x}")).collect()
 }
 
 /// The framing a `request` or `response` input names.

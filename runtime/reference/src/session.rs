@@ -22,7 +22,7 @@ use comline_runtime::contract::{
     RuntimeError, WireFormat, FRAMING_DATAGRAM2, FRAMING_JSONRPC,
 };
 use comline_runtime::framing::JsonRpcFraming;
-use comline_runtime_conformance::{Hex, Reply};
+use comline_runtime_conformance::{decimal, Hex, Reply};
 
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -64,15 +64,6 @@ struct ReplyIn {
     #[serde(with = "decimal")]
     request_id: u64,
     envelope: Reply,
-}
-
-mod decimal {
-    use serde::de::Error as _;
-    use serde::{Deserialize, Deserializer};
-
-    pub fn deserialize<'de, D: Deserializer<'de>>(d: D) -> Result<u64, D::Error> {
-        String::deserialize(d)?.parse().map_err(D::Error::custom)
-    }
 }
 
 /// Answers a `session` request's `input`: `Ok` with the reply's fields, or

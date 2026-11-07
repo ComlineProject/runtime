@@ -36,9 +36,8 @@
 pub mod ffi;
 
 use arbitrary::Unstructured;
-use comline_runtime::contract::{WireFormat, FORMAT_JSON, FORMAT_MSGPACK, FORMAT_PACKED};
-use comline_runtime::format::{Json, MsgPack, Packed};
-use comline_runtime_conformance::{Type, Value, Wire};
+use comline_runtime::contract::{FORMAT_JSON, FORMAT_MSGPACK, FORMAT_PACKED};
+use comline_runtime_conformance::{encode_as, Type, Value, Wire};
 
 pub const FORMATS: [&str; 3] = [FORMAT_JSON, FORMAT_MSGPACK, FORMAT_PACKED];
 
@@ -316,13 +315,5 @@ pub fn type_of(value: &Value) -> Type {
 
 /// `value` in `format`.
 pub fn encode(format: &str, value: &Value) -> Vec<u8> {
-    let mut out = Vec::new();
-    match format {
-        FORMAT_JSON => Json.encode(&Wire(value), &mut out),
-        FORMAT_MSGPACK => MsgPack.encode(&Wire(value), &mut out),
-        FORMAT_PACKED => Packed.encode(&Wire(value), &mut out),
-        other => panic!("no format `{other}`"),
-    }
-    .expect("a value encodes");
-    out
+    encode_as(format, &Wire(value)).expect("a value encodes")
 }
