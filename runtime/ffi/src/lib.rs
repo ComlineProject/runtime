@@ -4,9 +4,9 @@
 
 //! `comline-runtime-ffi`: the C ABI over `comline-runtime`.
 //!
-//! It carries what is bytes and integers: the `comline@1` handshake, the
-//! envelopes, the connection framings (`datagram@2`, `jsonrpc@1`), the
-//! connection state (request ids, waiting calls, stale replies) and the frame
+//! It carries what is bytes and integers: the `comline@1` and `comline@2`
+//! handshakes, the envelopes, the connection framings (`datagram@2`,
+//! `datagram@3`, `jsonrpc@1`), the connection state (request ids, waiting calls, stale replies) and the frame
 //! limits. Codecs, transports, async and dispatch stay in each host. See
 //! `ComlineProject/docs` → Proposals → *Shared runtime core* → *One protocol
 //! core*.
@@ -25,7 +25,9 @@
 //!   thing the library allocates, sized by `max_waiting`, and
 //!   `comline_connection_free` frees it. One known exception, a bug:
 //!   `comline_connection_feed` on a `jsonrpc@1` connection can allocate
-//!   (runtime#58).
+//!   (runtime#58). And one by design: a `comline@2` connection allocates
+//!   during its handshake, which holds lists whose size the peer picks; once
+//!   the handshake is over, it allocates no more than any other connection.
 //! - **Null pointers.** A data pointer (`in`, `body`, `name`, `out`, …) may
 //!   be null only when its length or capacity is 0. Any other null pointer
 //!   is `COMLINE_ERR_INVALID_ARGUMENT`, and so is a length or capacity above
@@ -68,12 +70,17 @@ use core::ptr;
 use core::slice;
 use std::panic::{self, AssertUnwindSafe};
 
+use comline_runtime::comline2::{
+    Comline2, Exchange, Message, Negotiated, NewerConsumer, Params, ProtocolState, Refusal,
+    SameVersionDiffers, Scope, Step,
+};
 use comline_runtime::connection::{Event, State};
 use comline_runtime::contract::stream::{self, Split, DEFAULT_MAX_FRAME, PREFIX_LEN};
 use comline_runtime::contract::{
-    name_hash, BufMut, ConnectionFraming, CountBuf, Datagram2Framing, Envelope, HandshakeFrame,
-    MethodName, RequestCall, RuntimeError, SliceBuf, FRAMING_DATAGRAM2, FRAMING_JSONRPC,
-    HANDSHAKE_COMLINE, HANDSHAKE_NONE,
+    name_hash, BufMut, ConnectionFraming, CountBuf, Datagram2Framing, Datagram3Framing, Envelope,
+    HandshakeFrame, MethodName, Reason, RequestCall, RuntimeError, Side, SliceBuf,
+    FRAMING_DATAGRAM2, FRAMING_DATAGRAM3, FRAMING_JSONRPC, HANDSHAKE_COMLINE, HANDSHAKE_COMLINE2,
+    HANDSHAKE_NONE,
 };
 use comline_runtime::framing::JsonRpcFraming;
 
@@ -84,7 +91,7 @@ use comline_runtime::framing::JsonRpcFraming;
 pub const COMLINE_ABI_MAJOR: u32 = 0;
 /// The ABI's minor version: it changes when functions, codes or flag bits
 /// are added. Before 1.0 a binding accepts only its own minor.
-pub const COMLINE_ABI_MINOR: u32 = 1;
+pub const COMLINE_ABI_MINOR: u32 = 2;
 
 /// The library's ABI version, `(major << 16) | minor`.
 #[no_mangle]
@@ -146,6 +153,14 @@ pub const COMLINE_ERR_BUSY: comline_status = 23;
 /// nothing on the connection, and every call still waits, so the host decides
 /// whether to go on; a peer that can't read one frame usually can't read any.
 pub const COMLINE_ERR_PEER_REFUSED: comline_status = 24;
+/// The `comline@2` handshake refused the connection, this side or the peer:
+/// `comline_connection_refusal` says why and which. It can leave a last
+/// message to send (`COMLINE_EVENT_SEND`); after that the connection is closed.
+pub const COMLINE_ERR_REFUSED: comline_status = 25;
+/// `comline_connection_check_call`: the peer can't take this call, because it
+/// lacks the function or the protocol was refused. Fail the call locally;
+/// nothing has reached the wire.
+pub const COMLINE_ERR_UNAVAILABLE: comline_status = 26;
 
 /// The status for an error the core returned. Only the sans-IO pieces run
 /// here (framings, `State`, `contract::stream`, the handshake frame), and
@@ -161,6 +176,8 @@ fn status_of(error: RuntimeError) -> comline_status {
         RuntimeError::Busy => COMLINE_ERR_BUSY,
         RuntimeError::BufferTooSmall => COMLINE_BUFFER_TOO_SMALL,
         RuntimeError::PeerRefused => COMLINE_ERR_PEER_REFUSED,
+        RuntimeError::Refused { .. } => COMLINE_ERR_REFUSED,
+        RuntimeError::Unavailable => COMLINE_ERR_UNAVAILABLE,
         RuntimeError::Transport
         | RuntimeError::Serialization
         | RuntimeError::Timeout
@@ -207,13 +224,79 @@ pub const COMLINE_HANDSHAKE_COMLINE: u8 = 0;
 /// connection is open from the start. Gives up schema and encoding
 /// agreement (`@unverified` in the schema).
 pub const COMLINE_HANDSHAKE_NONE: u8 = 1;
+/// `comline_config.handshake`: `comline@2`, which checks compatibility by each
+/// protocol's line. It needs its facts and parameters, so only
+/// `comline_connection_new_comline2` takes it; `comline_connection_new` refuses
+/// it with `COMLINE_ERR_INVALID_ARGUMENT`.
+pub const COMLINE_HANDSHAKE_COMLINE2: u8 = 2;
 
-/// How to set up a connection, read once by `comline_connection_new`. The
+/// `comline_comline2_config.side` and `comline_refusal.side`: the end that
+/// opened the connection (the consumer).
+pub const COMLINE_SIDE_INITIATOR: u8 = 0;
+/// `comline_comline2_config.side` and `comline_refusal.side`: the end that
+/// accepted it (the provider).
+pub const COMLINE_SIDE_RESPONDER: u8 = 1;
+
+/// `comline_comline2_config.scope`: a protocol's refusal refuses that protocol
+/// alone. The default (0).
+pub const COMLINE_SCOPE_PROTOCOL: u8 = 0;
+/// `comline_comline2_config.scope`: a protocol's refusal refuses the whole
+/// connection (`unknown_protocol` excepted).
+pub const COMLINE_SCOPE_PACKAGE: u8 = 1;
+/// `comline_comline2_config.newer_consumer`: connect, and calls to the
+/// functions the peer lacks fail locally. The default (0).
+pub const COMLINE_NEWER_CONSUMER_DEGRADE: u8 = 0;
+/// `comline_comline2_config.newer_consumer`: refuse the protocol.
+pub const COMLINE_NEWER_CONSUMER_REFUSE: u8 = 1;
+/// `comline_comline2_config.same_version_differs`: refuse the protocol. The
+/// default (0).
+pub const COMLINE_SAME_VERSION_DIFFERS_REFUSE: u8 = 0;
+/// `comline_comline2_config.same_version_differs`: connect, and report the
+/// protocol in `comline_connection_warnings`.
+pub const COMLINE_SAME_VERSION_DIFFERS_WARN: u8 = 1;
+/// `comline_comline2_config.exchange`: the initiator offers, the responder
+/// answers, the initiator gives its verdict. The default (0).
+pub const COMLINE_EXCHANGE_OFFER: u8 = 0;
+/// `comline_comline2_config.exchange`: both send a hello, both give a verdict.
+pub const COMLINE_EXCHANGE_SYMMETRIC: u8 = 1;
+
+/// `comline_comline2_message_check`: a hello.
+pub const COMLINE_COMLINE2_HELLO: u8 = 1;
+/// `comline_comline2_message_check`: an answer.
+pub const COMLINE_COMLINE2_ANSWER: u8 = 2;
+/// `comline_comline2_message_check`: a verdict.
+pub const COMLINE_COMLINE2_VERDICT: u8 = 3;
+
+/// `comline_refusal.reason` and `comline_protocol_outcome.reason`: the peer's
+/// message didn't parse. Stable, as the wire carries them; a new reason takes
+/// the next free code.
+pub const COMLINE_REASON_MALFORMED: u8 = 1;
+/// The peer speaks another version of the handshake (a `comline@1` frame, say).
+pub const COMLINE_REASON_HANDSHAKE_VERSION: u8 = 2;
+/// The two ends declare different `exchange` parameters.
+pub const COMLINE_REASON_EXCHANGE_MISMATCH: u8 = 3;
+/// The two ends' package ids differ.
+pub const COMLINE_REASON_PACKAGE_MISMATCH: u8 = 4;
+/// The two ends' encodings differ, by parameter hash.
+pub const COMLINE_REASON_ENCODING_MISMATCH: u8 = 5;
+/// The protocol broke between the two ends' versions: its lines differ.
+pub const COMLINE_REASON_LINE_MISMATCH: u8 = 6;
+/// The versions are equal but the shape differs, under
+/// `same_version_differs = refuse`.
+pub const COMLINE_REASON_SAME_VERSION_DIFFERS: u8 = 7;
+/// The consumer has functions the provider lacks, under
+/// `newer_consumer = refuse`.
+pub const COMLINE_REASON_NEWER_CONSUMER: u8 = 8;
+/// Only one end has the protocol.
+pub const COMLINE_REASON_UNKNOWN_PROTOCOL: u8 = 9;
+
+/// How to set up a connection, read once by `comline_connection_new` or
+/// `comline_connection_new_comline2`. The
 /// name pointers are borrowed for that call only.
 ///
 /// A connection always speaks a **connection framing**, whose frames say
 /// whether they're a request or a reply, so either end can call the other:
-/// `datagram@2` or `jsonrpc@1`. The lockstep `datagram@1` has no connection
+/// `datagram@2`, `datagram@3` or `jsonrpc@1`. The lockstep `datagram@1` has no connection
 /// form and is `COMLINE_ERR_UNKNOWN_FRAMING`. On `jsonrpc@1` a one-way call
 /// is therefore a JSON-RPC notification, with no `id`.
 #[repr(C)]
@@ -229,8 +312,8 @@ pub struct comline_config {
     /// refuses the frame.
     pub wire_format: *const u8,
     pub wire_format_len: usize,
-    /// The framing's name: `"datagram@2"` or `"jsonrpc@1"`. UTF-8, not
-    /// NUL-terminated.
+    /// The framing's name: `"datagram@2"`, `"datagram@3"` or `"jsonrpc@1"`.
+    /// UTF-8, not NUL-terminated.
     pub framing: *const u8,
     pub framing_len: usize,
     /// The largest frame sent or taken, prefix not counted. 0 is
@@ -245,7 +328,8 @@ pub struct comline_config {
     /// when the handle is made; a request past it is `COMLINE_ERR_BUSY`. 0 is
     /// none: such a connection serves requests and sends one-way calls only.
     pub max_waiting: u32,
-    /// `COMLINE_HANDSHAKE_COMLINE` or `COMLINE_HANDSHAKE_NONE`.
+    /// `COMLINE_HANDSHAKE_COMLINE`, `COMLINE_HANDSHAKE_NONE`, or
+    /// `COMLINE_HANDSHAKE_COMLINE2` with `comline_connection_new_comline2`.
     pub handshake: u8,
     /// 1: a byte stream, each frame behind a `u32` LE length prefix (TCP, a
     /// pipe, stdio). 0: one frame per message, its boundaries kept by the
@@ -270,16 +354,19 @@ pub const COMLINE_EVENT_REPLY: u8 = 2;
 /// `comline_event.kind`: a reply to a call nobody waits on any more (it was
 /// abandoned). Drop it.
 pub const COMLINE_EVENT_STALE: u8 = 3;
+/// `comline_event.kind`: a `comline@2` handshake message was taken in, and the
+/// handshake goes on. Nothing in the event but `frame` and `COMLINE_EVENT_SEND`.
+pub const COMLINE_EVENT_HANDSHAKE_CONTINUE: u8 = 4;
 
 /// `comline_event.flags`: `protocol` holds the protocol the request is for.
-/// Set on `datagram@2` requests. A `jsonrpc@1` request names only its
+/// Set on `datagram@2` and `datagram@3` requests. A `jsonrpc@1` request names only its
 /// method; the protocol is whichever one this side provides with a call by
 /// that name.
 pub const COMLINE_EVENT_HAS_PROTOCOL: u8 = 1 << 0;
 /// `comline_event.flags`: the request is one-way and wants no reply. Set
 /// whenever the frame says so (a `jsonrpc@1` notification), and never
-/// inferred from a request id of 0. `datagram@2` has no way to say it on
-/// the wire, so there a one-way call is told apart by the schema alone.
+/// inferred from a request id of 0. `datagram@2` and `datagram@3` have no way
+/// to say it on the wire, so there a one-way call is told apart by the schema alone.
 pub const COMLINE_EVENT_ONE_WAY: u8 = 1 << 1;
 /// `comline_event.flags`: the request names its call by `call_name`
 /// (`jsonrpc@1`), not by `call_id`.
@@ -292,6 +379,9 @@ pub const COMLINE_EVENT_BODY_ABSENT: u8 = 1 << 3;
 /// it, as the frame spelled it (`app.Chat\/count`). Read it with
 /// `comline_method_name_unescape`, or compare it as JSON text.
 pub const COMLINE_EVENT_NAME_ESCAPED: u8 = 1 << 4;
+/// `comline_event.flags`, and beside `COMLINE_ERR_REFUSED`: `comline@2` has a
+/// message for the peer. Call `comline_connection_start` to get it.
+pub const COMLINE_EVENT_SEND: u8 = 1 << 5;
 
 /// `comline_event.envelope` and `comline_connection_encode_reply`: the call
 /// succeeded; the body is its result.
@@ -310,7 +400,7 @@ pub struct comline_event {
     /// `COMLINE_EVENT_*`.
     pub kind: u8,
     /// `COMLINE_EVENT_HAS_PROTOCOL` | `ONE_WAY` | `CALL_BY_NAME` |
-    /// `BODY_ABSENT` | `NAME_ESCAPED`.
+    /// `BODY_ABSENT` | `NAME_ESCAPED` | `SEND`.
     pub flags: u8,
     /// The protocol a request is for, with `COMLINE_EVENT_HAS_PROTOCOL`.
     pub protocol: u16,
@@ -345,6 +435,66 @@ pub struct comline_handshake {
     pub framing: u64,
     pub capabilities: u32,
     pub _reserved: u32,
+}
+
+/// A `comline@2` connection's facts and parameters, read once by
+/// `comline_connection_new_comline2`. `hello` is borrowed for that call only.
+#[repr(C)]
+#[derive(Debug, Clone, Copy)]
+pub struct comline_comline2_config {
+    /// This end's facts, as an encoded hello message (`docs` → Reference →
+    /// Wire → Handshakes). A generator can write them out as a constant: they
+    /// don't change once the code is built. They're put in canonical order, and
+    /// the `exchange` byte is replaced by `exchange` below.
+    pub hello: *const u8,
+    pub hello_len: usize,
+    /// `COMLINE_SIDE_*`.
+    pub side: u8,
+    /// `COMLINE_SCOPE_*`.
+    pub scope: u8,
+    /// `COMLINE_NEWER_CONSUMER_*`.
+    pub newer_consumer: u8,
+    /// `COMLINE_SAME_VERSION_DIFFERS_*`.
+    pub same_version_differs: u8,
+    /// `COMLINE_EXCHANGE_*`.
+    pub exchange: u8,
+    /// Must be 0.
+    pub _reserved: [u8; 3],
+}
+
+/// Why `comline@2` refused a connection.
+#[repr(C)]
+#[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
+pub struct comline_refusal {
+    /// `COMLINE_REASON_*`.
+    pub reason: u8,
+    /// Which end refused: `COMLINE_SIDE_*`.
+    pub side: u8,
+    /// 1 when the refusal is about one protocol, held in `protocol`.
+    pub has_protocol: u8,
+    pub _reserved: u8,
+    pub protocol: u16,
+    pub _reserved2: u16,
+}
+
+/// What one protocol of this end's came to under `comline@2`.
+#[repr(C)]
+#[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
+pub struct comline_protocol_outcome {
+    /// The protocol's wire number.
+    pub number: u16,
+    /// 0 when it's usable, otherwise why it was refused: `COMLINE_REASON_*`.
+    pub reason: u8,
+    pub _reserved: u8,
+}
+
+/// The release part of a package version.
+#[repr(C)]
+#[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
+pub struct comline_version {
+    pub major: u32,
+    pub minor: u32,
+    pub patch: u32,
 }
 
 // The layouts are frozen within a major; these hold them to it. `tests/c`
@@ -396,11 +546,45 @@ const _: () = {
     assert!(size_of::<comline_config>() == 32 + 4 * p);
     assert!(align_of::<comline_config>() == 8);
 
+    assert!(offset_of!(comline_comline2_config, hello) == 0);
+    assert!(offset_of!(comline_comline2_config, hello_len) == p);
+    assert!(offset_of!(comline_comline2_config, side) == 2 * p);
+    assert!(offset_of!(comline_comline2_config, scope) == 2 * p + 1);
+    assert!(offset_of!(comline_comline2_config, newer_consumer) == 2 * p + 2);
+    assert!(offset_of!(comline_comline2_config, same_version_differs) == 2 * p + 3);
+    assert!(offset_of!(comline_comline2_config, exchange) == 2 * p + 4);
+    assert!(offset_of!(comline_comline2_config, _reserved) == 2 * p + 5);
+    assert!(size_of::<comline_comline2_config>() == 2 * p + 8);
+
+    assert!(size_of::<comline_refusal>() == 8);
+    assert!(offset_of!(comline_refusal, reason) == 0);
+    assert!(offset_of!(comline_refusal, side) == 1);
+    assert!(offset_of!(comline_refusal, has_protocol) == 2);
+    assert!(offset_of!(comline_refusal, protocol) == 4);
+
+    assert!(size_of::<comline_protocol_outcome>() == 4);
+    assert!(offset_of!(comline_protocol_outcome, number) == 0);
+    assert!(offset_of!(comline_protocol_outcome, reason) == 2);
+
+    assert!(size_of::<comline_version>() == 12);
+    assert!(offset_of!(comline_version, patch) == 8);
+
     // The header's numbers are literals; these hold them to the core's.
     assert!(COMLINE_DEFAULT_MAX_FRAME == DEFAULT_MAX_FRAME as u64);
     assert!(COMLINE_PREFIX_LEN as usize == PREFIX_LEN);
     assert!(COMLINE_MAX_FRAME_CEILING == u32::MAX as u64 - PREFIX_LEN as u64);
     assert!(COMLINE_DEFAULT_MAX_FRAME <= COMLINE_MAX_FRAME_CEILING);
+    assert!(COMLINE_REASON_MALFORMED == Reason::Malformed as u8);
+    assert!(COMLINE_REASON_HANDSHAKE_VERSION == Reason::HandshakeVersion as u8);
+    assert!(COMLINE_REASON_EXCHANGE_MISMATCH == Reason::ExchangeMismatch as u8);
+    assert!(COMLINE_REASON_PACKAGE_MISMATCH == Reason::PackageMismatch as u8);
+    assert!(COMLINE_REASON_ENCODING_MISMATCH == Reason::EncodingMismatch as u8);
+    assert!(COMLINE_REASON_LINE_MISMATCH == Reason::LineMismatch as u8);
+    assert!(COMLINE_REASON_SAME_VERSION_DIFFERS == Reason::SameVersionDiffers as u8);
+    assert!(COMLINE_REASON_NEWER_CONSUMER == Reason::NewerConsumer as u8);
+    assert!(COMLINE_REASON_UNKNOWN_PROTOCOL == Reason::UnknownProtocol as u8);
+    assert!(COMLINE_SIDE_INITIATOR == Side::Initiator as u8);
+    assert!(COMLINE_SIDE_RESPONDER == Side::Responder as u8);
 };
 
 // ── the connection ─────────────────────────────────────────────────────────
@@ -410,8 +594,10 @@ const _: () = {
 pub struct comline_connection {
     state: State,
     framing: Framing,
-    /// Our `comline@1` frame; `None` without a handshake.
+    /// Our `comline@1` frame; `None` without one.
     ours: Option<HandshakeFrame>,
+    /// The `comline@2` handshake and what it came to; `None` without one.
+    comline2: Option<Box<Handshake2>>,
     /// Our handshake frame was written (always, without one).
     sent: bool,
     /// The peer's handshake frame arrived and agreed (always, without one).
@@ -431,7 +617,127 @@ pub struct comline_connection {
 #[derive(Debug, Clone, Copy)]
 enum Framing {
     Datagram2,
+    Datagram3,
     JsonRpc,
+}
+
+/// What a `comline@2` connection reads next.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Awaiting {
+    Hello,
+    Answer,
+    Verdict,
+    Nothing,
+}
+
+/// `comline@2` on a connection: [`Comline2`]'s sans-IO steps, in the order
+/// [`comline_runtime::comline2::Comline2Handshake`] runs them over a transport.
+struct Handshake2 {
+    local: Comline2,
+    side: Side,
+    /// This end still has to send its hello.
+    hello_due: bool,
+    /// The next message to send, once the hello is out.
+    pending: Option<Vec<u8>>,
+    awaiting: Awaiting,
+    /// What it has concluded. The peer's verdict can still refuse a protocol,
+    /// or the connection, until `awaiting` is `Nothing`.
+    negotiated: Option<Negotiated>,
+    refusal: Option<Refusal>,
+}
+
+impl Handshake2 {
+    fn new(local: Comline2, side: Side) -> Self {
+        let offer = local.params.exchange == Exchange::Offer;
+        let initiates = side == Side::Initiator;
+        Handshake2 {
+            local,
+            side,
+            hello_due: !offer || initiates,
+            pending: None,
+            awaiting: if offer && initiates {
+                Awaiting::Answer
+            } else {
+                Awaiting::Hello
+            },
+            negotiated: None,
+            refusal: None,
+        }
+    }
+
+    /// Whether there's a message to send.
+    fn has_more(&self) -> bool {
+        self.hello_due || self.pending.is_some()
+    }
+
+    /// The message [`Self::has_more`] speaks of, encoded.
+    fn next_message(&self) -> Option<Vec<u8>> {
+        if self.hello_due {
+            Some(self.local.hello_message().to_bytes())
+        } else {
+            self.pending.clone()
+        }
+    }
+
+    /// The message [`Self::next_message`] gave was written.
+    fn message_sent(&mut self) {
+        if self.hello_due {
+            self.hello_due = false;
+        } else {
+            self.pending = None;
+        }
+    }
+
+    /// Take in the peer's message. Its status; a refusal is held in `refusal`.
+    fn take(&mut self, frame: &[u8], ev: &mut comline_event) -> comline_status {
+        let step = match self.awaiting {
+            Awaiting::Hello => match self.local.params.exchange {
+                Exchange::Offer => self.local.answer_offer(frame),
+                Exchange::Symmetric => self.local.judge_hello(self.side, frame),
+            },
+            Awaiting::Answer => self.local.conclude_answer(frame),
+            Awaiting::Verdict => {
+                let negotiated = self
+                    .negotiated
+                    .take()
+                    .expect("a verdict is awaited after a conclusion");
+                Step {
+                    reply: None,
+                    result: Comline2::finish(self.side, negotiated, frame),
+                }
+            }
+            Awaiting::Nothing => unreachable!("a finished handshake reads no more messages"),
+        };
+        self.awaiting = match self.awaiting {
+            Awaiting::Hello => Awaiting::Verdict,
+            _ => Awaiting::Nothing,
+        };
+        if let Some(reply) = step.reply {
+            self.pending = Some(reply.to_bytes());
+        }
+        let status = match step.result {
+            Ok(negotiated) => {
+                self.negotiated = Some(negotiated);
+                ev.kind = if self.awaiting == Awaiting::Nothing {
+                    COMLINE_EVENT_HANDSHAKE_OK
+                } else {
+                    COMLINE_EVENT_HANDSHAKE_CONTINUE
+                };
+                COMLINE_OK
+            }
+            Err(refusal) => {
+                // A refusal ends it: no hello after that.
+                self.hello_due = false;
+                self.awaiting = Awaiting::Nothing;
+                self.refusal = Some(refusal);
+                COMLINE_ERR_REFUSED
+            }
+        };
+        if self.has_more() {
+            ev.flags |= COMLINE_EVENT_SEND;
+        }
+        status
+    }
 }
 
 /// Runs `$body` with `$f` bound to the framing as its concrete type.
@@ -440,6 +746,10 @@ macro_rules! with_framing {
         match $framing {
             Framing::Datagram2 => {
                 let $f = &Datagram2Framing;
+                $body
+            }
+            Framing::Datagram3 => {
+                let $f = &Datagram3Framing;
                 $body
             }
             Framing::JsonRpc => {
@@ -551,6 +861,32 @@ unsafe fn with_conn(
             COMLINE_ERR_POISONED
         }
     }
+}
+
+/// [`with_conn`], for what also holds on a closed handle: reading why it closed.
+///
+/// # Safety
+/// As [`with_conn`].
+unsafe fn with_closed_too(
+    conn: *mut comline_connection,
+    body: impl FnOnce(&mut comline_connection) -> comline_status,
+) -> comline_status {
+    if conn.is_null() {
+        return COMLINE_ERR_INVALID_ARGUMENT;
+    }
+    // SAFETY: the caller's contract.
+    if unsafe { (*conn).poisoned } {
+        return COMLINE_ERR_POISONED;
+    }
+    let result = panic::catch_unwind(AssertUnwindSafe(|| {
+        // SAFETY: the caller's contract; this is the only reference.
+        body(unsafe { &mut *conn })
+    }));
+    result.unwrap_or_else(|_| {
+        // SAFETY: the reference made inside the closure is gone.
+        unsafe { (*conn).poisoned = true };
+        COMLINE_ERR_POISONED
+    })
 }
 
 /// `len` bytes at `ptr`, which may be null (or dangling) when `len` is 0.
@@ -717,6 +1053,47 @@ pub unsafe extern "C" fn comline_connection_new(
     cfg: *const comline_config,
     out: *mut *mut comline_connection,
 ) -> comline_status {
+    // SAFETY: the caller's contract.
+    unsafe { connection_new(cfg, ptr::null(), out) }
+}
+
+/// [`comline_connection_new`] for a `comline@2` connection: `cfg->handshake`
+/// must be `COMLINE_HANDSHAKE_COMLINE2`, and `comline2` holds its facts and
+/// parameters. `cfg->ir_hash` and `cfg->capabilities` aren't read: `comline@2`
+/// carries neither.
+///
+/// Errors: as `comline_connection_new`, and `COMLINE_ERR_INVALID_ARGUMENT` for
+/// a `hello` that isn't an encoded hello message or a field outside its values.
+///
+/// # Safety
+/// As `comline_connection_new`; `comline2` is null or a valid
+/// `comline_comline2_config` whose `hello` satisfies `hello_len`.
+#[no_mangle]
+pub unsafe extern "C" fn comline_connection_new_comline2(
+    cfg: *const comline_config,
+    comline2: *const comline_comline2_config,
+    out: *mut *mut comline_connection,
+) -> comline_status {
+    if comline2.is_null() {
+        if !out.is_null() {
+            // SAFETY: checked non-null; the caller's contract.
+            unsafe { out.write(ptr::null_mut()) };
+        }
+        return COMLINE_ERR_INVALID_ARGUMENT;
+    }
+    // SAFETY: the caller's contract.
+    unsafe { connection_new(cfg, comline2, out) }
+}
+
+/// Makes a connection, with `comline2` for a `comline@2` one (else null).
+///
+/// # Safety
+/// As `comline_connection_new_comline2`.
+unsafe fn connection_new(
+    cfg: *const comline_config,
+    comline2: *const comline_comline2_config,
+    out: *mut *mut comline_connection,
+) -> comline_status {
     guarded(|| {
         if out.is_null() {
             return COMLINE_ERR_INVALID_ARGUMENT;
@@ -726,7 +1103,7 @@ pub unsafe extern "C" fn comline_connection_new(
             unsafe { out.write(ptr::null_mut()) };
             return COMLINE_ERR_INVALID_ARGUMENT;
         }
-        if !disjoint!(writes[(out, 1)], reads[(cfg, 1)]) {
+        if !disjoint!(writes[(out, 1)], reads[(cfg, 1), (comline2, 1)]) {
             return COMLINE_ERR_INVALID_ARGUMENT;
         }
         // SAFETY: checked non-null and apart; the caller's contract.
@@ -764,19 +1141,39 @@ pub unsafe extern "C" fn comline_connection_new(
         }
         let framing = match framing_name {
             FRAMING_DATAGRAM2 => Framing::Datagram2,
+            FRAMING_DATAGRAM3 => Framing::Datagram3,
             FRAMING_JSONRPC => Framing::JsonRpc,
             _ => return COMLINE_ERR_UNKNOWN_FRAMING,
         };
         let ours = match cfg.handshake {
-            COMLINE_HANDSHAKE_COMLINE => Some(HandshakeFrame::new(
+            COMLINE_HANDSHAKE_COMLINE if comline2.is_null() => Some(HandshakeFrame::new(
                 cfg.ir_hash,
                 wire_format,
                 framing_name,
                 cfg.capabilities,
             )),
-            COMLINE_HANDSHAKE_NONE => None,
+            COMLINE_HANDSHAKE_NONE if comline2.is_null() => None,
+            COMLINE_HANDSHAKE_COMLINE2 if !comline2.is_null() => None,
             _ => return COMLINE_ERR_INVALID_ARGUMENT,
         };
+        let comline2 = if comline2.is_null() {
+            None
+        } else {
+            // SAFETY: checked non-null; the caller's contract.
+            let c = unsafe { &*comline2 };
+            if !disjoint!(writes[(out, 1)], reads[(c.hello, c.hello_len)]) {
+                return COMLINE_ERR_INVALID_ARGUMENT;
+            }
+            // SAFETY: the caller's contract.
+            let Some(hello) = (unsafe { input(c.hello, c.hello_len) }) else {
+                return COMLINE_ERR_INVALID_ARGUMENT;
+            };
+            let Some(handshake) = handshake2(c, hello) else {
+                return COMLINE_ERR_INVALID_ARGUMENT;
+            };
+            Some(Box::new(handshake))
+        };
+        let settled = ours.is_none() && comline2.is_none();
         let max_frame = match cfg.max_frame {
             0 => DEFAULT_MAX_FRAME,
             // At most the ceiling, so it fits a `usize` on every target.
@@ -792,8 +1189,9 @@ pub unsafe extern "C" fn comline_connection_new(
             state,
             framing,
             ours,
-            sent: ours.is_none(),
-            received: ours.is_none(),
+            comline2,
+            sent: settled,
+            received: settled,
             closed: false,
             poisoned: false,
             stream,
@@ -828,6 +1226,42 @@ pub unsafe extern "C" fn comline_connection_free(conn: *mut comline_connection) 
     }));
 }
 
+/// A [`Handshake2`] from its config, or `None` for a field outside its values.
+fn handshake2(c: &comline_comline2_config, hello: &[u8]) -> Option<Handshake2> {
+    if c._reserved != [0; 3] {
+        return None;
+    }
+    let Ok(Message::Hello(hello)) = Message::decode(hello) else {
+        return None;
+    };
+    let params = Params {
+        scope: match c.scope {
+            COMLINE_SCOPE_PROTOCOL => Scope::Protocol,
+            COMLINE_SCOPE_PACKAGE => Scope::Package,
+            _ => return None,
+        },
+        newer_consumer: match c.newer_consumer {
+            COMLINE_NEWER_CONSUMER_DEGRADE => NewerConsumer::Degrade,
+            COMLINE_NEWER_CONSUMER_REFUSE => NewerConsumer::Refuse,
+            _ => return None,
+        },
+        same_version_differs: match c.same_version_differs {
+            COMLINE_SAME_VERSION_DIFFERS_REFUSE => SameVersionDiffers::Refuse,
+            COMLINE_SAME_VERSION_DIFFERS_WARN => SameVersionDiffers::Warn,
+            _ => return None,
+        },
+        exchange: match c.exchange {
+            COMLINE_EXCHANGE_OFFER => Exchange::Offer,
+            COMLINE_EXCHANGE_SYMMETRIC => Exchange::Symmetric,
+            _ => return None,
+        },
+    };
+    Some(Handshake2::new(
+        Comline2::new(params, hello),
+        Side::from_code(c.side)?,
+    ))
+}
+
 // ── the handshake on a connection ──────────────────────────────────────────
 
 /// Write this side's handshake frame (with its length prefix in stream
@@ -837,8 +1271,16 @@ pub unsafe extern "C" fn comline_connection_free(conn: *mut comline_connection) 
 /// The peer's frame is the first one fed (`COMLINE_EVENT_HANDSHAKE_OK`), and
 /// may arrive before or after this call. Requests and replies need both.
 ///
+/// **`comline@2`** has several messages, so call this again whenever an event
+/// or a refusal says `COMLINE_EVENT_SEND`, and once at the start. It writes the
+/// next message, or nothing (`*written` 0, `COMLINE_OK`) when there's none: under
+/// `exchange = offer` the responder has nothing to send until it has read the
+/// hello. A second call is therefore no `COMLINE_ERR_STATE` here. Requests and
+/// replies need every message written and the handshake finished.
+///
 /// Errors: `COMLINE_BUFFER_TOO_SMALL` (`*written` = 31, or 35 in stream
-/// mode), `COMLINE_ERR_FRAME_TOO_LARGE` (`max_frame` below 31),
+/// mode; for `comline@2`, the message's size), `COMLINE_ERR_FRAME_TOO_LARGE`
+/// (`max_frame` below 31, or below that message),
 /// `COMLINE_ERR_STATE` when it was already written.
 ///
 /// # Safety
@@ -861,6 +1303,9 @@ pub unsafe extern "C" fn comline_connection_start(
                 return COMLINE_ERR_INVALID_ARGUMENT;
             };
             *written = 0;
+            if conn.comline2.is_some() {
+                return start_comline2(conn, out, written);
+            }
             let Some(ours) = conn.ours else {
                 return COMLINE_OK;
             };
@@ -881,6 +1326,65 @@ pub unsafe extern "C" fn comline_connection_start(
     }
 }
 
+/// [`comline_connection_start`] on a `comline@2` connection.
+#[cold]
+#[inline(never)]
+fn start_comline2(
+    conn: &mut comline_connection,
+    out: &mut [u8],
+    written: &mut usize,
+) -> comline_status {
+    let handshake = conn.comline2.as_ref().expect("the caller checked");
+    let Some(message) = handshake.next_message() else {
+        return COMLINE_OK;
+    };
+    let (head, room) = conn.split_out(out);
+    if message.len() > room.len() {
+        return conn.too_small(message.len(), written);
+    }
+    room[..message.len()].copy_from_slice(&message);
+    *written = conn.finish(head, message.len());
+    let handshake = conn.comline2.as_mut().expect("the caller checked");
+    handshake.message_sent();
+    let more = handshake.has_more();
+    let refused = handshake.refusal.is_some();
+    conn.sent = !more;
+    if refused && !more {
+        conn.closed = true;
+    }
+    COMLINE_OK
+}
+
+/// [`feed`]'s frame while a `comline@2` handshake isn't finished. Out of line,
+/// so a handshake that runs once costs [`feed`]'s every frame nothing.
+#[cold]
+#[inline(never)]
+fn feed_comline2(
+    conn: &mut comline_connection,
+    frame: &[u8],
+    consumed: &mut usize,
+    ev: &mut comline_event,
+) -> comline_status {
+    let handshake = conn.comline2.as_mut().expect("the caller checked");
+    // A refusal only has its last message to send, and an offer goes first.
+    let offering = handshake.hello_due && handshake.awaiting == Awaiting::Answer;
+    if handshake.refusal.is_some() || offering {
+        *consumed = 0;
+        ev.frame = comline_span::default();
+        return COMLINE_ERR_STATE;
+    }
+    let status = handshake.take(frame, ev);
+    let more = handshake.has_more();
+    let refused = handshake.refusal.is_some();
+    let finished = handshake.awaiting == Awaiting::Nothing;
+    conn.sent = !more;
+    conn.received = finished && !refused;
+    if refused && !more {
+        conn.closed = true;
+    }
+    status
+}
+
 // ── feeding frames ─────────────────────────────────────────────────────────
 
 /// Feed received bytes and get the event for the next frame. One frame per
@@ -899,6 +1403,14 @@ pub unsafe extern "C" fn comline_connection_start(
 /// `COMLINE_EVENT_HANDSHAKE_OK`, or `COMLINE_ERR_HANDSHAKE` and the
 /// connection closes.
 ///
+/// On a `comline@2` connection the first frames are the handshake's:
+/// `COMLINE_EVENT_HANDSHAKE_CONTINUE` while it goes on,
+/// `COMLINE_EVENT_HANDSHAKE_OK` when it's done, or `COMLINE_ERR_REFUSED`
+/// (`comline_connection_refusal`). `COMLINE_EVENT_SEND` on any of them means
+/// `comline_connection_start` has a message to send. Fed while its own offer
+/// hasn't been written, or after a refusal, it's `COMLINE_ERR_STATE` with
+/// nothing consumed.
+///
 /// After that, a frame is a request, a reply to a waiting call (which then
 /// waits no more), or a stale reply. A malformed frame is
 /// `COMLINE_ERR_FRAMING` with the frame consumed. In stream mode, a prefix
@@ -908,6 +1420,8 @@ pub unsafe extern "C" fn comline_connection_start(
 /// **What each framing reads:**
 /// - `datagram@2`: the protocol number (`COMLINE_EVENT_HAS_PROTOCOL`), the
 ///   `call_id` and the request id. It can't mark a call one-way.
+/// - `datagram@3`: the same, the protocol and `call_id` being wire numbers,
+///   each written as a shortest-form varint.
 /// - `jsonrpc@1`: the method (`COMLINE_EVENT_CALL_BY_NAME`; with
 ///   `COMLINE_EVENT_NAME_ESCAPED` when the frame spelled it with escapes) and
 ///   the `id`. A notification is `COMLINE_EVENT_ONE_WAY` with request id 0.
@@ -982,6 +1496,9 @@ fn feed(
     ev.frame = span_in(input, frame).expect("the frame is in the input");
 
     if !conn.received {
+        if conn.comline2.is_some() {
+            return feed_comline2(conn, frame, consumed, ev);
+        }
         let ours = conn.ours.expect("only a handshake leaves `received` unset");
         return match ours.check_bytes(frame) {
             Ok(peer) => {
@@ -1071,6 +1588,7 @@ fn feed(
 /// **What each framing reads:**
 /// - `datagram@2`: `protocol` and `call_id`; `name` is ignored. The frame
 ///   can't say one-way.
+/// - `datagram@3`: the same, `protocol` and `call_id` being wire numbers.
 /// - `jsonrpc@1`: `name`, escaped as a JSON string as serde_json escapes
 ///   one; `protocol` and `call_id` are ignored. A one-way call is a
 ///   notification, with no `id`. An empty body is written as `null`.
@@ -1180,8 +1698,8 @@ pub unsafe extern "C" fn comline_connection_encode_request(
 /// `body` the error's fields) or `COMLINE_ENVELOPE_FAULT` (no body:
 /// `body_len` must be 0).
 ///
-/// **What each framing reads:** `datagram@2` writes `protocol` (the one the
-/// request was for) and the request id; `jsonrpc@1` ignores `protocol`,
+/// **What each framing reads:** `datagram@2` and `datagram@3` write `protocol`
+/// (the one the request was for) and the request id; `jsonrpc@1` ignores `protocol`,
 /// writes an empty body as `null`, an error as a JSON-RPC `error` object with
 /// `code` = `error_id`, and a fault as `-32603`.
 ///
@@ -1292,6 +1810,329 @@ pub unsafe extern "C" fn comline_connection_is_waiting(
             COMLINE_OK
         })
     }
+}
+
+// ── comline@2 ──────────────────────────────────────────────────────────────
+
+/// Writes `items` to the `cap` values at `out`: `*written` is how many there
+/// are, and `COMLINE_BUFFER_TOO_SMALL` when they don't fit, with nothing
+/// written.
+///
+/// # Safety
+/// `out` is null or `cap` writable, aligned values of `T`; `written` is null
+/// or writable; neither overlaps `items`.
+unsafe fn list_out<T: Copy>(
+    items: &[T],
+    out: *mut T,
+    cap: usize,
+    written: *mut usize,
+) -> comline_status {
+    // SAFETY: the caller's contract.
+    let Some(written) = (unsafe { written.as_mut() }) else {
+        return COMLINE_ERR_INVALID_ARGUMENT;
+    };
+    if cap.saturating_mul(core::mem::size_of::<T>()) > isize::MAX as usize
+        || (out.is_null() && cap != 0)
+    {
+        return COMLINE_ERR_INVALID_ARGUMENT;
+    }
+    *written = items.len();
+    if items.len() > cap {
+        return COMLINE_BUFFER_TOO_SMALL;
+    }
+    if !items.is_empty() {
+        // SAFETY: `items.len() <= cap`, which the caller's contract makes room
+        // for, so `out` isn't null, and it doesn't overlap `items`.
+        unsafe { ptr::copy_nonoverlapping(items.as_ptr(), out, items.len()) };
+    }
+    COMLINE_OK
+}
+
+/// What the handshake has concluded, for a function that reads it.
+fn negotiated(conn: &comline_connection) -> Option<&Negotiated> {
+    conn.comline2.as_ref()?.negotiated.as_ref()
+}
+
+/// Whether this end may call `function` of `protocol`, both wire numbers:
+/// `COMLINE_OK` to send it, or `COMLINE_ERR_UNAVAILABLE` when the peer lacks the
+/// function or the protocol was refused. Call it before encoding a request,
+/// so a call the peer can't take never reaches the wire.
+///
+/// On a connection without `comline@2` it's always `COMLINE_OK`: there nothing
+/// is negotiated per function. Before the handshake concluded, or after it
+/// refused, it's `COMLINE_ERR_STATE`.
+///
+/// # Safety
+/// `conn` is null or a live handle.
+#[no_mangle]
+pub unsafe extern "C" fn comline_connection_check_call(
+    conn: *mut comline_connection,
+    protocol: u16,
+    function: u16,
+) -> comline_status {
+    // SAFETY: the caller's contract.
+    unsafe {
+        with_conn(conn, |conn| {
+            if conn.comline2.is_none() {
+                return COMLINE_OK;
+            }
+            match negotiated(conn) {
+                None => COMLINE_ERR_STATE,
+                Some(n) => match n.check_call(protocol, function) {
+                    Ok(()) => COMLINE_OK,
+                    Err(error) => status_of(error),
+                },
+            }
+        })
+    }
+}
+
+/// Why `comline@2` refused this connection, into `*refusal`, after
+/// `COMLINE_ERR_REFUSED`. It works on the closed handle a refusal leaves.
+///
+/// Errors: `COMLINE_ERR_STATE` when nothing was refused.
+///
+/// # Safety
+/// `conn` is null or a live handle; `refusal` is null or writable.
+#[no_mangle]
+pub unsafe extern "C" fn comline_connection_refusal(
+    conn: *mut comline_connection,
+    refusal: *mut comline_refusal,
+) -> comline_status {
+    if !disjoint!(writes [(conn, 1), (refusal, 1)]) {
+        return COMLINE_ERR_INVALID_ARGUMENT;
+    }
+    // SAFETY: the caller's contract.
+    unsafe {
+        with_closed_too(conn, |conn| {
+            let Some(refusal) = refusal.as_mut() else {
+                return COMLINE_ERR_INVALID_ARGUMENT;
+            };
+            *refusal = comline_refusal::default();
+            let Some(r) = conn.comline2.as_ref().and_then(|h| h.refusal) else {
+                return COMLINE_ERR_STATE;
+            };
+            refusal.reason = r.reason.code();
+            refusal.side = r.side.code();
+            if let Some(protocol) = r.protocol {
+                refusal.has_protocol = 1;
+                refusal.protocol = protocol;
+            }
+            COMLINE_OK
+        })
+    }
+}
+
+/// The wire numbers of the protocols that connected although a shape differs
+/// at the same package version (`same_version_differs = warn`), ascending, to
+/// report to whoever runs this: one end isn't what its version claims. `cap`
+/// and `*written` count numbers.
+///
+/// Errors: `COMLINE_BUFFER_TOO_SMALL` (`*written` is how many there are),
+/// `COMLINE_ERR_STATE` before the handshake concluded, after it refused, or
+/// without `comline@2`.
+///
+/// # Safety
+/// `conn` is null or a live handle; `out` is null or `cap` writable numbers;
+/// `written` is null or writable.
+#[no_mangle]
+pub unsafe extern "C" fn comline_connection_warnings(
+    conn: *mut comline_connection,
+    out: *mut u16,
+    cap: usize,
+    written: *mut usize,
+) -> comline_status {
+    if !disjoint!(writes [(conn, 1), (out, cap), (written, 1)]) {
+        return COMLINE_ERR_INVALID_ARGUMENT;
+    }
+    // SAFETY: the caller's contract.
+    unsafe {
+        with_conn(conn, |conn| match negotiated(conn) {
+            None => COMLINE_ERR_STATE,
+            // SAFETY: the caller's contract.
+            Some(n) => list_out(&n.warnings, out, cap, written),
+        })
+    }
+}
+
+/// What each of this end's protocols came to, ascending by number. `cap` and
+/// `*written` count outcomes. It holds what this end concluded, and the peer's
+/// verdict can still refuse a protocol until `COMLINE_EVENT_HANDSHAKE_OK`.
+///
+/// Errors: as `comline_connection_warnings`.
+///
+/// # Safety
+/// `conn` is null or a live handle; `out` is null or `cap` writable outcomes;
+/// `written` is null or writable.
+#[no_mangle]
+pub unsafe extern "C" fn comline_connection_protocols(
+    conn: *mut comline_connection,
+    out: *mut comline_protocol_outcome,
+    cap: usize,
+    written: *mut usize,
+) -> comline_status {
+    if !disjoint!(writes [(conn, 1), (out, cap), (written, 1)]) {
+        return COMLINE_ERR_INVALID_ARGUMENT;
+    }
+    // SAFETY: the caller's contract.
+    unsafe {
+        with_conn(conn, |conn| {
+            let Some(n) = negotiated(conn) else {
+                return COMLINE_ERR_STATE;
+            };
+            let Some(written) = written.as_mut() else {
+                return COMLINE_ERR_INVALID_ARGUMENT;
+            };
+            let size = cap.saturating_mul(core::mem::size_of::<comline_protocol_outcome>());
+            if size > isize::MAX as usize || (out.is_null() && cap != 0) {
+                return COMLINE_ERR_INVALID_ARGUMENT;
+            }
+            *written = n.protocols.len();
+            if n.protocols.len() > cap {
+                return COMLINE_BUFFER_TOO_SMALL;
+            }
+            for (i, p) in n.protocols.iter().enumerate() {
+                let reason = match &p.state {
+                    ProtocolState::Accepted { .. } => 0,
+                    ProtocolState::Refused { reason } => reason.code(),
+                };
+                let outcome = comline_protocol_outcome {
+                    number: p.number,
+                    reason,
+                    _reserved: 0,
+                };
+                // SAFETY: `i < cap`, which the caller's contract makes room for.
+                out.add(i).write(outcome);
+            }
+            COMLINE_OK
+        })
+    }
+}
+
+/// The functions of `protocol` the peer lacks, ascending by number: those
+/// `comline_connection_check_call` refuses. `cap` and `*written` count numbers.
+/// A protocol this end doesn't have, or one refused, lacks none.
+///
+/// Errors: as `comline_connection_warnings`.
+///
+/// # Safety
+/// `conn` is null or a live handle; `out` is null or `cap` writable numbers;
+/// `written` is null or writable.
+#[no_mangle]
+pub unsafe extern "C" fn comline_connection_peer_lacks(
+    conn: *mut comline_connection,
+    protocol: u16,
+    out: *mut u16,
+    cap: usize,
+    written: *mut usize,
+) -> comline_status {
+    if !disjoint!(writes [(conn, 1), (out, cap), (written, 1)]) {
+        return COMLINE_ERR_INVALID_ARGUMENT;
+    }
+    // SAFETY: the caller's contract.
+    unsafe {
+        with_conn(conn, |conn| {
+            let Some(n) = negotiated(conn) else {
+                return COMLINE_ERR_STATE;
+            };
+            let lacks = n
+                .protocols
+                .iter()
+                .find(|p| p.number == protocol)
+                .and_then(|p| match &p.state {
+                    ProtocolState::Accepted { peer_lacks } => Some(peer_lacks.as_slice()),
+                    ProtocolState::Refused { .. } => None,
+                });
+            // SAFETY: the caller's contract.
+            list_out(lacks.unwrap_or(&[]), out, cap, written)
+        })
+    }
+}
+
+/// The peer's package version: its release in `*version`, and its pre-release
+/// (`dev.2`, empty for a release) as UTF-8 in `pre`. `cap` and `*written` count
+/// the pre-release's bytes.
+///
+/// Errors: `COMLINE_BUFFER_TOO_SMALL` (`*written` is the size needed, and
+/// `*version` is set), and as `comline_connection_warnings`.
+///
+/// # Safety
+/// `conn` is null or a live handle; `version` and `written` are null or
+/// writable; `pre` is null or `cap` writable bytes.
+#[no_mangle]
+pub unsafe extern "C" fn comline_connection_peer_version(
+    conn: *mut comline_connection,
+    version: *mut comline_version,
+    pre: *mut u8,
+    cap: usize,
+    written: *mut usize,
+) -> comline_status {
+    if !disjoint!(writes [(conn, 1), (version, 1), (pre, cap), (written, 1)]) {
+        return COMLINE_ERR_INVALID_ARGUMENT;
+    }
+    // SAFETY: the caller's contract.
+    unsafe {
+        with_conn(conn, |conn| {
+            let Some(version) = version.as_mut() else {
+                return COMLINE_ERR_INVALID_ARGUMENT;
+            };
+            *version = comline_version::default();
+            let Some(n) = negotiated(conn) else {
+                return COMLINE_ERR_STATE;
+            };
+            let release = n.peer_version.release;
+            *version = comline_version {
+                major: release.major,
+                minor: release.minor,
+                patch: release.patch,
+            };
+            // SAFETY: the caller's contract.
+            list_out(n.peer_version.pre.as_bytes(), pre, cap, written)
+        })
+    }
+}
+
+/// Read one `comline@2` message: `COMLINE_OK` and its type in `*kind`
+/// (`COMLINE_COMLINE2_*`), or `COMLINE_ERR_HANDSHAKE` and why it can't be read
+/// in `*reason` (`COMLINE_REASON_MALFORMED`, or
+/// `COMLINE_REASON_HANDSHAKE_VERSION` for another version's frame). The other
+/// is 0. For a tool or a test: a connection reads its messages itself.
+///
+/// # Safety
+/// `in` is null or readable for `len`; `kind` and `reason` are null or writable.
+#[no_mangle]
+pub unsafe extern "C" fn comline_comline2_message_check(
+    in_: *const u8,
+    len: usize,
+    kind: *mut u8,
+    reason: *mut u8,
+) -> comline_status {
+    guarded(|| {
+        if !disjoint!(writes [(kind, 1), (reason, 1)], reads [(in_, len)]) {
+            return COMLINE_ERR_INVALID_ARGUMENT;
+        }
+        // SAFETY: checked apart; the caller's contract.
+        let (Some(bytes), Some(kind), Some(reason)) =
+            (unsafe { (input(in_, len), kind.as_mut(), reason.as_mut()) })
+        else {
+            return COMLINE_ERR_INVALID_ARGUMENT;
+        };
+        (*kind, *reason) = (0, 0);
+        match Message::decode(bytes) {
+            Ok(message) => {
+                *kind = match message {
+                    Message::Hello(_) => COMLINE_COMLINE2_HELLO,
+                    Message::Answer(_) => COMLINE_COMLINE2_ANSWER,
+                    Message::Verdict(_) => COMLINE_COMLINE2_VERDICT,
+                };
+                COMLINE_OK
+            }
+            Err(why) => {
+                *reason = why.code();
+                COMLINE_ERR_HANDSHAKE
+            }
+        }
+    })
 }
 
 // ── free functions ─────────────────────────────────────────────────────────
@@ -1437,7 +2278,8 @@ pub unsafe extern "C" fn comline_handshake_check(
 }
 
 /// 1 when this library carries the named framing or handshake (UTF-8) on a
-/// connection, 0 otherwise: `datagram@2`, `jsonrpc@1`, `comline@1`, `none`.
+/// connection, 0 otherwise: `datagram@2`, `datagram@3`, `jsonrpc@1`,
+/// `comline@1`, `comline@2`, `none`.
 /// A binding checks a schema's `@framing` here at setup, not at the first
 /// frame. Wire formats are the host's codecs, so none is listed; the
 /// lockstep `datagram@1` has no connection form and is 0.
@@ -1451,7 +2293,14 @@ pub unsafe extern "C" fn comline_supports(name: *const u8, len: usize) -> u8 {
         let name = unsafe { text(name, len) };
         u8::from(matches!(
             name,
-            Some(FRAMING_DATAGRAM2 | FRAMING_JSONRPC | HANDSHAKE_COMLINE | HANDSHAKE_NONE)
+            Some(
+                FRAMING_DATAGRAM2
+                    | FRAMING_DATAGRAM3
+                    | FRAMING_JSONRPC
+                    | HANDSHAKE_COMLINE
+                    | HANDSHAKE_COMLINE2
+                    | HANDSHAKE_NONE
+            )
         ))
     })
     .unwrap_or(0)

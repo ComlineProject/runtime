@@ -67,6 +67,13 @@ doc = false
 bench = false
 
 [[bin]]
+name = "ffi_comline2"
+path = "fuzz_targets/ffi_comline2.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
 name = "ffi_vs_core"
 path = "fuzz_targets/ffi_vs_core.rs"
 test = false

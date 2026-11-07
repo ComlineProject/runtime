@@ -12,8 +12,9 @@
 //! ```
 //!
 //! It writes one file per vector file, `<dir>/<feature>.txt`, for each of
-//! `name-hash`, `handshake`, `envelope`, `framing-datagram`,
-//! `framing-datagram2` and `framing-jsonrpc`.
+//! `name-hash`, `handshake`, `handshake-comline2`, `envelope`,
+//! `framing-datagram`, `framing-datagram2`, `framing-datagram3` and
+//! `framing-jsonrpc`.
 //!
 //! # The format
 //!
@@ -22,10 +23,10 @@
 //! with `fgets` and splits it on spaces. The first line is the header:
 //!
 //! ```text
-//! comline-ffi-vectors 1 <feature> <count>
+//! comline-ffi-vectors 2 <feature> <count>
 //! ```
 //!
-//! `1` is the format's version, and `<count>` is the number of case lines
+//! `2` is the format's version, and `<count>` is the number of case lines
 //! that follow: every case in the vector file, one line each, in the file's
 //! order. A harness fails when it replays any other number.
 //!
@@ -40,6 +41,9 @@
 //! | `handshake ID exact IR_HASH WIRE FRAMING CAPS BYTES ENCODED` | `comline_handshake_encode` gives `ENCODED` (and 31 for 30 bytes of room); `comline_handshake_check` of `BYTES` gives the input's hashes and bits. When `comline_supports(FRAMING)`, a `comline@1` connection's `start` writes `ENCODED` and `feed(BYTES)` is `HANDSHAKE_OK` with `CAPS`. |
 //! | `handshake ID reject BYTES` | `check` against a valid frame is `ERR_HANDSHAKE` and leaves `*peer_out` alone; a `comline@1` `datagram@2` connection's `feed` is `ERR_HANDSHAKE`, then `ERR_STATE`. |
 //! | `handshake_check ID exact\|reject OURS PEER` | `comline_handshake_check(OURS, PEER)` is `OK` (exact) or `ERR_HANDSHAKE` (reject). `OURS` is the input's frame, as `comline_handshake_encode` writes it. |
+//! | `comline2_message ID exact TYPE EXCHANGE BYTES` | `comline_comline2_message_check(BYTES)` is `OK` with `TYPE`. A hello (`TYPE` 1): a `comline@2` initiator under `EXCHANGE`, given `BYTES` as its hello, has `start` write `BYTES`. |
+//! | `comline2_message ID reject BYTES` | `comline_comline2_message_check(BYTES)` is `ERR_HANDSHAKE`, with type 0 and a reason. |
+//! | `comline2_negotiate ID exact SIDE SCOPE NEWER SVD EXCHANGE LOCAL FIRST BYTES REPLY OUTCOME` | A `comline@2` connection with those fields and `LOCAL` as its hello, on `datagram@3`, runs `start`, then, if `FIRST` isn't `-`, `feed(FIRST)` and `start`. `feed(BYTES)` is `OK`, or `ERR_REFUSED` if `OUTCOME` starts `refused`, and sets `COMLINE_EVENT_SEND` unless `REPLY` is `-`; `start` writes `REPLY`; and what the ABI's readers give, written as `tests/common/cases.rs`' `outcome_of` writes it, is `OUTCOME`. |
 //! | `envelope ID exact ENVELOPE ERROR_ID BODY FRAME ENCODED` | On `datagram@2`, `encode_reply(0, 0, …)` gives `ENCODED`; a connection waiting on request 0 is fed `FRAME` and reads that reply. |
 //! | `envelope ID reject FRAME` | Fed `FRAME`, a connection waiting on request 0 gives `ERR_FRAMING`. |
 //! | `request ID exact\|patched FRAMING PROTOCOL CALL_ID METHOD ONE_WAY REQUEST_ID DRIVE PARAMS BYTES ENCODED` | A connection spends one-way ids up to `DRIVE`, then `encode_request` gives `ENCODED` (at id `DRIVE` unless one-way) and waits unless one-way; a fresh one fed `BYTES` reads the request, `REQUEST_ID`, `PARAMS` and the call. |
@@ -82,7 +86,10 @@ mod cases;
 use std::fmt::Write as _;
 use std::path::Path;
 
-use comline_runtime::contract::{ConnectionFraming, Datagram2Framing, Envelope, HandshakeFrame};
+use comline_runtime::comline2::Message;
+use comline_runtime::contract::{
+    ConnectionFraming, Datagram2Framing, Datagram3Framing, Envelope, HandshakeFrame,
+};
 use comline_runtime::framing::JsonRpcFraming;
 use comline_runtime_conformance::{json_equal, Case, Compare, Expect, Framed, Input, Op};
 use comline_runtime_ffi::{COMLINE_ENVELOPE_ERR, COMLINE_ENVELOPE_FAULT, COMLINE_ENVELOPE_OK};
@@ -94,7 +101,7 @@ use cases::*;
 const MAX_LINE: usize = 4096;
 
 /// The format's version, in the header.
-const VERSION: u32 = 1;
+const VERSION: u32 = 2;
 
 fn main() {
     let dir = std::env::args()
@@ -218,7 +225,9 @@ fn line(case: &Case) -> Result<String, String> {
                 write!(out, "envelope {id} reject {}", bytes(&frame))
             } else {
                 exact_only(case)?;
-                let reply = reply.as_ref().ok_or("an exact envelope case has no input")?;
+                let reply = reply
+                    .as_ref()
+                    .ok_or("an exact envelope case has no input")?;
                 let (envelope, error_id, body) = reply_of(reply);
                 write!(
                     out,
@@ -229,9 +238,42 @@ fn line(case: &Case) -> Result<String, String> {
                 )
             }
         }
-        (Input::Request(_) | Input::Response(_), Some(f @ ("datagram@2" | "jsonrpc@1")))
-            if reject =>
-        {
+        (Input::Comline2Message(_), _) if reject => {
+            write!(out, "comline2_message {id} reject {}", bytes(&case.bytes.0))
+        }
+        (Input::Comline2Message(Some(message)), _) => {
+            let (kind, exchange) = match message {
+                Message::Hello(hello) => (1, hello.exchange as u8),
+                Message::Answer(_) => (2, 0),
+                Message::Verdict(_) => (3, 0),
+            };
+            write!(
+                out,
+                "comline2_message {id} exact {kind} {exchange} {}",
+                bytes(&case.bytes.0)
+            )
+        }
+        (Input::Comline2Negotiate(i), _) => {
+            let n = negotiation_of(i)?;
+            write!(
+                out,
+                "comline2_negotiate {id} exact {} {} {} {} {} {} {} {} {} {}",
+                n.side,
+                n.scope,
+                n.newer_consumer,
+                n.same_version_differs,
+                n.exchange,
+                bytes(&n.local),
+                bytes(n.first.as_deref().unwrap_or_default()),
+                bytes(&case.bytes.0),
+                bytes(&n.reply),
+                n.outcome,
+            )
+        }
+        (
+            Input::Request(_) | Input::Response(_),
+            Some(f @ ("datagram@2" | "datagram@3" | "jsonrpc@1")),
+        ) if reject => {
             let op = if case.op() == Op::Request {
                 "request"
             } else {
@@ -239,7 +281,10 @@ fn line(case: &Case) -> Result<String, String> {
             };
             write!(out, "{op} {id} reject {f} {}", bytes(&case.bytes.0))
         }
-        (Input::Request(Framed::Full(i)), Some(f @ ("datagram@2" | "jsonrpc@1"))) => {
+        (
+            Input::Request(Framed::Full(i)),
+            Some(f @ ("datagram@2" | "datagram@3" | "jsonrpc@1")),
+        ) => {
             let request_id = i.request_id;
             let protocol = i.protocol.unwrap_or(0);
             let call_id = i.call_id;
@@ -260,7 +305,7 @@ fn line(case: &Case) -> Result<String, String> {
                 frame
             };
             let compared = if patched {
-                with_request_id(f, &encoded, protocol, request_id)?
+                with_request_id(f, &encoded, protocol, call_id, request_id)?
             } else {
                 encoded.clone()
             };
@@ -276,7 +321,10 @@ fn line(case: &Case) -> Result<String, String> {
                 bytes(&encoded),
             )
         }
-        (Input::Response(Framed::Full(i)), Some(f @ ("datagram@2" | "jsonrpc@1"))) => {
+        (
+            Input::Response(Framed::Full(i)),
+            Some(f @ ("datagram@2" | "datagram@3" | "jsonrpc@1")),
+        ) => {
             let request_id = i.request_id;
             let protocol = i.protocol.unwrap_or(0);
             let (envelope, error_id, body) = reply_of(&i.reply);
@@ -344,6 +392,7 @@ fn check_same(case: &Case, encoded: &[u8]) -> Result<(), String> {
 fn with_framing(name: &str, f: impl FnOnce(&dyn Reference)) -> Result<(), String> {
     match name {
         "datagram@2" => f(&Datagram2Framing),
+        "datagram@3" => f(&Datagram3Framing),
         "jsonrpc@1" => f(&JsonRpcFraming),
         other => return Err(format!("no reference for {other}")),
     }

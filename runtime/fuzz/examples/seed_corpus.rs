@@ -12,12 +12,15 @@
 //! vector's bytes.
 //!
 //! The C ABI's targets (`ffi_feed`, `ffi_vs_core`) read a config and
-//! operations (`src/ffi.rs`). Their seeds are the `framing-datagram2` and
-//! `framing-jsonrpc` vectors' frames, fed to a connection of that framing
+//! operations (`src/ffi.rs`). Their seeds are the `framing-datagram2`,
+//! `framing-datagram3` and `framing-jsonrpc` vectors' frames, fed to a connection of that framing
 //! (stream and message mode, after a call so a reply can answer it); the
 //! `handshake` vectors' frames, fed to a connection whose own frame they
 //! match; and a whole exchange (`drive::exchange`) under every framing,
 //! mode, handshake and ordering, so the fuzzer starts past the handshake.
+//!
+//! `ffi_comline2` reads a byte of options and frames (`fuzz_targets/ffi_comline2.rs`).
+//! Its seeds are the `handshake-comline2` vectors' messages.
 
 #[path = "../../conformance/tests/common/mod.rs"]
 mod common;
@@ -60,7 +63,7 @@ fn main() {
         max_waiting: 16,
         ..drive::exchange_config(framing, stream)
     };
-    for framing in ["datagram@2", "jsonrpc@1"] {
+    for framing in ["datagram@2", "datagram@3", "jsonrpc@1"] {
         for stream in [0, 1] {
             for handshake in [0, 1] {
                 for unordered in [0, 1] {
@@ -78,16 +81,26 @@ fn main() {
             }
         }
     }
+    let mut comline2 = Vec::new();
     for vectors in reference_cases() {
         for case in &vectors.cases {
             let name = case.id.replace('/', "_");
             let frame = case.bytes.0.clone();
             match vectors.feature.as_str() {
-                feature @ ("framing-datagram2" | "framing-jsonrpc") => {
-                    let framing = if feature == "framing-jsonrpc" {
-                        "jsonrpc@1"
-                    } else {
-                        "datagram@2"
+                "handshake-comline2" => {
+                    // Fed first, under every side and exchange.
+                    for options in 0..4u8 {
+                        let mut input = vec![options];
+                        input.extend_from_slice(&(frame.len() as u16).to_le_bytes());
+                        input.extend_from_slice(&frame);
+                        comline2.push((format!("{name}_{options}"), input));
+                    }
+                }
+                feature @ ("framing-datagram2" | "framing-datagram3" | "framing-jsonrpc") => {
+                    let framing = match feature {
+                        "framing-jsonrpc" => "jsonrpc@1",
+                        "framing-datagram3" => "datagram@3",
+                        _ => "datagram@2",
                     };
                     // A call first, so a reply has something to answer.
                     let ops = [
@@ -152,6 +165,10 @@ fn main() {
                 _ => {}
             }
         }
+    }
+
+    for (name, input) in comline2 {
+        add("ffi_comline2", name, input);
     }
 
     for vectors in reference_cases() {

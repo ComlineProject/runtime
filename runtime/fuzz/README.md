@@ -42,7 +42,8 @@ cargo +nightly fuzz run --fuzz-dir runtime/fuzz decode_no_panic -- \
 | `seed_vs_derive` | a format, a mirror, bytes | `TypeSeed` accepts and refuses what the mirror's `serde` derive does, and reads the same value; the mirrors are [`conformance/tests/common`](../conformance/tests/common/mod.rs) |
 | `stream_split` | a limit (`u32` LE), bytes | stream framing: `split_frame` never panics and reports exactly what the prefix declares (a frame within the limit and the buffer, `NeedMore` counting the prefix in, `TooLarge` only over the limit); splitting the whole buffer consumes it in order; `put_prefix` refuses only a length over the limit, and what it writes splits back to the same frame |
 | `ffi_feed` | a config, then operations (see below) | the C ABI on its own rules: no panic crosses and no handle is poisoned, every status is one the function documents, every span lies inside the frame and the frame inside that `feed`'s input, `NEED_MORE` and `BUFFER_TOO_SMALL` report sizes a retry succeeds with, refusals spend no request id, and nothing allocates after `comline_connection_new` |
-| `ffi_vs_core` | the same | `ffi_feed`'s checks, and each call made again through `State`, the connection framings and `HandshakeFrame` directly, which must give the same status, bytes, request id, `*consumed` and event (spans at the same offsets) |
+| `ffi_vs_core` | `ffi_feed`'s | `ffi_feed`'s checks, and each call made again through `State`, the connection framings and `HandshakeFrame` directly, which must give the same status, bytes, request id, `*consumed` and event (spans at the same offsets) |
+| `ffi_comline2` | options, then frames | a `comline@2` connection under any side and parameters, fed any frames: no panic crosses and no handle is poisoned, every status is one the function documents, `COMLINE_EVENT_SEND` means `start` has a message, and a finished or refused handshake's readers answer |
 
 **What `framing_decode` checks.**
 - The binary frames are canonical, so what decodes re-encodes to exactly the
@@ -90,8 +91,9 @@ refuses a count past the bytes left even for such an element, and the vector
 - every conformance vector's bytes, from `reference_cases()` (the `stream`
   vectors, behind their limit, seed `stream_split`);
 - every mirror's samples, in every format;
-- for `ffi_feed` and `ffi_vs_core`: the `framing-datagram2` and
-  `framing-jsonrpc` frames fed to a connection of that framing, in both
+- for `ffi_comline2`: the `handshake-comline2` messages, fed first;
+- for `ffi_feed` and `ffi_vs_core`: the `framing-datagram2`,
+  `framing-datagram3` and `framing-jsonrpc` frames fed to a connection of that framing, in both
   modes; the `handshake` frames fed to a connection they name; and a whole
   exchange under every framing, mode, handshake and ordering, so the fuzzer
   starts past the handshake.

@@ -15,7 +15,7 @@
 //!
 //! | field | bytes | reads as |
 //! |---|---|---|
-//! | framing | 1 (+) | `% 8`: 0–2 `datagram@2`, 3–5 `jsonrpc@1`, 6 `datagram@1`, 7 a length byte (`% 32`) and that many raw bytes |
+//! | framing | 1 (+) | `% 8`: 0–1 `datagram@2`, 2 `datagram@3`, 3–5 `jsonrpc@1`, 6 `datagram@1`, 7 a length byte (`% 32`) and that many raw bytes |
 //! | wire format | 1 (+) | `% 4`: `packed@1`, `json@1`, `msgpack@1`, or raw as above |
 //! | flags | 1 (+4) | bit 0 handshake `none`, bit 1 stream, bit 2 unordered; bit 3: four raw bytes follow for `handshake`, `stream`, `unordered`, `_reserved` |
 //! | `max_frame` | 1 (+) | `% 8`: 0 (the default), a `u16`, the ceiling, the ceiling + 1, a `u64`, 31, 30, a `u8` |
@@ -188,7 +188,8 @@ impl Reader<'_> {
 
     fn config(&mut self) -> Config {
         let framing = match self.u8() % 8 {
-            0..=2 => FRAMINGS[0].as_bytes().to_vec(),
+            0..=1 => FRAMINGS[0].as_bytes().to_vec(),
+            2 => b"datagram@3".to_vec(),
             3..=5 => FRAMINGS[1].as_bytes().to_vec(),
             6 => FRAMINGS[2].as_bytes().to_vec(),
             _ => {
@@ -386,6 +387,7 @@ pub fn write(config: &Config, ops: &[Op]) -> Vec<u8> {
     let mut out = Vec::new();
     match index_of(&FRAMINGS, &config.framing) {
         Some(i) => out.push(i * 3),
+        None if config.framing == b"datagram@3" => out.push(2),
         None => {
             out.push(7);
             write_raw(&config.framing, 32, &mut out);

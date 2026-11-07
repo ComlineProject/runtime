@@ -141,20 +141,34 @@ fn pair(framing: &'static str) -> (Conn, Conn) {
 // ── versions and names ─────────────────────────────────────────────────────
 
 #[test]
-fn abi_version_is_0_1() {
+fn abi_version_is_0_2() {
     assert_eq!(
         comline_abi_version(),
         (COMLINE_ABI_MAJOR << 16) | COMLINE_ABI_MINOR
     );
-    assert_eq!((COMLINE_ABI_MAJOR, COMLINE_ABI_MINOR), (0, 1));
+    assert_eq!((COMLINE_ABI_MAJOR, COMLINE_ABI_MINOR), (0, 2));
 }
 
 #[test]
 fn supports_the_connection_framings_and_handshakes() {
-    for name in ["datagram@2", "jsonrpc@1", "comline@1", "none"] {
+    for name in [
+        "datagram@2",
+        "datagram@3",
+        "jsonrpc@1",
+        "comline@1",
+        "comline@2",
+        "none",
+    ] {
         assert!(supports(name), "{name}");
     }
-    for name in ["datagram@1", "packed@1", "json@1", "", "datagram@3"] {
+    for name in [
+        "datagram@1",
+        "packed@1",
+        "json@1",
+        "",
+        "datagram@4",
+        "comline@3",
+    ] {
         assert!(!supports(name), "{name}");
     }
     assert_eq!(unsafe { comline_supports(ptr::null(), 3) }, 0);
@@ -164,7 +178,7 @@ fn supports_the_connection_framings_and_handshakes() {
 
 #[test]
 fn two_ends_call_each_other_over_a_stream() {
-    for framing in ["datagram@2", "jsonrpc@1"] {
+    for framing in ["datagram@2", "datagram@3", "jsonrpc@1"] {
         let (mut a, mut b) = pair(framing);
 
         // a calls b; b calls a back while a waits; both reply.
@@ -254,7 +268,10 @@ fn a_peer_refusal_is_told_from_a_malformed_frame() {
     conn.request(0, 0, b"get", true, b"", 128);
     let refusal = br#"{"jsonrpc":"2.0","error":{"code":-32700,"message":"Parse error"},"id":null}"#;
     let fed = conn.feed(refusal);
-    assert_eq!((fed.status, fed.consumed), (COMLINE_ERR_PEER_REFUSED, refusal.len()));
+    assert_eq!(
+        (fed.status, fed.consumed),
+        (COMLINE_ERR_PEER_REFUSED, refusal.len())
+    );
     assert_eq!(conn.is_waiting(), Ok(true));
 
     let malformed = br#"{"jsonrpc":"2.0","result":1,"id":null}"#;
@@ -828,7 +845,7 @@ fn bad_arguments_are_refused() {
     config.wire_format = bad.as_ptr();
     config.wire_format_len = 1;
     assert_eq!(Conn::from_config(&config).err(), Some(invalid));
-    for unknown in ["datagram@1", "datagram@3", "jsonrpc", ""] {
+    for unknown in ["datagram@1", "datagram@4", "jsonrpc", ""] {
         let mut s = setup;
         s.framing = unknown;
         assert_eq!(
@@ -847,7 +864,7 @@ fn bad_arguments_are_refused() {
 
 #[test]
 fn the_happy_path_allocates_nothing() {
-    for framing in ["datagram@2", "jsonrpc@1"] {
+    for framing in ["datagram@2", "datagram@3", "jsonrpc@1"] {
         for unordered in [false, true] {
             let mut setup = Setup::plain(framing);
             setup.handshake = COMLINE_HANDSHAKE_COMLINE;

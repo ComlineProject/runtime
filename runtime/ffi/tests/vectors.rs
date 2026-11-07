@@ -3,8 +3,8 @@
 // file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
 //! The conformance vectors, replayed through the C ABI only: every case in
-//! `name-hash`, `handshake`, `envelope` and `framing-{datagram,datagram2,
-//! jsonrpc}`, against the expectations `runtime/conformance` holds the Rust
+//! `name-hash`, `handshake`, `handshake-comline2`, `envelope` and
+//! `framing-{datagram,datagram2,datagram3,jsonrpc}`, against the expectations `runtime/conformance` holds the Rust
 //! runtime to (exact bytes, `"expect": "reject"`, `"compare": "json"`).
 //!
 //! The ABI is a connection's, not the framings' one by one, so each op is
@@ -21,7 +21,14 @@
 //!   10-byte reply header (kind, protocol 0, request id 0) cut off; decoding
 //!   is `feed` of that header plus the vector's bytes, on a connection
 //!   waiting on request 0.
-//! - `request` / `response` on `datagram@2` and `jsonrpc@1` →
+//! - `comline2_message` → `comline_comline2_message_check` reads it, and a
+//!   hello must be what a connection given it writes. Answers and verdicts are
+//!   only ever written by a connection, which `comline2_negotiate` proves.
+//! - `comline2_negotiate` → a `comline@2` connection fed the case's bytes:
+//!   what `start` then writes is its reply (a refusal with no reply has closed
+//!   it: `COMLINE_ERR_STATE`), and the functions that read the outcome must give
+//!   its result (`common::cases::negotiation_of`).
+//! - `request` / `response` on `datagram@2`, `datagram@3` and `jsonrpc@1` →
 //!   `encode_request` / `encode_reply` and `feed`. A connection hands out
 //!   its own request ids, so it is driven to the vector's id by spending ids
 //!   on one-way calls; an id too large to drive to (`u64::MAX`) is encoded
@@ -119,6 +126,7 @@ fn every_case_replays_through_the_abi() {
         patched,
         [
             "framing-datagram2/request-large-ids",
+            "framing-datagram3/request-large-ids",
             "framing-jsonrpc/request-large-id"
         ]
     );
@@ -143,10 +151,18 @@ fn replay(case: &Case) -> Result<Ran, String> {
         (_, Some("datagram@1")) => Ok(Ran::NotMapped(
             "datagram@1 is lockstep; a connection speaks only the connection framings",
         )),
+        (Op::Comline2Message, _) => comline2_message_case(case),
+        (Op::Comline2Negotiate, _) => comline2_negotiate_case(case),
         (Op::Envelope, _) => envelope_case(case),
-        (Op::Request, Some(f @ ("datagram@2" | "jsonrpc@1"))) => request_case(case, leak(f)),
-        (Op::Response, Some(f @ ("datagram@2" | "jsonrpc@1"))) => response_case(case, leak(f)),
-        (Op::PeerRefusal, Some(f @ ("datagram@2" | "jsonrpc@1"))) => peer_refusal_case(case, leak(f)),
+        (Op::Request, Some(f @ ("datagram@2" | "datagram@3" | "jsonrpc@1"))) => {
+            request_case(case, leak(f))
+        }
+        (Op::Response, Some(f @ ("datagram@2" | "datagram@3" | "jsonrpc@1"))) => {
+            response_case(case, leak(f))
+        }
+        (Op::PeerRefusal, Some(f @ ("datagram@2" | "datagram@3" | "jsonrpc@1"))) => {
+            peer_refusal_case(case, leak(f))
+        }
         _ => Err(format!("no mapping for {:?} on {framing:?}", case.op())),
     }
 }
@@ -154,9 +170,110 @@ fn replay(case: &Case) -> Result<Ran, String> {
 fn leak(s: &str) -> &'static str {
     match s {
         "datagram@2" => "datagram@2",
+        "datagram@3" => "datagram@3",
         "jsonrpc@1" => "jsonrpc@1",
         _ => unreachable!(),
     }
+}
+
+fn comline2_message_case(case: &Case) -> Result<Ran, String> {
+    use comline_runtime::comline2::Message;
+    let bytes = &case.bytes.0;
+    let (mut kind, mut reason) = (0xff, 0xff);
+    let status = unsafe {
+        comline_comline2_message_check(bytes.as_ptr(), bytes.len(), &mut kind, &mut reason)
+    };
+    if case.expect == Expect::Reject {
+        check(
+            status == COMLINE_ERR_HANDSHAKE && kind == 0 && reason != 0,
+            || format!("check gave {status}, kind {kind}, reason {reason}"),
+        )?;
+        return Ok(Ran::Full);
+    }
+    let Input::Comline2Message(Some(message)) = &case.input else {
+        return Err("an exact message case has no message".into());
+    };
+    let (want, exchange) = match message {
+        Message::Hello(hello) => (COMLINE_COMLINE2_HELLO, Some(hello.exchange as u8)),
+        Message::Answer(_) => (COMLINE_COMLINE2_ANSWER, None),
+        Message::Verdict(_) => (COMLINE_COMLINE2_VERDICT, None),
+    };
+    check(status == COMLINE_OK && kind == want && reason == 0, || {
+        format!("check gave {status}, kind {kind}, reason {reason}")
+    })?;
+    // A hello is what a connection given it writes.
+    if let Some(exchange) = exchange {
+        let config = comline2_config(bytes, COMLINE_SIDE_INITIATOR, exchange);
+        let mut conn = Conn::comline2("datagram@3", &config).map_err(|s| format!("new: {s}"))?;
+        let hello = conn.start(4096);
+        check(hello.status == COMLINE_OK && hello.bytes == *bytes, || {
+            format!("start gave {}, {}", hello.status, hex(&hello.bytes))
+        })?;
+    }
+    Ok(Ran::Full)
+}
+
+fn comline2_negotiate_case(case: &Case) -> Result<Ran, String> {
+    let Input::Comline2Negotiate(input) = &case.input else {
+        return Err("a negotiate case without its input".into());
+    };
+    let n = negotiation_of(input)?;
+    let config = comline_comline2_config {
+        scope: n.scope,
+        newer_consumer: n.newer_consumer,
+        same_version_differs: n.same_version_differs,
+        ..comline2_config(&n.local, n.side, n.exchange)
+    };
+    let mut conn = Conn::comline2("datagram@3", &config).map_err(|s| format!("new: {s}"))?;
+    let hello = conn.start(4096);
+    check(hello.status == COMLINE_OK, || {
+        format!("start gave {}", hello.status)
+    })?;
+    if let Some(first) = &n.first {
+        let fed = conn.feed(first);
+        check(fed.status == COMLINE_OK, || {
+            format!("the first feed gave {}", fed.status)
+        })?;
+        let sent = conn.start(4096);
+        check(sent.status == COMLINE_OK, || {
+            format!("start gave {}", sent.status)
+        })?;
+    }
+    let fed = conn.feed(&case.bytes.0);
+    let refused = n.outcome.starts_with("refused");
+    let want = if refused {
+        COMLINE_ERR_REFUSED
+    } else {
+        COMLINE_OK
+    };
+    check(fed.status == want, || {
+        format!("feed gave {}, expected {want}", fed.status)
+    })?;
+    check(fed.consumed == case.bytes.0.len(), || {
+        format!("consumed {}", fed.consumed)
+    })?;
+    let flagged = fed.ev.flags & COMLINE_EVENT_SEND != 0;
+    check(flagged == !n.reply.is_empty(), || {
+        format!("flags {:#x}, the reply {}", fed.ev.flags, hex(&n.reply))
+    })?;
+    let reply = conn.start(4096);
+    if refused && n.reply.is_empty() {
+        // Nothing left to say: the refusal closed it.
+        check(reply.status == COMLINE_ERR_STATE, || {
+            format!("start gave {}", reply.status)
+        })?;
+    } else {
+        check(reply.status == COMLINE_OK && reply.bytes == n.reply, || {
+            format!("start gave {}, {}", reply.status, hex(&reply.bytes))
+        })?;
+    }
+    let outcome = conn
+        .outcome()
+        .map_err(|s| format!("reading the outcome: {s}"))?;
+    check(outcome == n.outcome, || {
+        format!("{outcome}, expected {}", n.outcome)
+    })?;
+    Ok(Ran::Full)
 }
 
 fn check(ok: bool, why: impl FnOnce() -> String) -> Result<(), String> {
@@ -410,7 +527,7 @@ fn request_case(case: &Case, framing: &'static str) -> Result<Ran, String> {
         })?;
         let mut frame = encoded.bytes.clone();
         if patched {
-            frame = with_request_id(framing, &frame, protocol, request_id)?;
+            frame = with_request_id(framing, &frame, protocol, call_id, request_id)?;
         } else if !one_way {
             check(encoded.request_id == request_id, || {
                 format!("encoded as request {}", encoded.request_id)
@@ -440,7 +557,7 @@ fn request_case(case: &Case, framing: &'static str) -> Result<Ran, String> {
         || format!("feed gave {fed:?}"),
     )?;
     match framing {
-        "datagram@2" => check(
+        "datagram@2" | "datagram@3" => check(
             fed.ev.flags & COMLINE_EVENT_HAS_PROTOCOL != 0
                 && fed.ev.flags & COMLINE_EVENT_CALL_BY_NAME == 0
                 && fed.ev.protocol == protocol

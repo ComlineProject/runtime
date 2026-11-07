@@ -11,20 +11,29 @@
 
 #![allow(dead_code)]
 
+use comline_runtime::comline2::{
+    Exchange, Hash128, Hello, Message, Negotiated, PackageVersion, Params, Protocol, ProtocolState,
+    Release,
+};
+use comline_runtime::contract::Side;
 #[allow(unused_imports)] // Not every target that includes this file needs it.
 pub use comline_runtime_conformance::hex;
-use comline_runtime_conformance::{encode_as, Framed, Input, Reply, RequestIn, Vectors, Wire};
+use comline_runtime_conformance::{
+    encode_as, Framed, Input, NegotiateIn, NegotiateResult, Reply, RequestIn, Step, Vectors, Wire,
+};
 use comline_runtime_ffi::{COMLINE_ENVELOPE_ERR, COMLINE_ENVELOPE_FAULT, COMLINE_ENVELOPE_OK};
 
 /// The files with cases on the ABI: every one a `comline_connection` or a
 /// free function can do, and `framing-datagram`, whose cases are listed to
 /// show the ABI refuses `datagram@1`.
-pub const FILES: [&str; 6] = [
+pub const FILES: [&str; 8] = [
     "name-hash",
     "handshake",
+    "handshake-comline2",
     "envelope",
     "framing-datagram",
     "framing-datagram2",
+    "framing-datagram3",
     "framing-jsonrpc",
 ];
 
@@ -46,12 +55,14 @@ pub fn vectors(feature: &str) -> Vectors {
             )
         };
     }
-    const FILES_TEXT: [(&str, &str); 6] = [
+    const FILES_TEXT: [(&str, &str); 8] = [
         file!("name-hash"),
         file!("handshake"),
+        file!("handshake-comline2"),
         file!("envelope"),
         file!("framing-datagram"),
         file!("framing-datagram2"),
+        file!("framing-datagram3"),
         file!("framing-jsonrpc"),
     ];
     let (_, text) = FILES_TEXT
@@ -88,22 +99,32 @@ pub fn reply_of(reply: &Reply) -> (u8, u16, Vec<u8>) {
     }
 }
 
+/// How many bytes `n` takes as a varint.
+fn varint_len(n: u16) -> usize {
+    match n {
+        0..=0x7f => 1,
+        0x80..=0x3fff => 2,
+        _ => 3,
+    }
+}
+
 /// `frame` with its request id set to `id`: the id field of a `datagram@2`
-/// request, or a JSON-RPC request's `id` member.
+/// or `datagram@3` request, or a JSON-RPC request's `id` member.
 pub fn with_request_id(
     framing: &str,
     frame: &[u8],
     protocol: u16,
+    call_id: u16,
     id: u64,
 ) -> Result<Vec<u8>, String> {
     match framing {
-        "datagram@2" => {
-            let varint = match protocol {
-                0..=0x7f => 1,
-                0x80..=0x3fff => 2,
-                _ => 3,
+        "datagram@2" | "datagram@3" => {
+            let call = if framing == "datagram@2" {
+                2
+            } else {
+                varint_len(call_id)
             };
-            let at = 1 + varint + 2;
+            let at = 1 + varint_len(protocol) + call;
             let mut out = frame.to_vec();
             out[at..at + 8].copy_from_slice(&id.to_le_bytes());
             Ok(out)
@@ -115,4 +136,202 @@ pub fn with_request_id(
             serde_json::to_vec(&message).map_err(|e| e.to_string())
         }
     }
+}
+
+/// A `comline2_negotiate` case, as the connection replays it: set up with
+/// these, `start`, feed `first` and send what it asks for when there is one, then
+/// feed the case's bytes: `reply` is what `start` then writes, and `outcome`
+/// ([`outcome_of`]) what the connection concluded.
+pub struct Negotiation {
+    pub side: u8,
+    pub scope: u8,
+    pub newer_consumer: u8,
+    pub same_version_differs: u8,
+    pub exchange: u8,
+    pub local: Vec<u8>,
+    pub first: Option<Vec<u8>>,
+    pub reply: Vec<u8>,
+    pub outcome: String,
+}
+
+/// A negotiation step's case on a connection. Each step is what a connection does
+/// with what it reads next: `answer_offer` on an `offer` responder,
+/// `conclude_answer` on an `offer` initiator, `judge_hello` on a `symmetric` end.
+/// `finish` needs what the end concluded before (`pending`), which only a
+/// handshake gives a connection, so it's built from a peer's hello that leads
+/// there ([`leading_to`]).
+pub fn negotiation_of(input: &NegotiateIn) -> Result<Negotiation, String> {
+    let need = |what: &str| format!("a {:?} step needs {what}", input.step);
+    let code = |side: Side| side.code();
+    let (local, first, side, params) = match input.step {
+        Step::Finish => {
+            let pending = input.pending.as_ref().ok_or_else(|| need("pending"))?;
+            let (local, peer) = leading_to(pending)?;
+            let params = Params {
+                exchange: Exchange::Symmetric,
+                ..Params::default()
+            };
+            let side = input.side.ok_or_else(|| need("side"))?;
+            (local, Some(peer), side, params)
+        }
+        step => {
+            let params = input.params.ok_or_else(|| need("params"))?;
+            let local = input.local.clone().ok_or_else(|| need("local"))?;
+            let side = match step {
+                Step::AnswerOffer => Side::Responder,
+                Step::ConcludeAnswer => Side::Initiator,
+                _ => input.side.ok_or_else(|| need("side"))?,
+            };
+            let expected = match step {
+                Step::JudgeHello => Exchange::Symmetric,
+                _ => Exchange::Offer,
+            };
+            if params.exchange != expected {
+                return Err(format!(
+                    "no connection does {step:?} under {:?}",
+                    params.exchange
+                ));
+            }
+            (local, None, side, params)
+        }
+    };
+    let reply = match &input.reply {
+        Some(Some(message)) => message.to_bytes(),
+        _ => Vec::new(),
+    };
+    Ok(Negotiation {
+        side: code(side),
+        scope: params.scope as u8,
+        newer_consumer: params.newer_consumer as u8,
+        same_version_differs: params.same_version_differs as u8,
+        exchange: params.exchange as u8,
+        local: Message::Hello(local).to_bytes(),
+        first: first.map(|peer| Message::Hello(peer).to_bytes()),
+        reply,
+        outcome: outcome_of(&input.result),
+    })
+}
+
+/// This end's hello and a peer's, which together conclude `pending`: the same
+/// package and shapes, with the functions the peer lacks missing from its own.
+fn leading_to(pending: &Negotiated) -> Result<(Hello, Hello), String> {
+    let hello = |functions: &dyn Fn(&[u16]) -> Vec<u16>, version: PackageVersion| Hello {
+        exchange: Exchange::Symmetric,
+        package_id: Hash128([1; 16]),
+        version,
+        encodings: Vec::new(),
+        protocols: pending
+            .protocols
+            .iter()
+            .map(|p| {
+                let ProtocolState::Accepted { peer_lacks } = &p.state else {
+                    return Protocol {
+                        number: p.number,
+                        line: Release::new(0, 0, 0),
+                        shape_hash: Hash128([2; 16]),
+                        functions: Vec::new(),
+                    };
+                };
+                Protocol {
+                    number: p.number,
+                    line: Release::new(0, 1, 0),
+                    shape_hash: Hash128([2; 16]),
+                    functions: functions(peer_lacks),
+                }
+            })
+            .collect(),
+    };
+    if pending
+        .protocols
+        .iter()
+        .any(|p| matches!(p.state, ProtocolState::Refused { .. }))
+    {
+        return Err("a pending conclusion with a refused protocol".into());
+    }
+    // A function both have, then those only this end has.
+    let local = hello(
+        &|lacks| {
+            let mut all = lacks.to_vec();
+            all.push(u16::MAX);
+            all
+        },
+        pending.peer_version.clone(),
+    );
+    let peer = hello(&|_| vec![u16::MAX], pending.peer_version.clone());
+    Ok((local, peer))
+}
+
+/// What a negotiation came to, as one field of an export's line:
+///
+/// - `refused/REASON/SIDE/PROTOCOL`, `PROTOCOL` `-` when it's about no protocol;
+/// - `accepted/MAJOR/MINOR/PATCH/PRE/PROTOCOLS/WARNINGS`, `PRE` `-` for a release,
+///   `PROTOCOLS` `NUMBER:a:LACKS` or `NUMBER:r:REASON`, comma-separated, with
+///   `LACKS` and `WARNINGS` numbers joined by `+`; an empty list is `-`.
+pub fn outcome_of(result: &NegotiateResult) -> String {
+    match result {
+        NegotiateResult::Refused(r) => refused_text(r.reason.code(), r.side.code(), r.protocol),
+        NegotiateResult::Accepted(n) => {
+            let protocols: Vec<String> = n
+                .protocols
+                .iter()
+                .map(|p| match &p.state {
+                    ProtocolState::Accepted { peer_lacks } => {
+                        format!("{}:a:{}", p.number, joined(peer_lacks))
+                    }
+                    ProtocolState::Refused { reason } => {
+                        format!("{}:r:{}", p.number, reason.code())
+                    }
+                })
+                .collect();
+            let release = n.peer_version.release;
+            accepted_text(
+                (release.major, release.minor, release.patch),
+                &n.peer_version.pre,
+                &protocols,
+                &n.warnings,
+            )
+        }
+    }
+}
+
+/// [`outcome_of`]'s `refused/...`.
+pub fn refused_text(reason: u8, side: u8, protocol: Option<u16>) -> String {
+    match protocol {
+        Some(p) => format!("refused/{reason}/{side}/{p}"),
+        None => format!("refused/{reason}/{side}/-"),
+    }
+}
+
+/// [`outcome_of`]'s `accepted/...`.
+pub fn accepted_text(
+    release: (u32, u32, u32),
+    pre: &str,
+    protocols: &[String],
+    warnings: &[u16],
+) -> String {
+    format!(
+        "accepted/{}/{}/{}/{}/{}/{}",
+        release.0,
+        release.1,
+        release.2,
+        if pre.is_empty() { "-" } else { pre },
+        if protocols.is_empty() {
+            "-".to_string()
+        } else {
+            protocols.join(",")
+        },
+        joined(warnings),
+    )
+}
+
+/// Numbers joined by `+`, `-` when there are none.
+pub fn joined(numbers: &[u16]) -> String {
+    if numbers.is_empty() {
+        return "-".to_string();
+    }
+    numbers
+        .iter()
+        .map(u16::to_string)
+        .collect::<Vec<_>>()
+        .join("+")
 }

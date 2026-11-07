@@ -18,7 +18,7 @@
  The ABI's minor version: it changes when functions, codes or flag bits
  are added. Before 1.0 a binding accepts only its own minor.
  */
-#define COMLINE_ABI_MINOR 1
+#define COMLINE_ABI_MINOR 2
 
 /*
  The default frame limit, in bytes (16 MiB), not counting a stream's
@@ -59,6 +59,136 @@
 #define COMLINE_HANDSHAKE_NONE 1
 
 /*
+ `comline_config.handshake`: `comline@2`, which checks compatibility by each
+ protocol's line. It needs its facts and parameters, so only
+ `comline_connection_new_comline2` takes it; `comline_connection_new` refuses
+ it with `COMLINE_ERR_INVALID_ARGUMENT`.
+ */
+#define COMLINE_HANDSHAKE_COMLINE2 2
+
+/*
+ `comline_comline2_config.side` and `comline_refusal.side`: the end that
+ opened the connection (the consumer).
+ */
+#define COMLINE_SIDE_INITIATOR 0
+
+/*
+ `comline_comline2_config.side` and `comline_refusal.side`: the end that
+ accepted it (the provider).
+ */
+#define COMLINE_SIDE_RESPONDER 1
+
+/*
+ `comline_comline2_config.scope`: a protocol's refusal refuses that protocol
+ alone. The default (0).
+ */
+#define COMLINE_SCOPE_PROTOCOL 0
+
+/*
+ `comline_comline2_config.scope`: a protocol's refusal refuses the whole
+ connection (`unknown_protocol` excepted).
+ */
+#define COMLINE_SCOPE_PACKAGE 1
+
+/*
+ `comline_comline2_config.newer_consumer`: connect, and calls to the
+ functions the peer lacks fail locally. The default (0).
+ */
+#define COMLINE_NEWER_CONSUMER_DEGRADE 0
+
+/*
+ `comline_comline2_config.newer_consumer`: refuse the protocol.
+ */
+#define COMLINE_NEWER_CONSUMER_REFUSE 1
+
+/*
+ `comline_comline2_config.same_version_differs`: refuse the protocol. The
+ default (0).
+ */
+#define COMLINE_SAME_VERSION_DIFFERS_REFUSE 0
+
+/*
+ `comline_comline2_config.same_version_differs`: connect, and report the
+ protocol in `comline_connection_warnings`.
+ */
+#define COMLINE_SAME_VERSION_DIFFERS_WARN 1
+
+/*
+ `comline_comline2_config.exchange`: the initiator offers, the responder
+ answers, the initiator gives its verdict. The default (0).
+ */
+#define COMLINE_EXCHANGE_OFFER 0
+
+/*
+ `comline_comline2_config.exchange`: both send a hello, both give a verdict.
+ */
+#define COMLINE_EXCHANGE_SYMMETRIC 1
+
+/*
+ `comline_comline2_message_check`: a hello.
+ */
+#define COMLINE_COMLINE2_HELLO 1
+
+/*
+ `comline_comline2_message_check`: an answer.
+ */
+#define COMLINE_COMLINE2_ANSWER 2
+
+/*
+ `comline_comline2_message_check`: a verdict.
+ */
+#define COMLINE_COMLINE2_VERDICT 3
+
+/*
+ `comline_refusal.reason` and `comline_protocol_outcome.reason`: the peer's
+ message didn't parse. Stable, as the wire carries them; a new reason takes
+ the next free code.
+ */
+#define COMLINE_REASON_MALFORMED 1
+
+/*
+ The peer speaks another version of the handshake (a `comline@1` frame, say).
+ */
+#define COMLINE_REASON_HANDSHAKE_VERSION 2
+
+/*
+ The two ends declare different `exchange` parameters.
+ */
+#define COMLINE_REASON_EXCHANGE_MISMATCH 3
+
+/*
+ The two ends' package ids differ.
+ */
+#define COMLINE_REASON_PACKAGE_MISMATCH 4
+
+/*
+ The two ends' encodings differ, by parameter hash.
+ */
+#define COMLINE_REASON_ENCODING_MISMATCH 5
+
+/*
+ The protocol broke between the two ends' versions: its lines differ.
+ */
+#define COMLINE_REASON_LINE_MISMATCH 6
+
+/*
+ The versions are equal but the shape differs, under
+ `same_version_differs = refuse`.
+ */
+#define COMLINE_REASON_SAME_VERSION_DIFFERS 7
+
+/*
+ The consumer has functions the provider lacks, under
+ `newer_consumer = refuse`.
+ */
+#define COMLINE_REASON_NEWER_CONSUMER 8
+
+/*
+ Only one end has the protocol.
+ */
+#define COMLINE_REASON_UNKNOWN_PROTOCOL 9
+
+/*
  `comline_event.kind`: the peer's handshake frame arrived and agrees with
  ours. `capabilities` holds the peer's capability bits.
  */
@@ -82,8 +212,14 @@
 #define COMLINE_EVENT_STALE 3
 
 /*
+ `comline_event.kind`: a `comline@2` handshake message was taken in, and the
+ handshake goes on. Nothing in the event but `frame` and `COMLINE_EVENT_SEND`.
+ */
+#define COMLINE_EVENT_HANDSHAKE_CONTINUE 4
+
+/*
  `comline_event.flags`: `protocol` holds the protocol the request is for.
- Set on `datagram@2` requests. A `jsonrpc@1` request names only its
+ Set on `datagram@2` and `datagram@3` requests. A `jsonrpc@1` request names only its
  method; the protocol is whichever one this side provides with a call by
  that name.
  */
@@ -92,8 +228,8 @@
 /*
  `comline_event.flags`: the request is one-way and wants no reply. Set
  whenever the frame says so (a `jsonrpc@1` notification), and never
- inferred from a request id of 0. `datagram@2` has no way to say it on
- the wire, so there a one-way call is told apart by the schema alone.
+ inferred from a request id of 0. `datagram@2` and `datagram@3` have no way
+ to say it on the wire, so there a one-way call is told apart by the schema alone.
  */
 #define COMLINE_EVENT_ONE_WAY (1 << 1)
 
@@ -116,6 +252,12 @@
  `comline_method_name_unescape`, or compare it as JSON text.
  */
 #define COMLINE_EVENT_NAME_ESCAPED (1 << 4)
+
+/*
+ `comline_event.flags`, and beside `COMLINE_ERR_REFUSED`: `comline@2` has a
+ message for the peer. Call `comline_connection_start` to get it.
+ */
+#define COMLINE_EVENT_SEND (1 << 5)
 
 /*
  `comline_event.envelope` and `comline_connection_encode_reply`: the call
@@ -147,12 +289,13 @@ typedef struct comline_connection comline_connection;
 typedef int32_t comline_status;
 
 /*
- How to set up a connection, read once by `comline_connection_new`. The
+ How to set up a connection, read once by `comline_connection_new` or
+ `comline_connection_new_comline2`. The
  name pointers are borrowed for that call only.
 
  A connection always speaks a **connection framing**, whose frames say
  whether they're a request or a reply, so either end can call the other:
- `datagram@2` or `jsonrpc@1`. The lockstep `datagram@1` has no connection
+ `datagram@2`, `datagram@3` or `jsonrpc@1`. The lockstep `datagram@1` has no connection
  form and is `COMLINE_ERR_UNKNOWN_FRAMING`. On `jsonrpc@1` a one-way call
  is therefore a JSON-RPC notification, with no `id`.
  */
@@ -172,8 +315,8 @@ typedef struct comline_config {
   const uint8_t *wire_format;
   size_t wire_format_len;
   /*
-   The framing's name: `"datagram@2"` or `"jsonrpc@1"`. UTF-8, not
-   NUL-terminated.
+   The framing's name: `"datagram@2"`, `"datagram@3"` or `"jsonrpc@1"`.
+   UTF-8, not NUL-terminated.
    */
   const uint8_t *framing;
   size_t framing_len;
@@ -196,7 +339,8 @@ typedef struct comline_config {
    */
   uint32_t max_waiting;
   /*
-   `COMLINE_HANDSHAKE_COMLINE` or `COMLINE_HANDSHAKE_NONE`.
+   `COMLINE_HANDSHAKE_COMLINE`, `COMLINE_HANDSHAKE_NONE`, or
+   `COMLINE_HANDSHAKE_COMLINE2` with `comline_connection_new_comline2`.
    */
   uint8_t handshake;
   /*
@@ -218,6 +362,45 @@ typedef struct comline_config {
 } comline_config;
 
 /*
+ A `comline@2` connection's facts and parameters, read once by
+ `comline_connection_new_comline2`. `hello` is borrowed for that call only.
+ */
+typedef struct comline_comline2_config {
+  /*
+   This end's facts, as an encoded hello message (`docs` → Reference →
+   Wire → Handshakes). A generator can write them out as a constant: they
+   don't change once the code is built. They're put in canonical order, and
+   the `exchange` byte is replaced by `exchange` below.
+   */
+  const uint8_t *hello;
+  size_t hello_len;
+  /*
+   `COMLINE_SIDE_*`.
+   */
+  uint8_t side;
+  /*
+   `COMLINE_SCOPE_*`.
+   */
+  uint8_t scope;
+  /*
+   `COMLINE_NEWER_CONSUMER_*`.
+   */
+  uint8_t newer_consumer;
+  /*
+   `COMLINE_SAME_VERSION_DIFFERS_*`.
+   */
+  uint8_t same_version_differs;
+  /*
+   `COMLINE_EXCHANGE_*`.
+   */
+  uint8_t exchange;
+  /*
+   Must be 0.
+   */
+  uint8_t _reserved[3];
+} comline_comline2_config;
+
+/*
  A part of the caller's input: `offset` bytes from its start, `len` bytes
  long.
  */
@@ -237,7 +420,7 @@ typedef struct comline_event {
   uint8_t kind;
   /*
    `COMLINE_EVENT_HAS_PROTOCOL` | `ONE_WAY` | `CALL_BY_NAME` |
-   `BODY_ABSENT` | `NAME_ESCAPED`.
+   `BODY_ABSENT` | `NAME_ESCAPED` | `SEND`.
    */
   uint8_t flags;
   /*
@@ -280,6 +463,51 @@ typedef struct comline_event {
    */
   uint64_t request_id;
 } comline_event;
+
+/*
+ Why `comline@2` refused a connection.
+ */
+typedef struct comline_refusal {
+  /*
+   `COMLINE_REASON_*`.
+   */
+  uint8_t reason;
+  /*
+   Which end refused: `COMLINE_SIDE_*`.
+   */
+  uint8_t side;
+  /*
+   1 when the refusal is about one protocol, held in `protocol`.
+   */
+  uint8_t has_protocol;
+  uint8_t _reserved;
+  uint16_t protocol;
+  uint16_t _reserved2;
+} comline_refusal;
+
+/*
+ What one protocol of this end's came to under `comline@2`.
+ */
+typedef struct comline_protocol_outcome {
+  /*
+   The protocol's wire number.
+   */
+  uint16_t number;
+  /*
+   0 when it's usable, otherwise why it was refused: `COMLINE_REASON_*`.
+   */
+  uint8_t reason;
+  uint8_t _reserved;
+} comline_protocol_outcome;
+
+/*
+ The release part of a package version.
+ */
+typedef struct comline_version {
+  uint32_t major;
+  uint32_t minor;
+  uint32_t patch;
+} comline_version;
 
 /*
  A decoded `comline@1` handshake frame. The names are carried hashed
@@ -377,6 +605,20 @@ typedef struct comline_handshake {
  */
 #define COMLINE_ERR_PEER_REFUSED 24
 
+/*
+ The `comline@2` handshake refused the connection, this side or the peer:
+ `comline_connection_refusal` says why and which. It can leave a last
+ message to send (`COMLINE_EVENT_SEND`); after that the connection is closed.
+ */
+#define COMLINE_ERR_REFUSED 25
+
+/*
+ `comline_connection_check_call`: the peer can't take this call, because it
+ lacks the function or the protocol was refused. Fail the call locally;
+ nothing has reached the wire.
+ */
+#define COMLINE_ERR_UNAVAILABLE 26
+
 #ifdef __cplusplus
 extern "C" {
 #endif // __cplusplus
@@ -405,6 +647,23 @@ comline_status comline_connection_new(const struct comline_config *cfg,
                                       struct comline_connection **out);
 
 /*
+ [`comline_connection_new`] for a `comline@2` connection: `cfg->handshake`
+ must be `COMLINE_HANDSHAKE_COMLINE2`, and `comline2` holds its facts and
+ parameters. `cfg->ir_hash` and `cfg->capabilities` aren't read: `comline@2`
+ carries neither.
+
+ Errors: as `comline_connection_new`, and `COMLINE_ERR_INVALID_ARGUMENT` for
+ a `hello` that isn't an encoded hello message or a field outside its values.
+
+ # Safety
+ As `comline_connection_new`; `comline2` is null or a valid
+ `comline_comline2_config` whose `hello` satisfies `hello_len`.
+ */
+comline_status comline_connection_new_comline2(const struct comline_config *cfg,
+                                               const struct comline_comline2_config *comline2,
+                                               struct comline_connection **out);
+
+/*
  Free a connection. Null is a no-op. Works on a poisoned or closed handle.
 
  # Safety
@@ -421,8 +680,16 @@ void comline_connection_free(struct comline_connection *conn);
  The peer's frame is the first one fed (`COMLINE_EVENT_HANDSHAKE_OK`), and
  may arrive before or after this call. Requests and replies need both.
 
+ **`comline@2`** has several messages, so call this again whenever an event
+ or a refusal says `COMLINE_EVENT_SEND`, and once at the start. It writes the
+ next message, or nothing (`*written` 0, `COMLINE_OK`) when there's none: under
+ `exchange = offer` the responder has nothing to send until it has read the
+ hello. A second call is therefore no `COMLINE_ERR_STATE` here. Requests and
+ replies need every message written and the handshake finished.
+
  Errors: `COMLINE_BUFFER_TOO_SMALL` (`*written` = 31, or 35 in stream
- mode), `COMLINE_ERR_FRAME_TOO_LARGE` (`max_frame` below 31),
+ mode; for `comline@2`, the message's size), `COMLINE_ERR_FRAME_TOO_LARGE`
+ (`max_frame` below 31, or below that message),
  `COMLINE_ERR_STATE` when it was already written.
 
  # Safety
@@ -451,6 +718,14 @@ comline_status comline_connection_start(struct comline_connection *conn,
  `COMLINE_EVENT_HANDSHAKE_OK`, or `COMLINE_ERR_HANDSHAKE` and the
  connection closes.
 
+ On a `comline@2` connection the first frames are the handshake's:
+ `COMLINE_EVENT_HANDSHAKE_CONTINUE` while it goes on,
+ `COMLINE_EVENT_HANDSHAKE_OK` when it's done, or `COMLINE_ERR_REFUSED`
+ (`comline_connection_refusal`). `COMLINE_EVENT_SEND` on any of them means
+ `comline_connection_start` has a message to send. Fed while its own offer
+ hasn't been written, or after a refusal, it's `COMLINE_ERR_STATE` with
+ nothing consumed.
+
  After that, a frame is a request, a reply to a waiting call (which then
  waits no more), or a stale reply. A malformed frame is
  `COMLINE_ERR_FRAMING` with the frame consumed. In stream mode, a prefix
@@ -460,6 +735,8 @@ comline_status comline_connection_start(struct comline_connection *conn,
  **What each framing reads:**
  - `datagram@2`: the protocol number (`COMLINE_EVENT_HAS_PROTOCOL`), the
    `call_id` and the request id. It can't mark a call one-way.
+ - `datagram@3`: the same, the protocol and `call_id` being wire numbers,
+   each written as a shortest-form varint.
  - `jsonrpc@1`: the method (`COMLINE_EVENT_CALL_BY_NAME`; with
    `COMLINE_EVENT_NAME_ESCAPED` when the frame spelled it with escapes) and
    the `id`. A notification is `COMLINE_EVENT_ONE_WAY` with request id 0.
@@ -493,6 +770,7 @@ comline_status comline_connection_feed(struct comline_connection *conn,
  **What each framing reads:**
  - `datagram@2`: `protocol` and `call_id`; `name` is ignored. The frame
    can't say one-way.
+ - `datagram@3`: the same, `protocol` and `call_id` being wire numbers.
  - `jsonrpc@1`: `name`, escaped as a JSON string as serde_json escapes
    one; `protocol` and `call_id` are ignored. A one-way call is a
    notification, with no `id`. An empty body is written as `null`.
@@ -532,8 +810,8 @@ comline_status comline_connection_encode_request(struct comline_connection *conn
  `body` the error's fields) or `COMLINE_ENVELOPE_FAULT` (no body:
  `body_len` must be 0).
 
- **What each framing reads:** `datagram@2` writes `protocol` (the one the
- request was for) and the request id; `jsonrpc@1` ignores `protocol`,
+ **What each framing reads:** `datagram@2` and `datagram@3` write `protocol`
+ (the one the request was for) and the request id; `jsonrpc@1` ignores `protocol`,
  writes an empty body as `null`, an error as a JSON-RPC `error` object with
  `code` = `error_id`, and a fault as `-32603`.
 
@@ -574,6 +852,120 @@ comline_status comline_connection_abandon(struct comline_connection *conn, uint6
  `conn` is null or a live handle; `waiting` is null or writable.
  */
 comline_status comline_connection_is_waiting(struct comline_connection *conn, uint8_t *waiting);
+
+/*
+ Whether this end may call `function` of `protocol`, both wire numbers:
+ `COMLINE_OK` to send it, or `COMLINE_ERR_UNAVAILABLE` when the peer lacks the
+ function or the protocol was refused. Call it before encoding a request,
+ so a call the peer can't take never reaches the wire.
+
+ On a connection without `comline@2` it's always `COMLINE_OK`: there nothing
+ is negotiated per function. Before the handshake concluded, or after it
+ refused, it's `COMLINE_ERR_STATE`.
+
+ # Safety
+ `conn` is null or a live handle.
+ */
+comline_status comline_connection_check_call(struct comline_connection *conn,
+                                             uint16_t protocol,
+                                             uint16_t function);
+
+/*
+ Why `comline@2` refused this connection, into `*refusal`, after
+ `COMLINE_ERR_REFUSED`. It works on the closed handle a refusal leaves.
+
+ Errors: `COMLINE_ERR_STATE` when nothing was refused.
+
+ # Safety
+ `conn` is null or a live handle; `refusal` is null or writable.
+ */
+comline_status comline_connection_refusal(struct comline_connection *conn,
+                                          struct comline_refusal *refusal);
+
+/*
+ The wire numbers of the protocols that connected although a shape differs
+ at the same package version (`same_version_differs = warn`), ascending, to
+ report to whoever runs this: one end isn't what its version claims. `cap`
+ and `*written` count numbers.
+
+ Errors: `COMLINE_BUFFER_TOO_SMALL` (`*written` is how many there are),
+ `COMLINE_ERR_STATE` before the handshake concluded, after it refused, or
+ without `comline@2`.
+
+ # Safety
+ `conn` is null or a live handle; `out` is null or `cap` writable numbers;
+ `written` is null or writable.
+ */
+comline_status comline_connection_warnings(struct comline_connection *conn,
+                                           uint16_t *out,
+                                           size_t cap,
+                                           size_t *written);
+
+/*
+ What each of this end's protocols came to, ascending by number. `cap` and
+ `*written` count outcomes. It holds what this end concluded, and the peer's
+ verdict can still refuse a protocol until `COMLINE_EVENT_HANDSHAKE_OK`.
+
+ Errors: as `comline_connection_warnings`.
+
+ # Safety
+ `conn` is null or a live handle; `out` is null or `cap` writable outcomes;
+ `written` is null or writable.
+ */
+comline_status comline_connection_protocols(struct comline_connection *conn,
+                                            struct comline_protocol_outcome *out,
+                                            size_t cap,
+                                            size_t *written);
+
+/*
+ The functions of `protocol` the peer lacks, ascending by number: those
+ `comline_connection_check_call` refuses. `cap` and `*written` count numbers.
+ A protocol this end doesn't have, or one refused, lacks none.
+
+ Errors: as `comline_connection_warnings`.
+
+ # Safety
+ `conn` is null or a live handle; `out` is null or `cap` writable numbers;
+ `written` is null or writable.
+ */
+comline_status comline_connection_peer_lacks(struct comline_connection *conn,
+                                             uint16_t protocol,
+                                             uint16_t *out,
+                                             size_t cap,
+                                             size_t *written);
+
+/*
+ The peer's package version: its release in `*version`, and its pre-release
+ (`dev.2`, empty for a release) as UTF-8 in `pre`. `cap` and `*written` count
+ the pre-release's bytes.
+
+ Errors: `COMLINE_BUFFER_TOO_SMALL` (`*written` is the size needed, and
+ `*version` is set), and as `comline_connection_warnings`.
+
+ # Safety
+ `conn` is null or a live handle; `version` and `written` are null or
+ writable; `pre` is null or `cap` writable bytes.
+ */
+comline_status comline_connection_peer_version(struct comline_connection *conn,
+                                               struct comline_version *version,
+                                               uint8_t *pre,
+                                               size_t cap,
+                                               size_t *written);
+
+/*
+ Read one `comline@2` message: `COMLINE_OK` and its type in `*kind`
+ (`COMLINE_COMLINE2_*`), or `COMLINE_ERR_HANDSHAKE` and why it can't be read
+ in `*reason` (`COMLINE_REASON_MALFORMED`, or
+ `COMLINE_REASON_HANDSHAKE_VERSION` for another version's frame). The other
+ is 0. For a tool or a test: a connection reads its messages itself.
+
+ # Safety
+ `in` is null or readable for `len`; `kind` and `reason` are null or writable.
+ */
+comline_status comline_comline2_message_check(const uint8_t *in_,
+                                              size_t len,
+                                              uint8_t *kind,
+                                              uint8_t *reason);
 
 /*
  The FNV-1a-64 hash of an encoding name (UTF-8), as the handshake carries
@@ -631,7 +1023,8 @@ comline_status comline_handshake_check(const uint8_t *ours,
 
 /*
  1 when this library carries the named framing or handshake (UTF-8) on a
- connection, 0 otherwise: `datagram@2`, `jsonrpc@1`, `comline@1`, `none`.
+ connection, 0 otherwise: `datagram@2`, `datagram@3`, `jsonrpc@1`,
+ `comline@1`, `comline@2`, `none`.
  A binding checks a schema's `@framing` here at setup, not at the first
  frame. Wire formats are the host's codecs, so none is listed; the
  lockstep `datagram@1` has no connection form and is 0.

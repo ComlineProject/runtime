@@ -314,6 +314,7 @@ fn opening() -> impl Strategy<Value = Vec<Op>> {
 fn config() -> impl Strategy<Value = Config> {
     let framing = prop_oneof![
         16 => Just(b"datagram@2".to_vec()),
+        8 => Just(b"datagram@3".to_vec()),
         16 => Just(b"jsonrpc@1".to_vec()),
         1 => Just(b"datagram@1".to_vec()),
         1 => Just(vec![b'j', 0xff]),
@@ -423,7 +424,7 @@ proptest! {
 /// apart from the generator.
 #[test]
 fn a_whole_exchange_runs() {
-    for framing in ["datagram@2", "jsonrpc@1"] {
+    for framing in ["datagram@2", "datagram@3", "jsonrpc@1"] {
         for stream in [0, 1] {
             let config = drive::exchange_config(framing, stream);
             drive::run(
