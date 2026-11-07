@@ -1,0 +1,92 @@
+{
+    "$schema": "https://json-schema.org/draft/2020-12/schema",
+    "$defs": {
+        "CaseId": {
+            "type": "string",
+            "description": "A vector case's id: `<feature>/<name>`.",
+            "pattern": "^[a-z0-9.@_-]+/[a-z0-9.@_-]+$"
+        },
+        "Claim": {
+            "description": "A claim. Only a partial one lists the cases known to fail.",
+            "anyOf": [
+                {
+                    "type": "object",
+                    "additionalProperties": false,
+                    "properties": {
+                        "note": {
+                            "type": "string"
+                        },
+                        "state": {
+                            "anyOf": [
+                                {
+                                    "const": "supported"
+                                },
+                                {
+                                    "const": "unsupported"
+                                }
+                            ]
+                        },
+                        "tracking": {
+                            "type": "string"
+                        }
+                    },
+                    "required": [
+                        "state"
+                    ]
+                },
+                {
+                    "type": "object",
+                    "additionalProperties": false,
+                    "properties": {
+                        "failing": {
+                            "type": "array",
+                            "items": {
+                                "$ref": "#/$defs/CaseId"
+                            },
+                            "prefixItems": [
+                                {
+                                    "$ref": "#/$defs/CaseId"
+                                }
+                            ],
+                            "minItems": 1
+                        },
+                        "note": {
+                            "type": "string"
+                        },
+                        "state": {
+                            "const": "partial"
+                        },
+                        "tracking": {
+                            "type": "string"
+                        }
+                    },
+                    "required": [
+                        "failing",
+                        "state"
+                    ]
+                }
+            ]
+        }
+    },
+    "type": "object",
+    "description": "`support/<runtime>.json`: what a runtime claims, per feature.",
+    "additionalProperties": false,
+    "properties": {
+        "$schema": {
+            "type": "string"
+        },
+        "runtime": {
+            "type": "string"
+        },
+        "support": {
+            "type": "object",
+            "additionalProperties": {
+                "$ref": "#/$defs/Claim"
+            }
+        }
+    },
+    "required": [
+        "runtime",
+        "support"
+    ]
+}

@@ -15,10 +15,10 @@ use std::path::{Path, PathBuf};
 
 use comline_runtime::contract::{
     FORMAT_JSON, FORMAT_MSGPACK, FORMAT_PACKED, FRAMING_DATAGRAM, FRAMING_DATAGRAM2,
-    FRAMING_JSONRPC, HANDSHAKE_COMLINE,
+    FRAMING_DATAGRAM3, FRAMING_JSONRPC, HANDSHAKE_COMLINE, HANDSHAKE_COMLINE2,
 };
 use comline_runtime_conformance::{
-    fact_shown, reference_cases, render, run, Case, Features, Outcome, Profile, ProvenClaim,
+    fact_shown, reference_cases, render, run, Case, Fact, Features, Outcome, Profile, ProvenClaim,
     Report, State, Support, Vectors,
 };
 
@@ -184,6 +184,7 @@ fn rust_support_is_proven() {
     }
 
     let report = Report {
+        schema: Some("../specs/gen/report.schema.json".into()),
         runtime: support.runtime.clone(),
         support: proven,
     };
@@ -201,9 +202,9 @@ fn rust_support_is_proven() {
     );
 }
 
-/// Every official encoding has a profile, every profile states exactly its
-/// kind's facts with allowed values, and every fact is proven: its cases
-/// exist, pass against `comline-runtime`, and show the stated value.
+/// Every official encoding has a profile (reading one holds it to its kind's
+/// facts and their values), and every fact is proven: its cases exist, pass
+/// against `comline-runtime`, and show the stated value.
 #[test]
 fn profiles_are_proven() {
     let vectors: Vec<Vectors> = reference_cases();
@@ -217,8 +218,10 @@ fn profiles_are_proven() {
         FORMAT_PACKED,
         FRAMING_DATAGRAM,
         FRAMING_DATAGRAM2,
+        FRAMING_DATAGRAM3,
         FRAMING_JSONRPC,
         HANDSHAKE_COMLINE,
+        HANDSHAKE_COMLINE2,
     ];
     for name in names {
         let path = root().join("profiles").join(format!("{name}.json"));
@@ -230,49 +233,48 @@ fn profiles_are_proven() {
         if profile.name != name {
             problems.push(format!("{} names `{}`", path.display(), profile.name));
         }
-        let expected = profile.kind.facts();
-        for (fact, values) in expected {
-            let Some(stated) = profile.facts.get(*fact) else {
-                if profile.kind.states_every_fact() {
-                    problems.push(format!("`{name}` doesn't state `{fact}`"));
-                }
-                continue;
-            };
-            if !values.contains(&stated.value.as_str()) {
-                problems.push(format!(
-                    "`{name}`: `{fact}` is `{}`, expected one of {values:?}",
-                    stated.value
-                ));
-            }
-            if stated.proven_by.is_empty() && stated.value != "false" {
-                problems.push(format!("`{name}`: `{fact}` has no proving case"));
-            }
+        for (fact, proven_by) in profile.facts.stated() {
+            let label = fact.name();
             let mut proving = Vec::new();
-            for id in &stated.proven_by {
+            for id in proven_by {
                 match case(id) {
-                    None => problems.push(format!("`{name}`: `{fact}` names unknown case `{id}`")),
+                    None => problems.push(format!("`{name}`: `{label}` names unknown case `{id}`")),
                     Some(c) => match run(c) {
                         Outcome::Pass => proving.push(c),
                         other => {
-                            problems.push(format!("`{name}`: `{fact}`'s case `{id}`: {other:?}"))
+                            problems.push(format!("`{name}`: `{label}`'s case `{id}`: {other:?}"))
                         }
                     },
                 }
             }
-            if proving.len() == stated.proven_by.len() {
-                if let Err(e) = fact_shown(fact, &stated.value, &proving) {
-                    problems.push(format!("`{name}`: `{fact}`: {e}"));
+            if proving.len() == proven_by.len() {
+                if let Err(e) = fact_shown(fact, &proving) {
+                    problems.push(format!("`{name}`: `{label}`: {e}"));
                 }
-            }
-        }
-        for fact in profile.facts.keys() {
-            if !expected.iter().any(|(f, _)| f == fact) {
-                problems.push(format!("`{name}` states unknown fact `{fact}`"));
             }
         }
     }
 
     assert!(problems.is_empty(), "{}", problems.join("\n"));
+}
+
+/// Reading a vectors file and writing it back gives the file: the typed
+/// inputs hold everything the files do, and what's sent to implementations
+/// is what the corpus says.
+#[test]
+fn vectors_write_back_as_read() {
+    let corpus = comline_runtime_conformance::runner::load_corpus(&root()).unwrap();
+    for vectors in &corpus.vectors {
+        let path = root()
+            .join("vectors")
+            .join(format!("{}.json", vectors.feature));
+        assert_eq!(
+            render(vectors),
+            fs::read_to_string(&path).unwrap(),
+            "{}",
+            path.display()
+        );
+    }
 }
 
 /// The library runner, with `comline-runtime` in process, passes every case
@@ -308,10 +310,11 @@ fn handshake_facts_need_their_refusals() {
             "facts": {"schema_agreement": {"value": false}}}"#,
     )
     .unwrap();
-    let stated = &profile.facts["schema_agreement"];
-    assert_eq!(stated.value, "false");
-    assert!(stated.proven_by.is_empty());
-    assert_eq!(fact_shown("schema_agreement", "false", &[]), Ok(()));
+    let stated = profile.facts.stated();
+    assert_eq!(stated.len(), 1);
+    assert_eq!(stated[0].0, Fact::SchemaAgreement(false));
+    assert!(stated[0].1.is_empty());
+    assert_eq!(fact_shown(Fact::SchemaAgreement(false), &[]), Ok(()));
     let written = serde_json::to_value(&profile).unwrap();
     assert_eq!(
         written["facts"]["schema_agreement"]["value"],
@@ -331,16 +334,16 @@ fn handshake_facts_need_their_refusals() {
     let format = case("handshake/check-reject-format");
     let framing = case("handshake/check-reject-framing");
     assert_eq!(
-        fact_shown("schema_agreement", "true", &[agree, ir_hash]),
+        fact_shown(Fact::SchemaAgreement(true), &[agree, ir_hash]),
         Ok(())
     );
-    assert!(fact_shown("schema_agreement", "true", &[agree]).is_err());
-    assert!(fact_shown("schema_agreement", "true", &[agree, format]).is_err());
+    assert!(fact_shown(Fact::SchemaAgreement(true), &[agree]).is_err());
+    assert!(fact_shown(Fact::SchemaAgreement(true), &[agree, format]).is_err());
     assert_eq!(
-        fact_shown("encoding_agreement", "true", &[agree, format, framing]),
+        fact_shown(Fact::EncodingAgreement(true), &[agree, format, framing]),
         Ok(())
     );
-    assert!(fact_shown("encoding_agreement", "true", &[agree, format]).is_err());
+    assert!(fact_shown(Fact::EncodingAgreement(true), &[agree, format]).is_err());
 
     // comline@2: an accepted negotiation, and a refusal for each thing the
     // fact covers.
@@ -349,9 +352,9 @@ fn handshake_facts_need_their_refusals() {
     let package = case("handshake-comline2/offer-package-mismatch");
     let encoding = case("handshake-comline2/offer-encoding-mismatch");
     let exchange = case("handshake-comline2/offer-exchange-mismatch");
-    assert_eq!(fact_shown("schema_agreement", "true", &[accept, line, package]), Ok(()));
-    assert!(fact_shown("schema_agreement", "true", &[accept, line]).is_err());
-    assert!(fact_shown("schema_agreement", "true", &[line, package]).is_err());
-    assert_eq!(fact_shown("encoding_agreement", "true", &[accept, encoding, exchange]), Ok(()));
-    assert!(fact_shown("encoding_agreement", "true", &[accept, encoding]).is_err());
+    assert_eq!(fact_shown(Fact::SchemaAgreement(true), &[accept, line, package]), Ok(()));
+    assert!(fact_shown(Fact::SchemaAgreement(true), &[accept, line]).is_err());
+    assert!(fact_shown(Fact::SchemaAgreement(true), &[line, package]).is_err());
+    assert_eq!(fact_shown(Fact::EncodingAgreement(true), &[accept, encoding, exchange]), Ok(()));
+    assert!(fact_shown(Fact::EncodingAgreement(true), &[accept, encoding]).is_err());
 }

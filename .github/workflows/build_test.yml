@@ -32,6 +32,21 @@ jobs:
       - run: cargo test --verbose
       - run: cargo test --verbose -p comline-runtime --features tokio
 
+  # The corpus's files match their specs, and the generated schemas the specs.
+  specs:
+    name: conformance specs
+    runs-on: ubuntu-latest
+    env:
+      # Keep in step with runtime/conformance/specs/cue.mod/module.cue.
+      CUE_VERSION: v0.17.1
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install cue
+        run: |
+          curl -fsSL "https://github.com/cue-lang/cue/releases/download/$CUE_VERSION/cue_${CUE_VERSION}_linux_amd64.tar.gz" \
+            | sudo tar -xz -C /usr/local/bin cue
+      - run: runtime/conformance/specs/check.sh --check
+
   # `comline-runtime` without `std`: the `alloc` tier, and `alloc` plus the
   # JSON-RPC framing, built for wasm32 (no `std` there to lean on) and tested
   # on the host.

@@ -1,0 +1,328 @@
+{
+    "$schema": "https://json-schema.org/draft/2020-12/schema",
+    "$defs": {
+        "Agreement": {
+            "description": "`true` needs the cases that show it; `false` claims nothing.",
+            "anyOf": [
+                {
+                    "type": "object",
+                    "additionalProperties": false,
+                    "properties": {
+                        "proven_by": {
+                            "$ref": "#/$defs/ProvenBy"
+                        },
+                        "value": {
+                            "const": true
+                        }
+                    },
+                    "required": [
+                        "proven_by",
+                        "value"
+                    ]
+                },
+                {
+                    "type": "object",
+                    "additionalProperties": false,
+                    "properties": {
+                        "proven_by": {
+                            "const": []
+                        },
+                        "value": {
+                            "const": false
+                        }
+                    },
+                    "required": [
+                        "value"
+                    ]
+                }
+            ]
+        },
+        "CaseId": {
+            "type": "string",
+            "description": "A vector case's id: `<feature>/<name>`.",
+            "pattern": "^[a-z0-9.@_-]+/[a-z0-9.@_-]+$"
+        },
+        "FormatProfile": {
+            "type": "object",
+            "description": "A format states every fact.",
+            "additionalProperties": false,
+            "properties": {
+                "$schema": {
+                    "type": "string"
+                },
+                "facts": {
+                    "type": "object",
+                    "additionalProperties": false,
+                    "properties": {
+                        "enum_variants": {
+                            "type": "object",
+                            "additionalProperties": false,
+                            "properties": {
+                                "proven_by": {
+                                    "$ref": "#/$defs/ProvenBy"
+                                },
+                                "value": {
+                                    "enum": [
+                                        "by_name",
+                                        "by_index"
+                                    ]
+                                }
+                            },
+                            "required": [
+                                "proven_by",
+                                "value"
+                            ]
+                        },
+                        "integer_width": {
+                            "type": "object",
+                            "additionalProperties": false,
+                            "properties": {
+                                "proven_by": {
+                                    "$ref": "#/$defs/ProvenBy"
+                                },
+                                "value": {
+                                    "enum": [
+                                        "by_value",
+                                        "exact"
+                                    ]
+                                }
+                            },
+                            "required": [
+                                "proven_by",
+                                "value"
+                            ]
+                        },
+                        "missing_optional": {
+                            "type": "object",
+                            "additionalProperties": false,
+                            "properties": {
+                                "proven_by": {
+                                    "$ref": "#/$defs/ProvenBy"
+                                },
+                                "value": {
+                                    "enum": [
+                                        "rejected",
+                                        "absent"
+                                    ]
+                                }
+                            },
+                            "required": [
+                                "proven_by",
+                                "value"
+                            ]
+                        },
+                        "struct_fields": {
+                            "type": "object",
+                            "additionalProperties": false,
+                            "properties": {
+                                "proven_by": {
+                                    "$ref": "#/$defs/ProvenBy"
+                                },
+                                "value": {
+                                    "enum": [
+                                        "by_position",
+                                        "by_name"
+                                    ]
+                                }
+                            },
+                            "required": [
+                                "proven_by",
+                                "value"
+                            ]
+                        },
+                        "unknown_field": {
+                            "type": "object",
+                            "additionalProperties": false,
+                            "properties": {
+                                "proven_by": {
+                                    "$ref": "#/$defs/ProvenBy"
+                                },
+                                "value": {
+                                    "enum": [
+                                        "rejected",
+                                        "ignored"
+                                    ]
+                                }
+                            },
+                            "required": [
+                                "proven_by",
+                                "value"
+                            ]
+                        },
+                        "unknown_variant": {
+                            "type": "object",
+                            "additionalProperties": false,
+                            "properties": {
+                                "proven_by": {
+                                    "$ref": "#/$defs/ProvenBy"
+                                },
+                                "value": {
+                                    "enum": [
+                                        "rejected",
+                                        "tolerated"
+                                    ]
+                                }
+                            },
+                            "required": [
+                                "proven_by",
+                                "value"
+                            ]
+                        }
+                    },
+                    "required": [
+                        "enum_variants",
+                        "integer_width",
+                        "missing_optional",
+                        "struct_fields",
+                        "unknown_field",
+                        "unknown_variant"
+                    ]
+                },
+                "kind": {
+                    "const": "format"
+                },
+                "name": {
+                    "$ref": "#/$defs/ProfileName"
+                }
+            },
+            "required": [
+                "facts",
+                "kind",
+                "name"
+            ]
+        },
+        "FramingProfile": {
+            "type": "object",
+            "description": "A framing states every fact.",
+            "additionalProperties": false,
+            "properties": {
+                "$schema": {
+                    "type": "string"
+                },
+                "facts": {
+                    "type": "object",
+                    "additionalProperties": false,
+                    "properties": {
+                        "calls": {
+                            "type": "object",
+                            "additionalProperties": false,
+                            "properties": {
+                                "proven_by": {
+                                    "$ref": "#/$defs/ProvenBy"
+                                },
+                                "value": {
+                                    "enum": [
+                                        "by_index",
+                                        "by_name",
+                                        "by_id"
+                                    ]
+                                }
+                            },
+                            "required": [
+                                "proven_by",
+                                "value"
+                            ]
+                        },
+                        "errors": {
+                            "type": "object",
+                            "additionalProperties": false,
+                            "properties": {
+                                "proven_by": {
+                                    "$ref": "#/$defs/ProvenBy"
+                                },
+                                "value": {
+                                    "enum": [
+                                        "by_ordinal",
+                                        "by_name"
+                                    ]
+                                }
+                            },
+                            "required": [
+                                "proven_by",
+                                "value"
+                            ]
+                        }
+                    },
+                    "required": [
+                        "calls",
+                        "errors"
+                    ]
+                },
+                "kind": {
+                    "const": "framing"
+                },
+                "name": {
+                    "$ref": "#/$defs/ProfileName"
+                }
+            },
+            "required": [
+                "facts",
+                "kind",
+                "name"
+            ]
+        },
+        "HandshakeProfile": {
+            "type": "object",
+            "description": "A handshake may leave a fact out, which reads as `false`: not established.",
+            "additionalProperties": false,
+            "properties": {
+                "$schema": {
+                    "type": "string"
+                },
+                "facts": {
+                    "type": "object",
+                    "additionalProperties": false,
+                    "properties": {
+                        "encoding_agreement": {
+                            "$ref": "#/$defs/Agreement"
+                        },
+                        "schema_agreement": {
+                            "$ref": "#/$defs/Agreement"
+                        }
+                    }
+                },
+                "kind": {
+                    "const": "handshake"
+                },
+                "name": {
+                    "$ref": "#/$defs/ProfileName"
+                }
+            },
+            "required": [
+                "facts",
+                "kind",
+                "name"
+            ]
+        },
+        "ProfileName": {
+            "type": "string",
+            "description": "A profile's name: an encoding at a version.",
+            "pattern": "^[a-z0-9._-]+@[0-9]+$"
+        },
+        "ProvenBy": {
+            "type": "array",
+            "description": "The cases that prove a fact.",
+            "items": {
+                "$ref": "#/$defs/CaseId"
+            },
+            "prefixItems": [
+                {
+                    "$ref": "#/$defs/CaseId"
+                }
+            ],
+            "minItems": 1
+        }
+    },
+    "description": "`profiles/<name>.json`: facts about how an encoding encodes, each naming\nthe vector cases that prove it.",
+    "anyOf": [
+        {
+            "$ref": "#/$defs/FormatProfile"
+        },
+        {
+            "$ref": "#/$defs/FramingProfile"
+        },
+        {
+            "$ref": "#/$defs/HandshakeProfile"
+        }
+    ]
+}

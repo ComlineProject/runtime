@@ -1,4 +1,5 @@
 {
+  "$schema": "specs/gen/features.schema.json",
   "features": [
     { "id": "name-hash", "title": "name hash", "description": "FNV-1a 64 of a wire format or framing name, as the handshake carries it" },
     { "id": "handshake", "title": "handshake", "description": "the fixed 31-byte frame each side sends first: magic, version, IR hash, wire format, framing, capabilities" },

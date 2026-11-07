@@ -1,4 +1,5 @@
 {
+  "$schema": "../specs/gen/support.schema.json",
   "runtime": "rust",
   "support": {
     "name-hash": { "state": "supported" },

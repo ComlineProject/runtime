@@ -97,11 +97,11 @@ fn expectations(case: &Case) -> Vec<Expected> {
     let id = |what: &str| format!("{}/{what}", case.id);
     let bytes = serde_json::to_value(&case.bytes).unwrap();
     let mut out = Vec::new();
-    if case.expect == Expect::Reject && case.op == Op::Encode {
+    if case.expect == Expect::Reject && case.op() == Op::Encode {
         // A value over its type's bounds: encoding it is refused, and no
         // bytes stand for it.
         out.push(Expected {
-            request: json!({ "id": id("refuse"), "op": case.op, "input": case.input }),
+            request: json!({ "id": id("refuse"), "op": case.op(), "input": case.input }),
             reply: json!({ "id": id("refuse"), "error": "" }),
             json_bytes: false,
             refused: true,
@@ -110,24 +110,24 @@ fn expectations(case: &Case) -> Vec<Expected> {
     }
     if case.expect == Expect::Reject {
         out.push(Expected {
-            request: json!({ "id": id("reject"), "op": case.op, "input": case.input, "bytes": bytes }),
+            request: json!({ "id": id("reject"), "op": case.op(), "input": case.input, "bytes": bytes }),
             reply: json!({ "id": id("reject"), "accept": false }),
             json_bytes: false,
             refused: false,
         });
         return out;
     }
-    if !case.op.decode_only() {
+    if !case.op().decode_only() {
         out.push(Expected {
-            request: json!({ "id": id("encode"), "op": case.op, "input": case.input }),
+            request: json!({ "id": id("encode"), "op": case.op(), "input": case.input }),
             reply: json!({ "id": id("encode"), "bytes": bytes }),
             json_bytes: case.compare == Compare::Json,
             refused: false,
         });
     }
-    if !matches!(case.op, Op::NameHash | Op::Encode) {
+    if !matches!(case.op(), Op::NameHash | Op::Encode) {
         out.push(Expected {
-            request: json!({ "id": id("decode"), "op": case.op, "input": case.input, "bytes": bytes }),
+            request: json!({ "id": id("decode"), "op": case.op(), "input": case.input, "bytes": bytes }),
             reply: json!({ "id": id("decode"), "accept": true, "input": case.input }),
             json_bytes: false,
             refused: false,
