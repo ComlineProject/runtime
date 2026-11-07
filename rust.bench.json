@@ -1,6 +1,6 @@
 {
   "runtime": "rust",
-  "commit": "93c47b11e34901dfd7668aca50e4355fb5180e2c",
+  "commit": "cf5e06780793d8e71b0ec1133da8fd6c0e42b8e9",
   "toolchain": "rustc 1.98.0 (88d9e12ae 2026-08-18)",
   "metric": "instructions",
   "benches": {
@@ -137,28 +137,28 @@
       "ir": 299
     },
     "ffi/abi/feed/jsonrpc@1/message/16": {
-      "ir": 1692
+      "ir": 1659
     },
     "ffi/abi/feed/jsonrpc@1/message/256": {
-      "ir": 2367
+      "ir": 2334
     },
     "ffi/abi/feed/jsonrpc@1/message/4096": {
-      "ir": 13167
+      "ir": 13134
     },
     "ffi/abi/feed/jsonrpc@1/message/65536": {
-      "ir": 185967
+      "ir": 185934
     },
     "ffi/abi/feed/jsonrpc@1/stream/16": {
-      "ir": 1794
+      "ir": 1761
     },
     "ffi/abi/feed/jsonrpc@1/stream/256": {
-      "ir": 2469
+      "ir": 2436
     },
     "ffi/abi/feed/jsonrpc@1/stream/4096": {
-      "ir": 13269
+      "ir": 13236
     },
     "ffi/abi/feed/jsonrpc@1/stream/65536": {
-      "ir": 186069
+      "ir": 186036
     },
     "ffi/abi/handshake-check": {
       "ir": 138
@@ -293,28 +293,28 @@
       "ir": 146
     },
     "ffi/core/feed/jsonrpc@1/message/16": {
-      "ir": 1539
+      "ir": 1506
     },
     "ffi/core/feed/jsonrpc@1/message/256": {
-      "ir": 2214
+      "ir": 2181
     },
     "ffi/core/feed/jsonrpc@1/message/4096": {
-      "ir": 13014
+      "ir": 12981
     },
     "ffi/core/feed/jsonrpc@1/message/65536": {
-      "ir": 185814
+      "ir": 185781
     },
     "ffi/core/feed/jsonrpc@1/stream/16": {
-      "ir": 1645
+      "ir": 1612
     },
     "ffi/core/feed/jsonrpc@1/stream/256": {
-      "ir": 2320
+      "ir": 2287
     },
     "ffi/core/feed/jsonrpc@1/stream/4096": {
-      "ir": 13120
+      "ir": 13087
     },
     "ffi/core/feed/jsonrpc@1/stream/65536": {
-      "ir": 185920
+      "ir": 185887
     },
     "ffi/core/handshake-check": {
       "ir": 100
@@ -455,16 +455,16 @@
       "ir": 108
     },
     "framing/decode/jsonrpc@1/16": {
-      "ir": 1487
+      "ir": 1454
     },
     "framing/decode/jsonrpc@1/256": {
-      "ir": 2162
+      "ir": 2129
     },
     "framing/decode/jsonrpc@1/4096": {
-      "ir": 12962
+      "ir": 12929
     },
     "framing/decode/jsonrpc@1/65536": {
-      "ir": 185762
+      "ir": 185729
     },
     "framing/encode/datagram@1/16": {
       "ir": 190
