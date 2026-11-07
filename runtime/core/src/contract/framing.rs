@@ -53,6 +53,14 @@ pub trait Framing: Default {
     /// independently decodable with the peer's `WireFormat`.
     fn decode_request<'f>(&self, frame: &'f [u8]) -> Option<Request<'f>>;
 
+    /// Whether `frame`, which [`decode_response`](Self::decode_response)
+    /// refused, is the peer saying it couldn't read a request, without saying
+    /// which: [`RuntimeError::PeerRefused`] rather than a malformed frame. Only
+    /// asked of a frame that failed to decode, so reading one costs nothing.
+    fn is_peer_refusal(&self, _frame: &[u8]) -> bool {
+        false
+    }
+
     /// Frame an `ok` response around an already-serialised `payload`.
     fn encode_response_ok(&self, request_id: u64, payload: &[u8], out: &mut dyn BufMut);
 

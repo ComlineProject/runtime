@@ -140,6 +140,10 @@ pub enum Op {
     HandshakeCheck,
     /// A [`Reply`].
     Envelope,
+    /// `{framing}`, and `bytes`, a frame that isn't a response to any one
+    /// call: the peer saying it couldn't read a request (JSON-RPC's error with
+    /// a `null` id). Decoding accepts it and gives the input back. Decode only.
+    PeerRefusal,
     /// `{framing, call_id, method, request_id, format, params}`. Decoding
     /// yields the call (the id for datagram framing, the method for
     /// JSON-RPC), the request id, and `params` encoded in `format`. A framing
@@ -201,7 +205,7 @@ impl Op {
     pub fn decode_only(self) -> bool {
         matches!(
             self,
-            Op::Decode | Op::HandshakeCheck | Op::Comline2Negotiate
+            Op::Decode | Op::HandshakeCheck | Op::Comline2Negotiate | Op::PeerRefusal
         )
     }
 }
@@ -258,6 +262,7 @@ pub enum Input {
     Envelope(Option<Reply>),
     Request(Framed<RequestIn>),
     Response(Framed<ResponseIn>),
+    PeerRefusal(PeerRefusalIn),
     Encode(EncodeIn),
     Decode(DecodeIn),
     StreamPrefix(StreamPrefixIn),
@@ -276,6 +281,7 @@ impl Input {
             Input::Envelope(_) => Op::Envelope,
             Input::Request(_) => Op::Request,
             Input::Response(_) => Op::Response,
+            Input::PeerRefusal(_) => Op::PeerRefusal,
             Input::Encode(_) => Op::Encode,
             Input::Decode(_) => Op::Decode,
             Input::StreamPrefix(_) => Op::StreamPrefix,
@@ -301,6 +307,7 @@ impl Input {
             Op::Request => Input::Request(Framed::Full(read(input)?)),
             Op::Response if only_key(input, "framing") => Input::Response(read(input)?),
             Op::Response => Input::Response(Framed::Full(read(input)?)),
+            Op::PeerRefusal => Input::PeerRefusal(read(input)?),
             Op::Encode => Input::Encode(read(input)?),
             Op::Decode => Input::Decode(read(input)?),
             Op::StreamPrefix => Input::StreamPrefix(read(input)?),
@@ -358,6 +365,13 @@ fn same_shape(input: &Json, parsed: &Json) -> bool {
 pub enum Framed<T> {
     Full(T),
     Selector { framing: String },
+}
+
+/// A `peer_refusal` input: the framing that selects the decoder.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct PeerRefusalIn {
+    pub framing: String,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]

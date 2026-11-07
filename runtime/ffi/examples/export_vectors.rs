@@ -104,12 +104,13 @@ fn main() {
     std::fs::create_dir_all(dir).unwrap_or_else(|e| fail(&format!("{}: {e}", dir.display())));
     for feature in FILES {
         let vectors = vectors(feature);
-        // `"expect": "accept"` has no line: `tests/vectors.rs` feeds the ABI
-        // those frames, and a harness's lines always encode.
+        // `"expect": "accept"` and `peer_refusal` have no line: `tests/vectors.rs`
+        // feeds the ABI those frames, a harness's lines always encode, and it
+        // has no refusal to tell apart from `ERR_FRAMING` but this status.
         let cases: Vec<&Case> = vectors
             .cases
             .iter()
-            .filter(|case| case.expect != Expect::Accept)
+            .filter(|case| case.expect != Expect::Accept && case.op() != Op::PeerRefusal)
             .collect();
         let count = cases.len();
         let mut text = format!("comline-ffi-vectors {VERSION} {feature} {count}\n");

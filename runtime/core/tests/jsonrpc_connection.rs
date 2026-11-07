@@ -229,3 +229,36 @@ async fn the_async_driver_finds_protocols_by_method_and_skips_notifications() {
     let reply = raw.next().await.unwrap().unwrap();
     assert_eq!(text(&reply), r#"{"jsonrpc":"2.0","result":7,"id":3}"#);
 }
+
+const REFUSAL: &[u8] = br#"{"jsonrpc":"2.0","error":{"code":-32700,"message":"Parse error"},"id":null}"#;
+
+/// A peer that can't read a call says so with a `null` id, which fails the call
+/// as what it is. It doesn't wait out a reply that isn't coming.
+#[test]
+fn a_call_fails_when_the_peer_refuses_it() {
+    let (dialler, acceptor) = duplex();
+    let peer = thread::spawn(move || {
+        let mut raw = acceptor;
+        let mut frame = Vec::new();
+        raw.recv(&mut frame).unwrap();
+        raw.send(REFUSAL).unwrap();
+        raw
+    });
+    let mut conn: JsonRpcConnection = Connection::with_framing_unverified(dialler, Json, JsonRpcFraming);
+    let called = conn.call(CHAT, Call::new(1, CHAT_CALLS[1]), &()).map(|_| ());
+    assert_eq!(called, Err(RuntimeError::PeerRefused));
+    peer.join().unwrap();
+}
+
+#[cfg(feature = "tokio")]
+#[tokio::test]
+async fn an_async_connection_ends_when_the_peer_refuses() {
+    use comline_runtime::async_connection::{async_duplex, AsyncConnection};
+    use futures_util::SinkExt;
+
+    let (mut raw, conn_side) = async_duplex();
+    let conn = AsyncConnection::with_framing_unverified(conn_side, Json, JsonRpcFraming);
+    let driver = tokio::spawn(conn.run());
+    raw.send(REFUSAL.to_vec()).await.unwrap();
+    assert_eq!(driver.await.unwrap(), Err(RuntimeError::PeerRefused));
+}

@@ -365,7 +365,11 @@ function caseEnvelope(how, f) {
 function rejectFrame(framing, frame, isRequest) {
   const fed = withConn(plain(framing), (conn) => conn.feed(frame));
   if (fed.status !== Status.OK) {
-    check(fed.status === Status.ERR_FRAMING, `feed gave ${fed.status}`);
+    // A refusal is no response, and has a status of its own.
+    check(
+      fed.status === Status.ERR_FRAMING || fed.status === Status.ERR_PEER_REFUSED,
+      `feed gave ${fed.status}`,
+    );
     return FULL;
   }
   if (isRequest) {

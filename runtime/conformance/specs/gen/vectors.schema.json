@@ -296,6 +296,36 @@
                             "$ref": "#/$defs/Compare"
                         },
                         "expect": {
+                            "$ref": "#/$defs/Expect"
+                        },
+                        "id": {
+                            "$ref": "#/$defs/CaseId"
+                        },
+                        "input": {
+                            "$ref": "#/$defs/SelectsFraming"
+                        },
+                        "op": {
+                            "const": "peer_refusal"
+                        }
+                    },
+                    "required": [
+                        "bytes",
+                        "id",
+                        "input",
+                        "op"
+                    ]
+                },
+                {
+                    "type": "object",
+                    "additionalProperties": false,
+                    "properties": {
+                        "bytes": {
+                            "$ref": "#/$defs/Hex"
+                        },
+                        "compare": {
+                            "$ref": "#/$defs/Compare"
+                        },
+                        "expect": {
                             "const": "exact"
                         },
                         "id": {

@@ -66,6 +66,14 @@ pub trait ConnectionFraming: Default {
 
     /// Parse a frame of either kind. Borrows `frame`.
     fn decode<'f>(&self, frame: &'f [u8]) -> Option<Frame<'f>>;
+
+    /// Whether `frame`, which [`decode`](Self::decode) refused, is the peer
+    /// saying it couldn't read a request, without saying which:
+    /// [`RuntimeError::PeerRefused`] rather than a malformed frame. Only asked
+    /// of a frame that failed to decode, so reading one costs nothing.
+    fn is_peer_refusal(&self, _frame: &[u8]) -> bool {
+        false
+    }
 }
 
 /// A decoded [`ConnectionFraming`] frame.

@@ -141,6 +141,11 @@ pub const COMLINE_ERR_POISONED: comline_status = 22;
 /// calls. Nothing was written and no request id was spent; queueing is the
 /// binding's choice.
 pub const COMLINE_ERR_BUSY: comline_status = 23;
+/// Fed a `jsonrpc@1` error with a `null` id: the peer says it couldn't read a
+/// request of this side's, and not which. Like `COMLINE_ERR_FRAMING` it changes
+/// nothing on the connection, and every call still waits, so the host decides
+/// whether to go on; a peer that can't read one frame usually can't read any.
+pub const COMLINE_ERR_PEER_REFUSED: comline_status = 24;
 
 /// The status for an error the core returned. Only the sans-IO pieces run
 /// here (framings, `State`, `contract::stream`, the handshake frame), and
@@ -155,6 +160,7 @@ fn status_of(error: RuntimeError) -> comline_status {
         RuntimeError::FrameTooLarge => COMLINE_ERR_FRAME_TOO_LARGE,
         RuntimeError::Busy => COMLINE_ERR_BUSY,
         RuntimeError::BufferTooSmall => COMLINE_BUFFER_TOO_SMALL,
+        RuntimeError::PeerRefused => COMLINE_ERR_PEER_REFUSED,
         RuntimeError::Transport
         | RuntimeError::Serialization
         | RuntimeError::Timeout

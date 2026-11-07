@@ -36,6 +36,7 @@ The ops, and what their `input` holds:
 | `envelope` | `kind`: `ok` with `payload`, `err` with `id` and `body`, or `fault` | encode and decode |
 | `request` | `framing`, `call_id`, `method`, `request_id`, `format`, `params`, and `one_way` when `true` | encode and decode |
 | `response` | `framing`, `request_id`, and an envelope's fields | encode and decode |
+| `peer_refusal` | `framing` | decode: `bytes` are the peer saying it couldn't read a request, without saying which |
 | `encode` | `format`, `value`, and `type` when its bounds matter | encode; a rejection's encode must fail |
 | `decode` | `format`, `type`, `value` | decode: `bytes` read as `type` give `value` |
 | `stream_prefix` | `len`, `max` | encode and decode: the 4-byte length prefix of a `len`-byte frame under the limit `max` |
@@ -144,12 +145,12 @@ review as one.
 CONFORMANCE_BLESS=1 cargo test -p comline-runtime-conformance
 ```
 
-## The spec, version 0.8
+## The spec, version 0.9
 
 The case format above (`vectors/*.json`, `profiles/*.json`, the ops, values
 and types) and the ops protocol
 ([`comline-reference`'s README](../reference/README.md#the-protocol)) are a
-public spec, at version **0.8** (`runner::SPEC_VERSION`). Third-party
+public spec, at version **0.9** (`runner::SPEC_VERSION`). Third-party
 encodings ship vectors in this format, and `comline conformance --impl`
 drives their implementations over this protocol. While Comline is in its
 early days (0.x), a minor version may change anything, and the change is
@@ -190,6 +191,10 @@ What an implementation answers, and how its answers are judged:
 
 Changes:
 
+- **0.9:** new op `peer_refusal`: JSON-RPC 2.0's answer to a request a peer
+  can't read, an error whose `id` is `null`, is read as that. It answers no call,
+  so it stays no `response`, and a `null` id on anything else stays refused. It
+  answers `not_implemented` on an implementation without the op.
 - **0.8:** `jsonrpc@1` leaves `params` out of a request without any, where it
   wrote `"params": null`, which JSON-RPC 2.0 doesn't allow. Readers still take
   `null` as none. New cases: `request-no-params`, `notification-no-params`,

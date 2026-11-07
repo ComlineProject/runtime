@@ -246,6 +246,29 @@ fn absent_jsonrpc_bodies_are_flagged() {
     assert_eq!(fed.ev.flags, COMLINE_EVENT_BODY_ABSENT);
 }
 
+/// A peer refusal is its own status, and like a malformed frame it's consumed
+/// and changes nothing: the call still waits, and its reply still reads.
+#[test]
+fn a_peer_refusal_is_told_from_a_malformed_frame() {
+    let mut conn = Conn::new(&Setup::plain("jsonrpc@1")).unwrap();
+    conn.request(0, 0, b"get", true, b"", 128);
+    let refusal = br#"{"jsonrpc":"2.0","error":{"code":-32700,"message":"Parse error"},"id":null}"#;
+    let fed = conn.feed(refusal);
+    assert_eq!((fed.status, fed.consumed), (COMLINE_ERR_PEER_REFUSED, refusal.len()));
+    assert_eq!(conn.is_waiting(), Ok(true));
+
+    let malformed = br#"{"jsonrpc":"2.0","result":1,"id":null}"#;
+    assert_eq!(conn.feed(malformed).status, COMLINE_ERR_FRAMING);
+
+    let fed = conn.feed(br#"{"jsonrpc":"2.0","result":1,"id":0}"#);
+    assert_eq!((fed.status, fed.ev.kind), (COMLINE_OK, COMLINE_EVENT_REPLY));
+    assert_eq!(conn.is_waiting(), Ok(false));
+
+    // A datagram has no such frame.
+    let mut conn = Conn::new(&Setup::plain("datagram@2")).unwrap();
+    assert_eq!(conn.feed(refusal).status, COMLINE_ERR_FRAMING);
+}
+
 #[test]
 fn escaped_names_come_as_written_and_unescape() {
     let mut conn = Conn::new(&Setup::plain("jsonrpc@1")).unwrap();

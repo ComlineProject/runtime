@@ -371,6 +371,7 @@ pub(crate) fn encode(input: &Input) -> Result<Vec<u8>, Outcome> {
         | Input::Envelope(None)
         | Input::Request(Framed::Selector { .. })
         | Input::Response(Framed::Selector { .. })
+        | Input::PeerRefusal(_)
         | Input::StreamSplit(StreamSplit::Limit { .. })
         | Input::Comline2Message(None) => {
             return Err(Outcome::Fail(format!(
@@ -543,6 +544,15 @@ pub(crate) fn decode(input: &Input, bytes: &[u8]) -> Result<Option<serde_json::V
                 decoded["one_way"] = true.into();
             }
             json(decoded)
+        }
+        Input::PeerRefusal(i) => {
+            let framing = framing_of(&i.framing)
+                .ok_or_else(|| Outcome::NotImplemented(format!("framing `{}`", i.framing)))?;
+            if with_framing!(framing, |f| Framing::is_peer_refusal(&f, bytes)) {
+                json(to_json(i))
+            } else {
+                Ok(None)
+            }
         }
         Input::Response(i) => {
             let framing_name = match i {

@@ -394,6 +394,7 @@ const FEED: &[comline_status] = &[
     COMLINE_OK,
     COMLINE_NEED_MORE,
     COMLINE_ERR_FRAMING,
+    COMLINE_ERR_PEER_REFUSED,
     COMLINE_ERR_HANDSHAKE,
     COMLINE_ERR_FRAME_TOO_LARGE,
     COMLINE_ERR_INVALID_ARGUMENT,
@@ -734,7 +735,7 @@ impl Ffi {
 /// These break the rule that nothing allocates after
 /// `comline_connection_new`; they are the core's bugs, not the rule's.
 fn serde_json_allocates(status: comline_status, frame: &[u8]) -> bool {
-    if status == COMLINE_ERR_FRAMING || frame.contains(&b'\\') {
+    if status == COMLINE_ERR_FRAMING || status == COMLINE_ERR_PEER_REFUSED || frame.contains(&b'\\') {
         return true;
     }
     // Without a backslash, a `"` always opens or closes a string.
@@ -1108,6 +1109,10 @@ impl Reference {
             Ok(event) => event,
             Err(RuntimeError::Framing) => {
                 fed.status = COMLINE_ERR_FRAMING;
+                return Ok(fed);
+            }
+            Err(RuntimeError::PeerRefused) => {
+                fed.status = COMLINE_ERR_PEER_REFUSED;
                 return Ok(fed);
             }
             Err(other) => return Err(format!("reference: receive raised {other:?}")),
@@ -1703,7 +1708,9 @@ impl Run {
             self.read = read;
             let fed = fed?;
             let consumed = match fed.status {
-                COMLINE_OK | COMLINE_ERR_FRAMING | COMLINE_ERR_HANDSHAKE => fed.consumed,
+                COMLINE_OK | COMLINE_ERR_FRAMING | COMLINE_ERR_PEER_REFUSED | COMLINE_ERR_HANDSHAKE => {
+                    fed.consumed
+                }
                 _ => 0,
             };
             if consumed == 0 {
@@ -1844,7 +1851,9 @@ impl Run {
             COMLINE_ERR_HANDSHAKE => {
                 ensure!(!self.received, "a handshake error after the handshake")
             }
-            COMLINE_ERR_FRAMING => ensure!(self.received, "a framing error in the handshake"),
+            COMLINE_ERR_FRAMING | COMLINE_ERR_PEER_REFUSED => {
+                ensure!(self.received, "a framing error in the handshake")
+            }
             _ => return Err("a whole frame within max_frame, refused".into()),
         }
         Ok(())

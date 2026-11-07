@@ -112,6 +112,24 @@ fn params_of<'f>(params: Option<&'f RawValue>) -> Option<&'f [u8]> {
     }
 }
 
+/// A JSON-RPC 2.0 error whose `id` is `null`, which is how the specification
+/// has a peer answer a request it couldn't read. No other frame has a `null` id:
+/// a request's is refused, and so is a `result`'s.
+fn is_peer_refusal(frame: &[u8]) -> bool {
+    #[derive(Deserialize)]
+    struct RefusalIn<'a> {
+        #[serde(rename = "jsonrpc")]
+        _version: Version,
+        #[serde(borrow, default)]
+        result: Option<&'a RawValue>,
+        #[serde(borrow, rename = "error")]
+        _error: ErrIn<'a>,
+        #[serde(rename = "id")]
+        _id: (),
+    }
+    parse::<RefusalIn>(frame).is_some_and(|r| r.result.is_none())
+}
+
 /// A response has its `result` or its `error`, never both.
 fn one_outcome(result: Option<&RawValue>, error: Option<&ErrIn<'_>>) -> Option<()> {
     (result.is_none() || error.is_none()).then_some(())
@@ -533,6 +551,10 @@ impl Framing for JsonRpcFraming {
         one_outcome(r.result, r.error.as_ref())?;
         Some((r.id, envelope_of(r.result, r.error)))
     }
+
+    fn is_peer_refusal(&self, frame: &[u8]) -> bool {
+        is_peer_refusal(frame)
+    }
 }
 
 impl ConnectionFraming for JsonRpcFraming {
@@ -623,6 +645,10 @@ impl ConnectionFraming for JsonRpcFraming {
                 }
             }
         })
+    }
+
+    fn is_peer_refusal(&self, frame: &[u8]) -> bool {
+        is_peer_refusal(frame)
     }
 }
 
@@ -1135,6 +1161,45 @@ mod tests {
         assert_eq!(framed(&Some(())), none);
         assert_eq!(framed(&Empty {}), r#"{"jsonrpc":"2.0","method":"m","params":{},"id":1}"#);
         assert_eq!(framed(&[0u8; 0]), r#"{"jsonrpc":"2.0","method":"m","params":[],"id":1}"#);
+    }
+
+    /// An error with a `null` id is the peer refusing, and nothing else is.
+    #[test]
+    fn only_an_error_with_a_null_id_is_a_peer_refusal() {
+        let f = JsonRpcFraming;
+        for frame in [
+            r#"{"jsonrpc":"2.0","error":{"code":-32700,"message":"Parse error"},"id":null}"#,
+            r#"{"id":null,"error":{"code":-32600,"message":"x","data":[1]},"jsonrpc":"2.0"}"#,
+            r#"{"jsonrpc":"2.0","error":{"code":-32700,"message":"x"},"x":1,"id":null}"#,
+            r#"{"jsonrpc":"2.0","result":null,"error":{"code":-32700,"message":"x"},"id":null}"#,
+        ] {
+            assert!(Framing::decode_response(&f, frame.as_bytes()).is_none(), "{frame}");
+            assert!(ConnectionFraming::decode(&f, frame.as_bytes()).is_none(), "{frame}");
+            assert!(Framing::is_peer_refusal(&f, frame.as_bytes()), "{frame}");
+            assert!(ConnectionFraming::is_peer_refusal(&f, frame.as_bytes()), "{frame}");
+        }
+        for frame in [
+            // Not null, or no id at all.
+            r#"{"jsonrpc":"2.0","error":{"code":-32700,"message":"x"},"id":1}"#,
+            r#"{"jsonrpc":"2.0","error":{"code":-32700,"message":"x"}}"#,
+            // Not an error.
+            r#"{"jsonrpc":"2.0","result":1,"id":null}"#,
+            r#"{"jsonrpc":"2.0","error":null,"id":null}"#,
+            r#"{"jsonrpc":"2.0","id":null}"#,
+            r#"{"jsonrpc":"2.0","result":1,"error":{"code":1,"message":"x"},"id":null}"#,
+            // Not JSON-RPC 2.0's error, or its version.
+            r#"{"jsonrpc":"2.0","error":{"code":-32700},"id":null}"#,
+            r#"{"jsonrpc":"1.0","error":{"code":-32700,"message":"x"},"id":null}"#,
+            r#"{"error":{"code":-32700,"message":"x"},"id":null}"#,
+            // Written twice.
+            r#"{"jsonrpc":"2.0","error":{"code":1,"message":"x"},"id":null,"id":null}"#,
+            // A request with a null id.
+            r#"{"jsonrpc":"2.0","method":"m","params":[],"id":null}"#,
+            "",
+            "{",
+        ] {
+            assert!(!Framing::is_peer_refusal(&f, frame.as_bytes()), "{frame}");
+        }
     }
 
     #[test]

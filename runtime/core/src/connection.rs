@@ -221,13 +221,21 @@ impl State {
 
     /// What `frame` means. A malformed frame, or (unless
     /// [`unordered`](Self::unordered)) a reply that skips the innermost
-    /// waiting call, is [`RuntimeError::Framing`].
+    /// waiting call, is [`RuntimeError::Framing`]; the peer saying it couldn't
+    /// read a request is [`RuntimeError::PeerRefused`].
     pub fn receive<'f, F: ConnectionFraming>(
         &mut self,
         framing: &F,
         frame: &'f [u8],
     ) -> Result<Event<'f>, RuntimeError> {
-        match framing.decode(frame).ok_or(RuntimeError::Framing)? {
+        let decoded = framing.decode(frame).ok_or_else(|| {
+            if framing.is_peer_refusal(frame) {
+                RuntimeError::PeerRefused
+            } else {
+                RuntimeError::Framing
+            }
+        })?;
+        match decoded {
             Frame::Request { protocol, request, one_way } => Ok(Event::Request { protocol, request, one_way }),
             Frame::Reply { request_id, envelope, .. } => {
                 if self.unordered {
