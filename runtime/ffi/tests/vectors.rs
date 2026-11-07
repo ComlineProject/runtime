@@ -146,6 +146,7 @@ fn replay(case: &Case) -> Result<Ran, String> {
         (Op::Envelope, _) => envelope_case(case),
         (Op::Request, Some(f @ ("datagram@2" | "jsonrpc@1"))) => request_case(case, leak(f)),
         (Op::Response, Some(f @ ("datagram@2" | "jsonrpc@1"))) => response_case(case, leak(f)),
+        (Op::PeerRefusal, Some(f @ ("datagram@2" | "jsonrpc@1"))) => peer_refusal_case(case, leak(f)),
         _ => Err(format!("no mapping for {:?} on {framing:?}", case.op())),
     }
 }
@@ -459,6 +460,26 @@ fn request_case(case: &Case, framing: &'static str) -> Result<Ran, String> {
     Ok(if patched { Ran::IdPatched } else { Ran::Full })
 }
 
+// ── peer refusal ───────────────────────────────────────────────────────────
+
+/// A refusal has its own status. What isn't one is `COMLINE_ERR_FRAMING`, or an
+/// event of some other kind: it may be a reply, just not a refusal.
+fn peer_refusal_case(case: &Case, framing: &'static str) -> Result<Ran, String> {
+    let mut conn = Conn::new(&Setup::plain(framing)).map_err(|s| format!("new: {s}"))?;
+    let fed = conn.feed(&case.bytes.0);
+    if case.expect == Expect::Reject {
+        check(fed.status != COMLINE_ERR_PEER_REFUSED, || {
+            format!("feed gave {fed:?}")
+        })?;
+    } else {
+        check(
+            fed.status == COMLINE_ERR_PEER_REFUSED && fed.consumed == case.bytes.0.len(),
+            || format!("feed gave {fed:?}"),
+        )?;
+    }
+    Ok(Ran::Full)
+}
+
 // ── response ───────────────────────────────────────────────────────────────
 
 fn response_case(case: &Case, framing: &'static str) -> Result<Ran, String> {
@@ -468,9 +489,11 @@ fn response_case(case: &Case, framing: &'static str) -> Result<Ran, String> {
         let mut conn = Conn::new(&Setup::plain(framing)).map_err(|s| format!("new: {s}"))?;
         let fed = conn.feed(bytes);
         if fed.status != COMLINE_OK {
-            check(fed.status == COMLINE_ERR_FRAMING, || {
-                format!("feed gave {}", fed.status)
-            })?;
+            // A refusal is no response, and has a status of its own.
+            check(
+                fed.status == COMLINE_ERR_FRAMING || fed.status == COMLINE_ERR_PEER_REFUSED,
+                || format!("feed gave {}", fed.status),
+            )?;
             return Ok(Ran::Full);
         }
         check(

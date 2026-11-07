@@ -87,6 +87,7 @@ export const Status = Object.freeze({
   ERR_STATE: 21,
   ERR_POISONED: 22,
   ERR_BUSY: 23,
+  ERR_PEER_REFUSED: 24,
 });
 
 /** `comline_config.handshake`. */

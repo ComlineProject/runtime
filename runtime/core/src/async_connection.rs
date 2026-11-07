@@ -552,7 +552,8 @@ where
     ///
     /// It ends with the error instead when the transport fails to receive
     /// (a frame over its limit is [`RuntimeError::FrameTooLarge`]), or a
-    /// received frame is malformed ([`RuntimeError::Framing`]). A failed
+    /// received frame is malformed ([`RuntimeError::Framing`]) or the peer
+    /// says it couldn't read a request ([`RuntimeError::PeerRefused`]). A failed
     /// send means the peer is gone, as a closed stream does.
     pub async fn run(self) -> Result<(), RuntimeError> {
         let mut driver = Driver {

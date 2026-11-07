@@ -23,6 +23,7 @@ package conformance
 	*close({id!: #CaseId, bytes!: #Hex, compare?: #Compare, expect?: "exact", op!: "request", input!: #RequestInput}) |
 	close({id!: #CaseId, bytes!: #Hex, compare?: #Compare, expect!: "reject", op!: "request", input!: #SelectsFraming}) |
 	close({id!: #CaseId, bytes!: #Hex, compare?: #Compare, expect!: "accept", op!: "request", input!: #RequestInput}) |
+	close({id!: #CaseId, bytes!: #Hex, compare?: #Compare, expect?: #Expect, op!: "peer_refusal", input!: #SelectsFraming}) |
 	*close({id!: #CaseId, bytes!: #Hex, compare?: #Compare, expect?: "exact", op!: "response", input!: #ResponseInput}) |
 	close({id!: #CaseId, bytes!: #Hex, compare?: #Compare, expect!: "reject", op!: "response", input!: #SelectsFraming}) |
 	close({id!: #CaseId, bytes!: #Hex, compare?: #Compare, expect!: "accept", op!: "response", input!: #ResponseInput}) |

@@ -25,7 +25,7 @@ mod seed;
 
 pub use case::{
     hex, Case, Compare, DecodeIn, EncodeIn, Expect, Framed, HandshakeIn, Hex, Input, NameHashIn, Op,
-    Reply, RequestIn, ResponseIn, StreamPrefixIn, StreamSplit, StreamSplitIn,
+    PeerRefusalIn, Reply, RequestIn, ResponseIn, StreamPrefixIn, StreamSplit, StreamSplitIn,
 };
 pub use comline2::{NegotiateIn, NegotiateResult, Step};
 pub use engine::{answer, decode_typed, encode_as, run, Answer};

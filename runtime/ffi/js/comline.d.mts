@@ -31,6 +31,7 @@ export declare const Status: Readonly<{
   ERR_STATE: 21;
   ERR_POISONED: 22;
   ERR_BUSY: 23;
+  ERR_PEER_REFUSED: 24;
 }>;
 export type Status = number;
 

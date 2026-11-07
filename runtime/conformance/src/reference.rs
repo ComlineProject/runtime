@@ -15,7 +15,7 @@ use comline_runtime::format::Json;
 use crate::engine::{decode, encode, encode_with};
 use crate::{
     comline2, decode_typed, Case, Compare, DecodeIn, EncodeIn, Expect, Framed, HandshakeIn, Hex,
-    Input, NameHashIn, Reply, RequestIn, ResponseIn, StreamPrefixIn, StreamSplit, StreamSplitIn,
+    Input, NameHashIn, PeerRefusalIn, Reply, RequestIn, ResponseIn, StreamPrefixIn, StreamSplit, StreamSplitIn,
     Type, Value, Vectors,
 };
 
@@ -389,6 +389,7 @@ pub fn reference_cases() -> Vec<Vectors> {
             "framing-jsonrpc" => {
                 v.cases.extend(found_jsonrpc_cases());
                 v.cases.extend(jsonrpc_unknown_members());
+                v.cases.extend(jsonrpc_peer_refusals());
             }
             "handshake" => v.cases.extend(handshake_check_cases()),
             _ => {}
@@ -1227,6 +1228,71 @@ fn jsonrpc_unknown_members() -> Vec<Case> {
                 Reply::Err { id: 2, body: Hex(br#"{"why":"no"}"#.to_vec()) },
             ),
             br#"{"jsonrpc":"2.0","error":{"code":2,"message":"application error","x":[1],"data":{"why":"no"}},"id":7}"#,
+        ),
+    ]
+}
+
+/// JSON-RPC 2.0 has a peer answer a request it can't read with an error whose
+/// `id` is `null`, which answers no call. It's read as what it is, and is no
+/// `response`; a `null` id on anything else is nothing.
+fn jsonrpc_peer_refusals() -> Vec<Case> {
+    let case = |id: &str, bytes: &[u8], expect| Case {
+        id: format!("framing-jsonrpc/{id}"),
+        input: Input::PeerRefusal(PeerRefusalIn { framing: FRAMING_JSONRPC.into() }),
+        bytes: Hex(bytes.to_vec()),
+        expect,
+        compare: Compare::Bytes,
+    };
+    let not_a_response = |id: &str, bytes: &[u8]| {
+        reject(
+            &format!("framing-jsonrpc/{id}"),
+            Input::Response(Framed::Selector { framing: FRAMING_JSONRPC.into() }),
+            bytes,
+        )
+    };
+    let parse_error = br#"{"jsonrpc":"2.0","error":{"code":-32700,"message":"Parse error"},"id":null}"#;
+    vec![
+        case("peer-refusal-parse-error", parse_error, Expect::Exact),
+        case(
+            "peer-refusal-invalid-request",
+            br#"{"jsonrpc":"2.0","error":{"code":-32600,"message":"Invalid Request","data":{"why":"no"}},"id":null}"#,
+            Expect::Exact,
+        ),
+        not_a_response("reject-response-peer-refusal", parse_error),
+        case(
+            "reject-peer-refusal-of-a-call",
+            br#"{"jsonrpc":"2.0","error":{"code":-32700,"message":"Parse error"},"id":1}"#,
+            Expect::Reject,
+        ),
+        case(
+            "reject-peer-refusal-without-id",
+            br#"{"jsonrpc":"2.0","error":{"code":-32700,"message":"Parse error"}}"#,
+            Expect::Reject,
+        ),
+        case(
+            "reject-peer-refusal-result",
+            br#"{"jsonrpc":"2.0","result":1,"id":null}"#,
+            Expect::Reject,
+        ),
+        case(
+            "reject-peer-refusal-result-and-error",
+            br#"{"jsonrpc":"2.0","result":1,"error":{"code":-32700,"message":"x"},"id":null}"#,
+            Expect::Reject,
+        ),
+        case(
+            "reject-peer-refusal-without-message",
+            br#"{"jsonrpc":"2.0","error":{"code":-32700},"id":null}"#,
+            Expect::Reject,
+        ),
+        case(
+            "reject-peer-refusal-other-version",
+            br#"{"jsonrpc":"1.0","error":{"code":-32700,"message":"x"},"id":null}"#,
+            Expect::Reject,
+        ),
+        case(
+            "reject-peer-refusal-repeated-id",
+            br#"{"jsonrpc":"2.0","error":{"code":-32700,"message":"x"},"id":null,"id":null}"#,
+            Expect::Reject,
         ),
     ]
 }

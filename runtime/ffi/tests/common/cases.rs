@@ -68,6 +68,7 @@ pub fn framing_of(input: &Input) -> Option<&str> {
         Input::Response(Framed::Full(i)) => Some(&i.framing),
         Input::Request(Framed::Selector { framing })
         | Input::Response(Framed::Selector { framing }) => Some(framing),
+        Input::PeerRefusal(i) => Some(&i.framing),
         _ => None,
     }
 }

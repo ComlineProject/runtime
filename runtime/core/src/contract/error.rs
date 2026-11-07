@@ -87,6 +87,12 @@ pub enum RuntimeError {
     /// repeat it: that keeps this type 4 bytes, which the decode paths
     /// need.
     Unavailable,
+    /// The peer says it couldn't read a request of this side's, and not which:
+    /// a JSON-RPC error with a `null` id, as the specification has for a
+    /// request it can't parse. Nothing can say which call that fails, and a
+    /// peer that can't read one frame usually can't read any, so it ends the
+    /// connection as a malformed frame does.
+    PeerRefused,
 }
 
 impl fmt::Display for RuntimeError {
@@ -112,6 +118,7 @@ impl fmt::Display for RuntimeError {
             RuntimeError::BoundExceeded { measure } => {
                 write!(f, "more {} than its type allows", measure.noun())
             }
+            RuntimeError::PeerRefused => f.write_str("the peer could not read a request"),
         }
     }
 }

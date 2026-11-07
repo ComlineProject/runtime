@@ -36,6 +36,7 @@ pub const CORPUS_OPS: &[&str] = &[
     "envelope",
     "request",
     "response",
+    "peer_refusal",
     "encode",
     "decode",
     "stream_prefix",

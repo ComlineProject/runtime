@@ -601,7 +601,8 @@ static enum ran reject_frame(const char *framing, const bytes *frame, int is_req
     fed f = feed(conn, frame);
     comline_connection_free(conn);
     if (f.status != COMLINE_OK) {
-        CHECK(f.status == COMLINE_ERR_FRAMING);
+        /* A refusal is no response, and has a status of its own. */
+        CHECK(f.status == COMLINE_ERR_FRAMING || f.status == COMLINE_ERR_PEER_REFUSED);
         return FULL;
     }
     if (is_request) {

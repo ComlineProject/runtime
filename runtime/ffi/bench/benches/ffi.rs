@@ -99,10 +99,28 @@ fn connection(framing: &str, mode: Mode) -> Conn {
     Conn(conn)
 }
 
+/// `CONNECTION_CALL`'s name, at an address that doesn't depend on the build. The
+/// ABI checks a name is UTF-8, which takes more or fewer instructions by how far
+/// the name starts from an aligned address, so otherwise any change that moves
+/// the binary's constants moves `encode-request` by several percent.
+#[repr(align(8))]
+struct Aligned<const N: usize>([u8; N]);
+
+static CONNECTION_CALL_NAME: Aligned<{ CONNECTION_CALL.1.len() }> = Aligned({
+    let name = CONNECTION_CALL.1.as_bytes();
+    let mut bytes = [0; CONNECTION_CALL.1.len()];
+    let mut i = 0;
+    while i < name.len() {
+        bytes[i] = name[i];
+        i += 1;
+    }
+    bytes
+});
+
 /// Frame a call to `CONNECTION_CALL` with `body`, waiting on a reply, into
 /// `out`; its request id.
 fn abi_request(conn: &Conn, body: &[u8], out: &mut [u8], written: &mut usize) -> u64 {
-    let name = CONNECTION_CALL.1;
+    let name = &CONNECTION_CALL_NAME.0;
     let mut request_id = 0;
     // SAFETY: every pointer is valid for its length, and none overlap.
     let status = unsafe {

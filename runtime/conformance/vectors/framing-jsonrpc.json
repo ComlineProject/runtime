@@ -566,6 +566,94 @@
       },
       "bytes": "7b226a736f6e727063223a22322e30222c226572726f72223a7b22636f6465223a322c226d657373616765223a226170706c69636174696f6e206572726f72222c2278223a5b315d2c2264617461223a7b22776879223a226e6f227d7d2c226964223a377d",
       "expect": "accept"
+    },
+    {
+      "id": "framing-jsonrpc/peer-refusal-parse-error",
+      "op": "peer_refusal",
+      "input": {
+        "framing": "jsonrpc@1"
+      },
+      "bytes": "7b226a736f6e727063223a22322e30222c226572726f72223a7b22636f6465223a2d33323730302c226d657373616765223a225061727365206572726f72227d2c226964223a6e756c6c7d"
+    },
+    {
+      "id": "framing-jsonrpc/peer-refusal-invalid-request",
+      "op": "peer_refusal",
+      "input": {
+        "framing": "jsonrpc@1"
+      },
+      "bytes": "7b226a736f6e727063223a22322e30222c226572726f72223a7b22636f6465223a2d33323630302c226d657373616765223a22496e76616c69642052657175657374222c2264617461223a7b22776879223a226e6f227d7d2c226964223a6e756c6c7d"
+    },
+    {
+      "id": "framing-jsonrpc/reject-response-peer-refusal",
+      "op": "response",
+      "input": {
+        "framing": "jsonrpc@1"
+      },
+      "bytes": "7b226a736f6e727063223a22322e30222c226572726f72223a7b22636f6465223a2d33323730302c226d657373616765223a225061727365206572726f72227d2c226964223a6e756c6c7d",
+      "expect": "reject"
+    },
+    {
+      "id": "framing-jsonrpc/reject-peer-refusal-of-a-call",
+      "op": "peer_refusal",
+      "input": {
+        "framing": "jsonrpc@1"
+      },
+      "bytes": "7b226a736f6e727063223a22322e30222c226572726f72223a7b22636f6465223a2d33323730302c226d657373616765223a225061727365206572726f72227d2c226964223a317d",
+      "expect": "reject"
+    },
+    {
+      "id": "framing-jsonrpc/reject-peer-refusal-without-id",
+      "op": "peer_refusal",
+      "input": {
+        "framing": "jsonrpc@1"
+      },
+      "bytes": "7b226a736f6e727063223a22322e30222c226572726f72223a7b22636f6465223a2d33323730302c226d657373616765223a225061727365206572726f72227d7d",
+      "expect": "reject"
+    },
+    {
+      "id": "framing-jsonrpc/reject-peer-refusal-result",
+      "op": "peer_refusal",
+      "input": {
+        "framing": "jsonrpc@1"
+      },
+      "bytes": "7b226a736f6e727063223a22322e30222c22726573756c74223a312c226964223a6e756c6c7d",
+      "expect": "reject"
+    },
+    {
+      "id": "framing-jsonrpc/reject-peer-refusal-result-and-error",
+      "op": "peer_refusal",
+      "input": {
+        "framing": "jsonrpc@1"
+      },
+      "bytes": "7b226a736f6e727063223a22322e30222c22726573756c74223a312c226572726f72223a7b22636f6465223a2d33323730302c226d657373616765223a2278227d2c226964223a6e756c6c7d",
+      "expect": "reject"
+    },
+    {
+      "id": "framing-jsonrpc/reject-peer-refusal-without-message",
+      "op": "peer_refusal",
+      "input": {
+        "framing": "jsonrpc@1"
+      },
+      "bytes": "7b226a736f6e727063223a22322e30222c226572726f72223a7b22636f6465223a2d33323730307d2c226964223a6e756c6c7d",
+      "expect": "reject"
+    },
+    {
+      "id": "framing-jsonrpc/reject-peer-refusal-other-version",
+      "op": "peer_refusal",
+      "input": {
+        "framing": "jsonrpc@1"
+      },
+      "bytes": "7b226a736f6e727063223a22312e30222c226572726f72223a7b22636f6465223a2d33323730302c226d657373616765223a2278227d2c226964223a6e756c6c7d",
+      "expect": "reject"
+    },
+    {
+      "id": "framing-jsonrpc/reject-peer-refusal-repeated-id",
+      "op": "peer_refusal",
+      "input": {
+        "framing": "jsonrpc@1"
+      },
+      "bytes": "7b226a736f6e727063223a22322e30222c226572726f72223a7b22636f6465223a2d33323730302c226d657373616765223a2278227d2c226964223a6e756c6c2c226964223a6e756c6c7d",
+      "expect": "reject"
     }
   ]
 }

@@ -228,3 +228,20 @@ fn the_fault_bytes_on_the_wire_are_standard_json_rpc() {
 
     provider.join().unwrap();
 }
+
+/// One call at a time, so a peer refusing is refusing it.
+#[test]
+fn a_client_call_fails_when_the_peer_refuses_it() {
+    let (client_side, mut peer) = duplex();
+    let answer = thread::spawn(move || {
+        let mut frame = Vec::new();
+        peer.recv(&mut frame).unwrap();
+        peer.send(br#"{"jsonrpc":"2.0","error":{"code":-32600,"message":"Invalid Request"},"id":null}"#)
+            .unwrap();
+        peer
+    });
+    let mut client = Client::with_framing_unverified(client_side, Json, JsonRpcFraming);
+    let called = client.call(Call::new(0, "hello"), &()).map(|_| ());
+    assert_eq!(called, Err(RuntimeError::PeerRefused));
+    answer.join().unwrap();
+}

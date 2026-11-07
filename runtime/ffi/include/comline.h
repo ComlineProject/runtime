@@ -369,6 +369,14 @@ typedef struct comline_handshake {
  */
 #define COMLINE_ERR_BUSY 23
 
+/*
+ Fed a `jsonrpc@1` error with a `null` id: the peer says it couldn't read a
+ request of this side's, and not which. Like `COMLINE_ERR_FRAMING` it changes
+ nothing on the connection, and every call still waits, so the host decides
+ whether to go on; a peer that can't read one frame usually can't read any.
+ */
+#define COMLINE_ERR_PEER_REFUSED 24
+
 #ifdef __cplusplus
 extern "C" {
 #endif // __cplusplus

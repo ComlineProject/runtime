@@ -160,7 +160,13 @@ impl<T: Transport, W: WireFormat, F: Framing> Client<T, W, F> {
         let (echoed, envelope) = self
             .framing
             .decode_response(&self.response)
-            .ok_or(RuntimeError::Framing)?;
+            .ok_or_else(|| {
+                if self.framing.is_peer_refusal(&self.response) {
+                    RuntimeError::PeerRefused
+                } else {
+                    RuntimeError::Framing
+                }
+            })?;
         if echoed != request_id {
             // One outstanding call at a time, so a mismatched id is a stale or
             // corrupt frame, not reordering.
