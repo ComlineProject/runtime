@@ -1327,6 +1327,8 @@ pub unsafe extern "C" fn comline_connection_start(
 }
 
 /// [`comline_connection_start`] on a `comline@2` connection.
+#[cold]
+#[inline(never)]
 fn start_comline2(
     conn: &mut comline_connection,
     out: &mut [u8],
@@ -1353,7 +1355,10 @@ fn start_comline2(
     COMLINE_OK
 }
 
-/// [`feed`]'s frame while a `comline@2` handshake isn't finished.
+/// [`feed`]'s frame while a `comline@2` handshake isn't finished. Out of line,
+/// so a handshake that runs once costs [`feed`]'s every frame nothing.
+#[cold]
+#[inline(never)]
 fn feed_comline2(
     conn: &mut comline_connection,
     frame: &[u8],
