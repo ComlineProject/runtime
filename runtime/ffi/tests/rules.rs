@@ -231,8 +231,8 @@ fn absent_jsonrpc_bodies_are_flagged() {
     assert_eq!(fed.ev.body, comline_span::default());
 
     conn.request(0, 0, b"get", true, b"", 128);
-    // The framing reads a `null` member as absent (serde's `Option`), so a
-    // literal `null` is flagged too; either way the codec reads `null`.
+    // A literal `null` is flagged like an absent body; either way the codec
+    // reads `null`.
     let fed = conn.feed(br#"{"jsonrpc":"2.0","id":0,"result":null}"#);
     assert_eq!(fed.ev.kind, COMLINE_EVENT_REPLY);
     assert_eq!(fed.ev.flags, COMLINE_EVENT_BODY_ABSENT);
@@ -241,9 +241,9 @@ fn absent_jsonrpc_bodies_are_flagged() {
     assert_eq!(fed.ev.kind, COMLINE_EVENT_REPLY);
     assert_eq!(fed.ev.flags, 0);
     conn.request(0, 0, b"get", true, b"", 128);
+    // But a reply needs its `result` or `error`, so with neither it's no reply.
     let fed = conn.feed(br#"{"jsonrpc":"2.0","id":2}"#);
-    assert_eq!(fed.ev.kind, COMLINE_EVENT_REPLY);
-    assert_eq!(fed.ev.flags, COMLINE_EVENT_BODY_ABSENT);
+    assert_eq!(fed.status, COMLINE_ERR_FRAMING);
 }
 
 /// A peer refusal is its own status, and like a malformed frame it's consumed

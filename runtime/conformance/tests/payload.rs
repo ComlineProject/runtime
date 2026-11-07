@@ -14,6 +14,9 @@
 //!   members are JSON-RPC's to carry, but it can't change what the frame calls
 //!   or answers.
 //!
+//! - **`directions: both`:** whatever the payload, a request is never read as a
+//!   response, nor a response as a request.
+//!
 //! A run is short by default; `PROPTEST_CASES` raises the count per property
 //! (the nightly job sets 100000).
 
@@ -92,6 +95,14 @@ fn jsonrpc_error_data(payload: &[u8]) -> Vec<u8> {
     frame
 }
 
+fn is_request(frame: Option<Frame>) -> bool {
+    matches!(frame, Some(Frame::Request { .. }))
+}
+
+fn is_reply(frame: Option<Frame>) -> bool {
+    matches!(frame, Some(Frame::Reply { .. }))
+}
+
 fn config() -> ProptestConfig {
     let mut config = ProptestConfig::default();
     if std::env::var_os("PROPTEST_CASES").is_none() {
@@ -137,6 +148,36 @@ proptest! {
             }
             other => prop_assert!(false, "datagram@3 read {:?}", other),
         }
+    }
+
+    #[test]
+    fn datagrams_on_a_connection_say_which_way_a_frame_goes(payload in prop::collection::vec(any::<u8>(), 0..64)) {
+        let mut request = Vec::new();
+        Datagram2Framing.encode_request_body(1, CALL, METHOD, ID, false, &payload, &mut request);
+        prop_assert!(is_request(Datagram2Framing.decode(&request)));
+        let mut reply = Vec::new();
+        Datagram2Framing.encode_reply(1, ID, &Envelope::Ok(&payload), &mut reply);
+        prop_assert!(is_reply(Datagram2Framing.decode(&reply)));
+
+        let mut request = Vec::new();
+        Datagram3Framing.encode_request_body(1, CALL, METHOD, ID, false, &payload, &mut request);
+        prop_assert!(is_request(Datagram3Framing.decode(&request)));
+        let mut reply = Vec::new();
+        Datagram3Framing.encode_reply(1, ID, &Envelope::Ok(&payload), &mut reply);
+        prop_assert!(is_reply(Datagram3Framing.decode(&reply)));
+    }
+
+    #[test]
+    fn jsonrpc_says_which_way_a_frame_goes(value in json_value()) {
+        let payload = value.to_string();
+        if value.is_array() || value.is_object() || value.is_null() {
+            let frame = jsonrpc_request(payload.as_bytes());
+            prop_assert_eq!(Framing::decode_response(&JsonRpcFraming, &frame), None);
+            prop_assert!(is_request(ConnectionFraming::decode(&JsonRpcFraming, &frame)));
+        }
+        let frame = jsonrpc_result(payload.as_bytes());
+        prop_assert!(Framing::decode_request(&JsonRpcFraming, &frame).is_none());
+        prop_assert!(is_reply(ConnectionFraming::decode(&JsonRpcFraming, &frame)));
     }
 
     #[test]

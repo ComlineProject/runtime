@@ -368,6 +368,8 @@ pub fn reference_cases() -> Vec<Vectors> {
 
     for v in &mut vectors {
         v.cases.extend(rejections(&v.feature));
+        let read_the_other_way = directions(&v.feature, &v.cases);
+        v.cases.extend(read_the_other_way);
         if let Some(format) = match v.feature.as_str() {
             "format-json" => Some(FORMAT_JSON),
             "format-msgpack" => Some(FORMAT_MSGPACK),
@@ -1145,6 +1147,54 @@ fn found_jsonrpc_cases() -> Vec<Case> {
     ]
 }
 
+/// A framing's own frames read the other way, which `directions` is proven by.
+/// `datagram@1`'s don't say which way they go: its request has a response's
+/// shape, so it reads as one. The others' say, so each is refused as the other.
+fn directions(feature: &str, cases: &[Case]) -> Vec<Case> {
+    let framing = match feature {
+        "framing-datagram" => FRAMING_DATAGRAM,
+        "framing-datagram2" => FRAMING_DATAGRAM2,
+        "framing-datagram3" => FRAMING_DATAGRAM3,
+        "framing-jsonrpc" => FRAMING_JSONRPC,
+        _ => return vec![],
+    };
+    let p = |id: &str| format!("{feature}/{id}");
+    let bytes_of = |id: &str| {
+        let id = p(id);
+        let case = cases.iter().find(|c| c.id == id).expect("the framing's frame");
+        case.bytes.0.clone()
+    };
+    let (request_frame, response_frame) = (bytes_of("request"), bytes_of("response-ok"));
+    if framing == FRAMING_DATAGRAM {
+        let (head, rest) = request_frame.split_at(8);
+        let request_id = u64::from_le_bytes(head.try_into().expect("eight bytes"));
+        let Some((&0, payload)) = rest.split_first() else {
+            panic!("a request that doesn't read as an `ok`");
+        };
+        let (id, input) = response(p("accept-request-as-response"), framing, request_id, ok(payload));
+        return vec![Case {
+            id,
+            input,
+            bytes: Hex(request_frame),
+            expect: Expect::Accept,
+            compare: Compare::Bytes,
+        }];
+    }
+    let framing = || framing.to_string();
+    vec![
+        reject(
+            &p("reject-response-as-request"),
+            Input::Request(Framed::Selector { framing: framing() }),
+            &response_frame,
+        ),
+        reject(
+            &p("reject-request-as-response"),
+            Input::Response(Framed::Selector { framing: framing() }),
+            &request_frame,
+        ),
+    ]
+}
+
 /// `"params": null`, which this framing no longer writes: JSON-RPC 2.0 doesn't
 /// allow it, but peers send it, and it can only mean none.
 fn accept_params_null() -> Case {
@@ -1751,6 +1801,11 @@ fn rejections(feature: &str) -> Vec<Case> {
                 "framing-jsonrpc/found-reject-response-invalid-utf8-in-jsonrpc",
                 response_for(FRAMING_JSONRPC),
                 b"{\"jsonrpc\":\"2.\xff\",\"result\":1,\"id\":1}",
+            ),
+            reject(
+                "framing-jsonrpc/reject-response-no-outcome",
+                response_for(FRAMING_JSONRPC),
+                br#"{"jsonrpc":"2.0","id":1}"#,
             ),
             reject(
                 "framing-jsonrpc/found-reject-response-invalid-utf8-in-unknown-member",

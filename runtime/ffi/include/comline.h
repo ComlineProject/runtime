@@ -104,9 +104,9 @@
 #define COMLINE_EVENT_CALL_BY_NAME (1 << 2)
 
 /*
- `comline_event.flags`: the frame has no body: JSON-RPC `params`,
- `result` or `error.data` absent, or `null` (the framing can't tell the
- two apart). `body` is empty, and a JSON codec reads it as `null`.
+ `comline_event.flags`: the frame has no body: JSON-RPC `params` or
+ `error.data` absent, or `params`, `result` or `error.data` `null`. `body` is
+ empty, and a JSON codec reads it as `null`.
  */
 #define COMLINE_EVENT_BODY_ABSENT (1 << 3)
 

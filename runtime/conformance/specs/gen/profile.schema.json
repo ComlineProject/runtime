@@ -243,6 +243,25 @@
                                 "value"
                             ]
                         },
+                        "directions": {
+                            "type": "object",
+                            "additionalProperties": false,
+                            "properties": {
+                                "proven_by": {
+                                    "$ref": "#/$defs/ProvenBy"
+                                },
+                                "value": {
+                                    "enum": [
+                                        "both",
+                                        "one"
+                                    ]
+                                }
+                            },
+                            "required": [
+                                "proven_by",
+                                "value"
+                            ]
+                        },
                         "errors": {
                             "type": "object",
                             "additionalProperties": false,
@@ -284,6 +303,7 @@
                     },
                     "required": [
                         "calls",
+                        "directions",
                         "errors",
                         "payload"
                     ]

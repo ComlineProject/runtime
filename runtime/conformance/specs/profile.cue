@@ -27,6 +27,7 @@ package conformance
 	kind!:    "framing"
 	facts!: close({
 		calls!:  close({value!: "by_index" | "by_name" | "by_id", proven_by!: #ProvenBy})
+		directions!: close({value!: "both" | "one", proven_by!: #ProvenBy})
 		errors!: close({value!: "by_ordinal" | "by_name", proven_by!: #ProvenBy})
 		payload!: close({value!: "opaque" | "json", proven_by!: #ProvenBy})
 	})

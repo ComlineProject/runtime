@@ -75,6 +75,7 @@ impl Facts {
             ],
             Facts::Framing(f) => vec![
                 of(Fact::Calls, &f.calls),
+                of(Fact::Directions, &f.directions),
                 of(Fact::Errors, &f.errors),
                 of(Fact::Payload, &f.payload),
             ],
@@ -142,6 +143,7 @@ pub struct FormatFacts {
 #[serde(deny_unknown_fields)]
 pub struct FramingFacts {
     pub calls: Stated<Calls>,
+    pub directions: Stated<Directions>,
     pub errors: Stated<Errors>,
     pub payload: Stated<Payload>,
 }
@@ -191,6 +193,7 @@ fact_values! {
     UnknownVariant { Rejected = "rejected", Tolerated = "tolerated" }
     IntegerWidth { ByValue = "by_value", Exact = "exact" }
     Calls { ByIndex = "by_index", ByName = "by_name", ById = "by_id" }
+    Directions { Both = "both", One = "one" }
     Errors { ByOrdinal = "by_ordinal", ByName = "by_name" }
     Output { Bytes = "bytes", Json = "json" }
     Payload { Opaque = "opaque", Json = "json" }
@@ -235,6 +238,7 @@ pub enum Fact {
     UnknownVariant(UnknownVariant),
     IntegerWidth(IntegerWidth),
     Calls(Calls),
+    Directions(Directions),
     Errors(Errors),
     Output(Output),
     Payload(Payload),
@@ -252,6 +256,7 @@ impl Fact {
             Fact::UnknownVariant(_) => "unknown_variant",
             Fact::IntegerWidth(_) => "integer_width",
             Fact::Calls(_) => "calls",
+            Fact::Directions(_) => "directions",
             Fact::Errors(_) => "errors",
             Fact::Output(_) => "output",
             Fact::Payload(_) => "payload",
@@ -270,6 +275,7 @@ impl Fact {
             Fact::UnknownVariant(v) => v.as_str(),
             Fact::IntegerWidth(v) => v.as_str(),
             Fact::Calls(v) => v.as_str(),
+            Fact::Directions(v) => v.as_str(),
             Fact::Errors(v) => v.as_str(),
             Fact::Output(v) => v.as_str(),
             Fact::Payload(v) => v.as_str(),
@@ -333,6 +339,7 @@ fn decoding_fact_shown(fact: Fact, first: &Case, cases: &[&Case]) -> bool {
             cases.len() == 2 && cases.iter().all(|c| c.expect == Expect::Reject)
         }
         Fact::Calls(calls) => calls_shown(calls, cases),
+        Fact::Directions(directions) => directions_shown(directions, cases),
         Fact::Errors(_) => cases.iter().any(|c| carries_error(c)),
         Fact::Output(output) => output_shown(output, cases),
         Fact::Payload(Payload::Opaque) => cases.iter().any(|c| carries_non_json(c)),
@@ -357,6 +364,33 @@ fn calls_shown(calls: Calls, cases: &[&Case]) -> bool {
         }
         _ => false,
     })
+}
+
+/// `directions` is shown by real frames read the other way. For `both`, the
+/// bytes of an exact request are refused as a response, and those of an exact
+/// response as a request, so calls can go both ways on one transport. For `one`,
+/// such bytes are accepted as the other, so a frame doesn't say which it is.
+fn directions_shown(directions: Directions, cases: &[&Case]) -> bool {
+    let read_as_other = |expect: Expect, op: Op| {
+        cases.iter().any(|read| {
+            read.expect == expect
+                && read.op() == op
+                && cases.iter().any(|frame| {
+                    frame.expect == Expect::Exact
+                        && matches!(frame.op(), Op::Request | Op::Response)
+                        && frame.op() != op
+                        && frame.bytes == read.bytes
+                })
+        })
+    };
+    match directions {
+        Directions::Both => {
+            read_as_other(Expect::Reject, Op::Request) && read_as_other(Expect::Reject, Op::Response)
+        }
+        Directions::One => {
+            read_as_other(Expect::Accept, Op::Request) || read_as_other(Expect::Accept, Op::Response)
+        }
+    }
 }
 
 /// A case that shows how a framing carries an error: an exact error response.
@@ -484,25 +518,27 @@ mod tests {
         let by_id = json!({ "value": "by_id", "proven_by": ["a/b"] });
         let by_name = json!({ "value": "by_name", "proven_by": ["a/c"] });
         let opaque = json!({ "value": "opaque", "proven_by": ["a/d"] });
+        let both = json!({ "value": "both", "proven_by": ["a/e"] });
         let read = profile(
             "framing",
-            json!({ "calls": by_id, "errors": by_name, "payload": opaque }),
+            json!({ "calls": by_id, "directions": both, "errors": by_name, "payload": opaque }),
         )
         .unwrap();
         assert_eq!(read.kind(), ProfileKind::Framing);
         let stated = read.facts.stated();
         assert_eq!(stated[0].0, Fact::Calls(Calls::ById));
+        assert_eq!(stated[1].0, Fact::Directions(Directions::Both));
         assert_eq!(
-            (stated[1].0.name(), stated[1].0.value()),
+            (stated[2].0.name(), stated[2].0.value()),
             ("errors", "by_name")
         );
-        assert_eq!(stated[2].0, Fact::Payload(Payload::Opaque));
+        assert_eq!(stated[3].0, Fact::Payload(Payload::Opaque));
 
         // A fact missing, an unknown fact, an unknown value.
-        assert!(profile("framing", json!({ "calls": by_id, "errors": by_name })).is_err());
-        let more = json!({ "calls": by_id, "errors": by_name, "payload": opaque, "more": by_name });
+        assert!(profile("framing", json!({ "calls": by_id, "errors": by_name, "payload": opaque })).is_err());
+        let more = json!({ "calls": by_id, "directions": both, "errors": by_name, "payload": opaque, "more": by_name });
         assert!(profile("framing", more).is_err());
-        let wrong = json!({ "calls": { "value": "by_ordinal" }, "errors": by_name, "payload": opaque });
+        let wrong = json!({ "calls": { "value": "by_ordinal" }, "directions": both, "errors": by_name, "payload": opaque });
         assert!(profile("framing", wrong).is_err());
     }
 
@@ -558,6 +594,43 @@ mod tests {
         assert!(fact_shown(errors, &[&case(err, &[1], Expect::Exact)]).is_ok());
         let fault = reply(json!({ "kind": "fault" }));
         assert!(fact_shown(errors, &[&case(fault, &[2], Expect::Exact)]).is_err());
+    }
+
+    #[test]
+    fn directions_are_shown_by_frames_read_the_other_way() {
+        let case = |op, input, bytes: &[u8], expect| Case {
+            id: "a/b".into(),
+            input: Input::parse(op, &input).unwrap(),
+            bytes: crate::Hex(bytes.to_vec()),
+            expect,
+            compare: crate::Compare::Bytes,
+        };
+        let params = json!({ "unit": null });
+        let request = json!({
+            "framing": "f", "call_id": 1, "method": "m", "request_id": "1",
+            "format": "json@1", "params": params,
+        });
+        let response = json!({ "framing": "f", "request_id": "1", "kind": "fault" });
+        let selector = json!({ "framing": "f" });
+        let sent = case(Op::Request, request, b"q", Expect::Exact);
+        let answered = case(Op::Response, response, b"r", Expect::Exact);
+        let read = |op, bytes: &[u8], expect| case(op, selector.clone(), bytes, expect);
+        let shown = |fact, cases: &[&Case]| fact_shown(Fact::Directions(fact), cases).is_ok();
+
+        let not_a_request = read(Op::Request, b"r", Expect::Reject);
+        let not_a_response = read(Op::Response, b"q", Expect::Reject);
+        let both = [&sent, &answered, &not_a_request, &not_a_response];
+        assert!(shown(Directions::Both, &both));
+        assert!(!shown(Directions::One, &both));
+        // One way refused leaves the other unshown, and so do bytes no real
+        // frame has, which any framing would refuse.
+        assert!(!shown(Directions::Both, &[&sent, &answered, &not_a_request]));
+        let nonsense = read(Op::Response, b"x", Expect::Reject);
+        assert!(!shown(Directions::Both, &[&sent, &answered, &not_a_request, &nonsense]));
+
+        let reads_as_response = read(Op::Response, b"q", Expect::Accept);
+        assert!(shown(Directions::One, &[&sent, &reads_as_response]));
+        assert!(!shown(Directions::Both, &[&sent, &reads_as_response]));
     }
 
     #[test]
