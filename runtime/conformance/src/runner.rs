@@ -44,7 +44,7 @@ use crate::{Outcome, Profile, Vectors};
 /// early days: a minor bump may change anything, and says so in the
 /// changelog. The ops protocol also carries its own number (`protocol` in
 /// the `version` reply, [`OPS_PROTOCOL`]).
-pub const SPEC_VERSION: &str = "0.7";
+pub const SPEC_VERSION: &str = "0.8";
 
 /// The ops protocol's number, as a `version` reply states it. Ops and reply
 /// fields are only ever added under it.

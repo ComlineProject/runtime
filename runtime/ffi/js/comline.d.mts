@@ -165,7 +165,8 @@ export type EncodeBoundArgs = {
 /** The most bytes an encode can write (`*written`, a stream's prefix
  * included), to size `cap` so it never retries: never smaller than what
  * the ABI writes, and exactly that when every field the frame holds is
- * given. Pure; needs no instance. */
+ * given (but for params that are `null`, which `jsonrpc@1` leaves out and this
+ * counts). Pure; needs no instance. */
 export declare function encodeBound(args: EncodeBoundArgs): number;
 
 export declare class Comline {

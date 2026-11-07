@@ -403,7 +403,10 @@ function caseRequest(how, f) {
   // else at 0, for which the export's bytes are.
   withConn(plain(framing), (conn) => {
     spendIds(conn, drive);
-    const request = { framing, kind: "request", bodyLen: params.length };
+    // `null` params are left out, which `encodeBound` can't see from a length:
+    // it's exact when told there are none.
+    const none = new TextDecoder().decode(params) === "null";
+    const request = { framing, kind: "request", bodyLen: none ? 0 : params.length };
     const encoded = sizedEncode(
       encodeBound({
         ...request, protocol, name: method, expectsReply: !oneWay, requestId: drive,
@@ -442,7 +445,15 @@ function caseRequest(how, f) {
     () => `feed gave ${JSON.stringify(fed, big)}`,
   );
   sameBytes(at(input, ev.frame), input, "frame");
-  sameBytes(at(input, ev.body), params, "params");
+  if (new TextDecoder().decode(params) === "null") {
+    // Params that say nothing are left out of the frame.
+    check(
+      (ev.flags & EventFlag.BODY_ABSENT) !== 0 && ev.body.len === 0,
+      () => `feed gave ${JSON.stringify(fed, big)}`,
+    );
+  } else {
+    sameBytes(at(input, ev.body), params, "params");
+  }
   if (datagram2) {
     check(
       (ev.flags & EventFlag.HAS_PROTOCOL) !== 0 &&

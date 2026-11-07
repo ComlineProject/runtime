@@ -144,12 +144,12 @@ review as one.
 CONFORMANCE_BLESS=1 cargo test -p comline-runtime-conformance
 ```
 
-## The spec, version 0.7
+## The spec, version 0.8
 
 The case format above (`vectors/*.json`, `profiles/*.json`, the ops, values
 and types) and the ops protocol
 ([`comline-reference`'s README](../reference/README.md#the-protocol)) are a
-public spec, at version **0.7** (`runner::SPEC_VERSION`). Third-party
+public spec, at version **0.8** (`runner::SPEC_VERSION`). Third-party
 encodings ship vectors in this format, and `comline conformance --impl`
 drives their implementations over this protocol. While Comline is in its
 early days (0.x), a minor version may change anything, and the change is
@@ -190,6 +190,10 @@ What an implementation answers, and how its answers are judged:
 
 Changes:
 
+- **0.8:** `jsonrpc@1` leaves `params` out of a request without any, where it
+  wrote `"params": null`, which JSON-RPC 2.0 doesn't allow. Readers still take
+  `null` as none. New cases: `request-no-params`, `notification-no-params`,
+  `accept-request-params-null`.
 - **0.7:** a framing states `payload` (`opaque` or `json`) and a format states
   `output` (`bytes` or `json`), and a profile without them is refused. New
   `"expect": "accept"`. New cases on `jsonrpc@1`: a member written twice is
@@ -292,7 +296,7 @@ writes. A framing takes a format when its `payload` is `opaque` (it carries the
 bytes as they are) or the two name the same grammar (`jsonrpc@1`'s is `json`).
 Tools decide by these two facts alone, so a third-party encoding is held to the
 same rule as an official one. `json` also bounds a request's params to what
-JSON-RPC 2.0 allows: an array or an object, or `null` for none. Neither is
+JSON-RPC 2.0 allows: an array or an object, with `params` left out for none. Neither is
 enforced on the wire: a runtime refuses what it can't read, and refusing a pair
 that can't work is up to tools that know both, such as a schema compiler.
 

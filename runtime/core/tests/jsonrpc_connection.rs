@@ -180,7 +180,7 @@ fn a_notification_gets_no_reply() {
 
     let mut frame = Vec::new();
     raw.recv(&mut frame).unwrap();
-    assert_eq!(text(&frame), r#"{"jsonrpc":"2.0","method":"app.Events/ping","params":null}"#);
+    assert_eq!(text(&frame), r#"{"jsonrpc":"2.0","method":"app.Events/ping"}"#);
 
     // `count` returns a value, but asked without an id it answers nothing:
     // the next frame back is the reply to the call after it.

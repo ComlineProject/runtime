@@ -672,7 +672,15 @@ static enum ran case_request(const line *l) {
         goto out;
     }
     if (!span_is(&input, f.ev.frame, input.p, input.n)) goto out;
-    if (!span_is(&input, f.ev.body, params.p, params.n)) goto out;
+    /* Params that say nothing are left out of the frame. */
+    if (params.n == 4 && memcmp(params.p, "null", 4) == 0) {
+        if (!(f.ev.flags & COMLINE_EVENT_BODY_ABSENT) || f.ev.body.len != 0) {
+            fprintf(stderr, "%s: params `null` read with flags %#x\n", case_id, (unsigned)f.ev.flags);
+            goto out;
+        }
+    } else if (!span_is(&input, f.ev.body, params.p, params.n)) {
+        goto out;
+    }
     if (datagram2) {
         if (!(f.ev.flags & COMLINE_EVENT_HAS_PROTOCOL) || (f.ev.flags & COMLINE_EVENT_CALL_BY_NAME) ||
             f.ev.protocol != protocol || f.ev.call_id != call_id) {

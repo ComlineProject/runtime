@@ -209,7 +209,7 @@ impl Payload {
 
     /// Whether this framing can carry `params`, a request's encoded params.
     /// JSON-RPC 2.0 has them be an array or an object when given at all;
-    /// `null` is what `jsonrpc@1` writes for none, as it does for empty ones.
+    /// `null`, like nothing at all, is none, which `jsonrpc@1` leaves out.
     pub fn carries_params(self, params: &[u8]) -> bool {
         match self {
             Payload::Opaque => true,

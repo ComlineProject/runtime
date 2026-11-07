@@ -131,6 +131,39 @@
       "compare": "json"
     },
     {
+      "id": "framing-jsonrpc/request-no-params",
+      "op": "request",
+      "input": {
+        "call_id": 0,
+        "format": "json@1",
+        "framing": "jsonrpc@1",
+        "method": "ping",
+        "params": {
+          "unit": null
+        },
+        "request_id": "8"
+      },
+      "bytes": "7b226a736f6e727063223a22322e30222c226d6574686f64223a2270696e67222c226964223a387d",
+      "compare": "json"
+    },
+    {
+      "id": "framing-jsonrpc/notification-no-params",
+      "op": "request",
+      "input": {
+        "call_id": 0,
+        "format": "json@1",
+        "framing": "jsonrpc@1",
+        "method": "ping",
+        "one_way": true,
+        "params": {
+          "unit": null
+        },
+        "request_id": "0"
+      },
+      "bytes": "7b226a736f6e727063223a22322e30222c226d6574686f64223a2270696e67227d",
+      "compare": "json"
+    },
+    {
       "id": "framing-jsonrpc/found-request-method-needs-escapes",
       "op": "request",
       "input": {
@@ -239,6 +272,22 @@
       },
       "bytes": "7b22726573756c74223a312c226964223a317d",
       "expect": "reject"
+    },
+    {
+      "id": "framing-jsonrpc/accept-request-params-null",
+      "op": "request",
+      "input": {
+        "call_id": 0,
+        "format": "json@1",
+        "framing": "jsonrpc@1",
+        "method": "ping",
+        "params": {
+          "unit": null
+        },
+        "request_id": "8"
+      },
+      "bytes": "7b226a736f6e727063223a22322e30222c226d6574686f64223a2270696e67222c22706172616d73223a6e756c6c2c226964223a387d",
+      "expect": "accept"
     },
     {
       "id": "framing-jsonrpc/reject-request-repeated-jsonrpc",

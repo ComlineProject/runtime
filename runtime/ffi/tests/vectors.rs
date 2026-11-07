@@ -430,7 +430,12 @@ fn request_case(case: &Case, framing: &'static str) -> Result<Ran, String> {
             && at(bytes, fed.ev.frame) == bytes.as_slice()
             && fed.ev.request_id == request_id
             && (fed.ev.flags & COMLINE_EVENT_ONE_WAY != 0) == one_way
-            && at(bytes, fed.ev.body) == params.as_slice(),
+            && if params == b"null" {
+                // Params that say nothing are left out of the frame.
+                fed.ev.flags & COMLINE_EVENT_BODY_ABSENT != 0 && fed.ev.body.len == 0
+            } else {
+                at(bytes, fed.ev.body) == params.as_slice()
+            },
         || format!("feed gave {fed:?}"),
     )?;
     match framing {

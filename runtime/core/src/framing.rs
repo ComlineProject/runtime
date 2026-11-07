@@ -23,7 +23,8 @@ use crate::contract::{
 /// frame a peer refuses or, if it's still JSON (`[],"x":1`), one where what
 /// follows the first value is read as other members and lost.
 ///
-/// Request:  `{"jsonrpc":"2.0","method":<name>,"params":<params>,"id":<n>}`
+/// Request:  `{"jsonrpc":"2.0","method":<name>,"params":<params>,"id":<n>}`,
+///           without `params` when there are none
 /// Response: `{"jsonrpc":"2.0","result":<r>,"id":<n>}` or
 ///           `{"jsonrpc":"2.0","error":{"code":<ordinal>,"message":...,"data":<body>},"id":<n>}`
 ///
@@ -100,8 +101,9 @@ fn request_id<'de, D: serde::Deserializer<'de>>(d: D) -> Result<Option<u64>, D::
 }
 
 /// A request's params, which JSON-RPC 2.0 has be an array or an object
-/// when given at all. `null` is what this framing writes for none, so it's
-/// read as none.
+/// when given at all. `null` isn't that, and this framing leaves `params` out
+/// for none, but it's read as none: it wrote `null` before spec 0.8, and other
+/// peers do.
 fn params_of<'f>(params: Option<&'f RawValue>) -> Option<&'f [u8]> {
     match params.map(RawValue::get) {
         None => Some(b"null"),
@@ -150,8 +152,8 @@ fn method_of(method: &RawValue) -> Option<MethodName<'_>> {
     MethodName::from_json(text)
 }
 
-/// Writes `{"jsonrpc":"2.0","method":<name>,"params":`, with the name a
-/// JSON string escaped as serde_json escapes one: `"` and `\` by backslash,
+/// Writes `{"jsonrpc":"2.0","method":<name>`, up to the name's closing quote,
+/// which comes with what follows it, with the name a JSON string escaped as serde_json escapes one: `"` and `\` by backslash,
 /// control characters as `\b`, `\f`, `\n`, `\r`, `\t` or `\u00XX`, and
 /// nothing else. A generated name needs no escape, and goes out in one slice.
 fn put_method(name: &str, out: &mut dyn BufMut) {
@@ -187,7 +189,6 @@ fn put_method(name: &str, out: &mut dyn BufMut) {
         start = i + 1;
     }
     out.put_slice(&bytes[start..]);
-    out.put_slice(br#"","params":"#);
 }
 
 /// Writes `n` in decimal, as `u64`'s `Display` writes it, from a buffer on
@@ -207,30 +208,237 @@ fn put_u64(n: u64, out: &mut dyn BufMut) {
     out.put_slice(&digits[start..]);
 }
 
-/// Writes a request: the method, the params `params` writes, and the `id`,
-/// which a notification (`request_id` `None`) goes without. Both ways of
-/// encoding a request go through here, so they can't write different frames.
-fn put_request(
+const METHOD_END: &[u8] = br#"""#;
+const METHOD_THEN_PARAMS: &[u8] = br#"","params":"#;
+
+/// Writes a request from its encoded params, which say nothing when empty or
+/// `null`: JSON-RPC 2.0 has `params` omitted then, not `null`.
+#[inline(always)]
+fn put_request_body(name: &str, request_id: Option<u64>, params: &[u8], out: &mut dyn BufMut) {
+    put_method(name, out);
+    // By length first: params that say something are almost all longer.
+    if params.len() > 4 || !matches!(params, b"" | b"null") {
+        out.put_slice(METHOD_THEN_PARAMS);
+        out.put_slice(params);
+    } else {
+        out.put_slice(METHOD_END);
+    }
+    put_request_end(request_id, out);
+}
+
+/// Writes a request with `fmt` encoding its params, to the same frame
+/// [`put_request_body`] writes for those bytes.
+fn put_request<W, P>(
     name: &str,
     request_id: Option<u64>,
+    params: &P,
+    fmt: &W,
     out: &mut dyn BufMut,
-    params: impl FnOnce(&mut dyn BufMut) -> Result<(), RuntimeError>,
-) -> Result<(), RuntimeError> {
+) -> Result<(), RuntimeError>
+where
+    W: WireFormat,
+    P: Serialize + ?Sized,
+{
     put_method(name, out);
-    params(out)?;
+    if params.serialize(NoParams).is_err() {
+        out.put_slice(METHOD_THEN_PARAMS);
+        fmt.encode(params, out)?;
+    } else {
+        out.put_slice(METHOD_END);
+        let mut held = HeldNull { out, matched: 0, passing: false };
+        fmt.encode(params, &mut held)?;
+        held.finish();
+    }
+    put_request_end(request_id, out);
+    Ok(())
+}
+
+/// The `id`, which a notification (`None`) goes without, and the closing brace.
+/// Inlined: this is on every request, and a call of its own shows on the gate.
+#[inline(always)]
+fn put_request_end(request_id: Option<u64>, out: &mut dyn BufMut) {
     if let Some(id) = request_id {
         out.put_slice(br#","id":"#);
         put_u64(id, out);
     }
     out.put_slice(b"}");
-    Ok(())
 }
 
-/// Params already serialised. None at all are `null`, as an empty `result`
-/// is: a frame with nothing after `"params":` isn't JSON.
-fn put_params(params: &[u8], out: &mut dyn BufMut) -> Result<(), RuntimeError> {
-    out.put_slice(if params.is_empty() { b"null" } else { params });
-    Ok(())
+/// Where a format writes a value that serialises as none. The format decides
+/// the bytes, not the value (a format can ignore it and write its own), so
+/// `,"params":` waits until what it writes turns out not to be `null`. Only a
+/// call without arguments comes through here.
+struct HeldNull<'o> {
+    out: &'o mut dyn BufMut,
+    /// How much of `null` has been written and held back.
+    matched: usize,
+    passing: bool,
+}
+
+impl HeldNull<'_> {
+    fn pass(&mut self) {
+        self.passing = true;
+        self.out.put_slice(br#","params":"#);
+        self.out.put_slice(&b"null"[..self.matched]);
+    }
+
+    /// What was held back and isn't all of `null` wasn't none after all.
+    fn finish(&mut self) {
+        if !self.passing && self.matched != 0 && self.matched != b"null".len() {
+            self.pass();
+        }
+    }
+}
+
+impl BufMut for HeldNull<'_> {
+    fn put_slice(&mut self, bytes: &[u8]) {
+        if !self.passing {
+            let end = self.matched + bytes.len();
+            if end <= b"null".len() && b"null"[self.matched..end] == *bytes {
+                self.matched = end;
+                return;
+            }
+            self.pass();
+        }
+        self.out.put_slice(bytes);
+    }
+
+    fn overflowed(&self) -> bool {
+        self.out.overflowed()
+    }
+}
+
+/// A value that serialises as `null` in JSON, which is what a call without
+/// arguments passes (`&()`). Asked before anything is written, as a `BufMut`
+/// can't take back `"params":`. Anything else stops at its first serializer
+/// call and goes straight to the format, so a call with arguments pays for
+/// no more than this.
+struct NoParams;
+
+#[derive(Debug)]
+struct SaysParams;
+
+impl core::fmt::Display for SaysParams {
+    fn fmt(&self, f: &mut core::fmt::Formatter) -> core::fmt::Result {
+        f.write_str("params")
+    }
+}
+
+impl serde::ser::StdError for SaysParams {}
+
+impl serde::ser::Error for SaysParams {
+    fn custom<T: core::fmt::Display>(_: T) -> Self {
+        SaysParams
+    }
+}
+
+macro_rules! says_params {
+    ($($method:ident($($ty:ty),*);)+) => {$(
+        fn $method(self, $(_: $ty),*) -> Result<(), SaysParams> {
+            Err(SaysParams)
+        }
+    )+};
+}
+
+impl serde::Serializer for NoParams {
+    type Ok = ();
+    type Error = SaysParams;
+    type SerializeSeq = serde::ser::Impossible<(), SaysParams>;
+    type SerializeTuple = serde::ser::Impossible<(), SaysParams>;
+    type SerializeTupleStruct = serde::ser::Impossible<(), SaysParams>;
+    type SerializeTupleVariant = serde::ser::Impossible<(), SaysParams>;
+    type SerializeMap = serde::ser::Impossible<(), SaysParams>;
+    type SerializeStruct = serde::ser::Impossible<(), SaysParams>;
+    type SerializeStructVariant = serde::ser::Impossible<(), SaysParams>;
+
+    fn serialize_unit(self) -> Result<(), SaysParams> {
+        Ok(())
+    }
+    fn serialize_none(self) -> Result<(), SaysParams> {
+        Ok(())
+    }
+    fn serialize_unit_struct(self, _: &'static str) -> Result<(), SaysParams> {
+        Ok(())
+    }
+    fn serialize_some<T: Serialize + ?Sized>(self, value: &T) -> Result<(), SaysParams> {
+        value.serialize(self)
+    }
+    fn serialize_newtype_struct<T: Serialize + ?Sized>(
+        self,
+        _: &'static str,
+        value: &T,
+    ) -> Result<(), SaysParams> {
+        value.serialize(self)
+    }
+
+    says_params! {
+        serialize_bool(bool);
+        serialize_i8(i8);
+        serialize_i16(i16);
+        serialize_i32(i32);
+        serialize_i64(i64);
+        serialize_u8(u8);
+        serialize_u16(u16);
+        serialize_u32(u32);
+        serialize_u64(u64);
+        serialize_f32(f32);
+        serialize_f64(f64);
+        serialize_char(char);
+        serialize_str(&str);
+        serialize_bytes(&[u8]);
+        serialize_unit_variant(&'static str, u32, &'static str);
+    }
+
+    fn serialize_newtype_variant<T: Serialize + ?Sized>(
+        self,
+        _: &'static str,
+        _: u32,
+        _: &'static str,
+        _: &T,
+    ) -> Result<(), SaysParams> {
+        Err(SaysParams)
+    }
+    fn serialize_seq(self, _: Option<usize>) -> Result<Self::SerializeSeq, SaysParams> {
+        Err(SaysParams)
+    }
+    fn serialize_tuple(self, _: usize) -> Result<Self::SerializeTuple, SaysParams> {
+        Err(SaysParams)
+    }
+    fn serialize_tuple_struct(
+        self,
+        _: &'static str,
+        _: usize,
+    ) -> Result<Self::SerializeTupleStruct, SaysParams> {
+        Err(SaysParams)
+    }
+    fn serialize_tuple_variant(
+        self,
+        _: &'static str,
+        _: u32,
+        _: &'static str,
+        _: usize,
+    ) -> Result<Self::SerializeTupleVariant, SaysParams> {
+        Err(SaysParams)
+    }
+    fn serialize_map(self, _: Option<usize>) -> Result<Self::SerializeMap, SaysParams> {
+        Err(SaysParams)
+    }
+    fn serialize_struct(
+        self,
+        _: &'static str,
+        _: usize,
+    ) -> Result<Self::SerializeStruct, SaysParams> {
+        Err(SaysParams)
+    }
+    fn serialize_struct_variant(
+        self,
+        _: &'static str,
+        _: u32,
+        _: &'static str,
+        _: usize,
+    ) -> Result<Self::SerializeStructVariant, SaysParams> {
+        Err(SaysParams)
+    }
 }
 
 impl Framing for JsonRpcFraming {
@@ -250,9 +458,7 @@ impl Framing for JsonRpcFraming {
         W: WireFormat,
         P: Serialize + ?Sized,
     {
-        put_request(call.name, Some(request_id), out, |out| {
-            fmt.encode(params, out)
-        })
+        put_request(call.name, Some(request_id), params, fmt, out)
     }
 
     fn encode_request_body(
@@ -263,8 +469,7 @@ impl Framing for JsonRpcFraming {
         params: &[u8],
         out: &mut dyn BufMut,
     ) {
-        // Infallible: the params are written as they are.
-        let _ = put_request(name, Some(request_id), out, |out| put_params(params, out));
+        put_request_body(name, Some(request_id), params, out);
     }
 
     fn decode_request<'f>(&self, frame: &'f [u8]) -> Option<Request<'f>> {
@@ -351,7 +556,7 @@ impl ConnectionFraming for JsonRpcFraming {
     {
         // A notification has no `id`, so the peer sends nothing back.
         let id = (!one_way).then_some(request_id);
-        put_request(call.name, id, out, |out| fmt.encode(params, out))
+        put_request(call.name, id, params, fmt, out)
     }
 
     fn encode_request_body(
@@ -365,8 +570,7 @@ impl ConnectionFraming for JsonRpcFraming {
         out: &mut dyn BufMut,
     ) {
         let id = (!one_way).then_some(request_id);
-        // Infallible: the params are written as they are.
-        let _ = put_request(name, id, out, |out| put_params(params, out));
+        put_request_body(name, id, params, out);
     }
 
     fn encode_reply(
@@ -513,8 +717,8 @@ mod tests {
     }
 
     /// Params serialised by the caller frame exactly as `encode_request`
-    /// frames them, as a call and as a notification. None at all are `null`,
-    /// as `()` serialises, so the frame is still JSON.
+    /// frames them, as a call and as a notification. None at all leave
+    /// `params` out, whether `()`, empty bytes or `null`.
     #[test]
     fn a_request_framed_around_its_params_bytes_matches() {
         let f = JsonRpcFraming;
@@ -815,7 +1019,7 @@ mod tests {
             Framing::encode_request(&f, Call::new(0, name), 1, &(), &Json, &mut frame).unwrap();
             assert_eq!(
                 str::from_utf8(&frame).unwrap(),
-                format!(r#"{{"jsonrpc":"2.0","method":{quoted},"params":null,"id":1}}"#)
+                format!(r#"{{"jsonrpc":"2.0","method":{quoted},"id":1}}"#)
             );
             assert_eq!(method_of(f.decode_request(&frame).unwrap().call), name);
 
@@ -833,9 +1037,104 @@ mod tests {
             .unwrap();
             assert_eq!(
                 str::from_utf8(&notification).unwrap(),
-                format!(r#"{{"jsonrpc":"2.0","method":{quoted},"params":null}}"#)
+                format!(r#"{{"jsonrpc":"2.0","method":{quoted}}}"#)
             );
         }
+    }
+
+    /// A format that writes these slices, whatever the value.
+    struct Writes<'a>(&'a [&'a str]);
+
+    impl WireFormat for Writes<'_> {
+        fn name(&self) -> &'static str {
+            "writes"
+        }
+        fn encode<T: Serialize + ?Sized>(
+            &self,
+            _: &T,
+            out: &mut dyn BufMut,
+        ) -> Result<(), RuntimeError> {
+            self.0.iter().for_each(|text| out.put_slice(text.as_bytes()));
+            Ok(())
+        }
+        fn decode<'de, T: Deserialize<'de>>(&self, _: &'de [u8]) -> Result<T, RuntimeError> {
+            Err(RuntimeError::Serialization)
+        }
+    }
+
+    /// What decides is what the format writes, however it splits it: a value
+    /// that serialises as none doesn't drop params a format writes anyway.
+    #[test]
+    fn params_are_left_out_only_when_the_format_writes_none() {
+        let with = |written: &[&str]| {
+            let mut frame = Vec::new();
+            Framing::encode_request(
+                &JsonRpcFraming,
+                Call::new(0, "m"),
+                1,
+                &(),
+                &Writes(written),
+                &mut frame,
+            )
+            .unwrap();
+            String::from_utf8(frame).unwrap()
+        };
+        let none = r#"{"jsonrpc":"2.0","method":"m","id":1}"#;
+        assert_eq!(with(&[]), none);
+        assert_eq!(with(&[""]), none);
+        assert_eq!(with(&["null"]), none);
+        assert_eq!(with(&["nu", "ll"]), none);
+        assert_eq!(with(&["n", "", "u", "l", "l"]), none);
+        for (written, params) in [
+            (&["[1,2]"][..], "[1,2]"),
+            (&["[", "1", "]"][..], "[1]"),
+            (&["nul"][..], "nul"),
+            (&["nu", "x"][..], "nux"),
+            (&["null", "x"][..], "nullx"),
+            (&["nullx"][..], "nullx"),
+        ] {
+            assert_eq!(
+                with(written),
+                format!(r#"{{"jsonrpc":"2.0","method":"m","params":{params},"id":1}}"#)
+            );
+        }
+    }
+
+    /// Whatever serialises as `null` in JSON leaves `params` out, in both
+    /// ways of framing a request. Anything else keeps them, empty ones too.
+    #[test]
+    fn only_what_serialises_as_null_is_no_params() {
+        #[derive(Serialize)]
+        struct UnitStruct;
+        #[derive(Serialize)]
+        struct Empty {}
+        #[derive(Serialize)]
+        struct Wrapper(());
+        fn framed<P: Serialize>(params: &P) -> String {
+            let mut typed = Vec::new();
+            Framing::encode_request(
+                &JsonRpcFraming,
+                Call::new(0, "m"),
+                1,
+                params,
+                &Json,
+                &mut typed,
+            )
+            .unwrap();
+            let bytes = serde_json::to_vec(params).unwrap();
+            let mut body = Vec::new();
+            Framing::encode_request_body(&JsonRpcFraming, 0, "m", 1, &bytes, &mut body);
+            assert_eq!(typed, body);
+            String::from_utf8(typed).unwrap()
+        }
+        let none = r#"{"jsonrpc":"2.0","method":"m","id":1}"#;
+        assert_eq!(framed(&()), none);
+        assert_eq!(framed(&UnitStruct), none);
+        assert_eq!(framed(&Wrapper(())), none);
+        assert_eq!(framed(&None::<u8>), none);
+        assert_eq!(framed(&Some(())), none);
+        assert_eq!(framed(&Empty {}), r#"{"jsonrpc":"2.0","method":"m","params":{},"id":1}"#);
+        assert_eq!(framed(&[0u8; 0]), r#"{"jsonrpc":"2.0","method":"m","params":[],"id":1}"#);
     }
 
     #[test]

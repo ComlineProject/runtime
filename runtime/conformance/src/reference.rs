@@ -162,6 +162,21 @@ pub fn reference_cases() -> Vec<Vectors> {
                 i.one_way = true;
             }
             connection.push((id, input));
+            // JSON-RPC 2.0 has `params` omitted when there are none, as for a
+            // call without arguments, and never `null`.
+            connection.push(request(
+                p("request-no-params"),
+                framing,
+                0,
+                "ping",
+                8,
+                &Value::Unit(()),
+            ));
+            let (id, mut input) = request(p("notification-no-params"), framing, 0, "ping", 0, &Value::Unit(()));
+            if let Input::Request(Framed::Full(i)) = &mut input {
+                i.one_way = true;
+            }
+            connection.push((id, input));
             // Found by comline-typescript's differential tests (#41): a
             // name a JSON string can hold only escaped is written escaped.
             connection.push(request(
@@ -1129,6 +1144,26 @@ fn found_jsonrpc_cases() -> Vec<Case> {
     ]
 }
 
+/// `"params": null`, which this framing no longer writes: JSON-RPC 2.0 doesn't
+/// allow it, but peers send it, and it can only mean none.
+fn accept_params_null() -> Case {
+    let (id, input) = request(
+        "framing-jsonrpc/accept-request-params-null".into(),
+        FRAMING_JSONRPC,
+        0,
+        "ping",
+        8,
+        &Value::Unit(()),
+    );
+    Case {
+        id,
+        input,
+        bytes: Hex(br#"{"jsonrpc":"2.0","method":"ping","params":null,"id":8}"#.to_vec()),
+        expect: Expect::Accept,
+        compare: Compare::Bytes,
+    }
+}
+
 /// `framing-jsonrpc/request` and its responses with the payload in a format
 /// that isn't JSON: `jsonrpc@1` embeds a payload as a JSON value, so the frame
 /// isn't JSON-RPC. `payload: json` is proven by these.
@@ -1576,6 +1611,8 @@ fn rejections(feature: &str) -> Vec<Case> {
             // A member written twice, which JSON leaves to the reader and a
             // last-wins reader gets wrong: it lets params that aren't one JSON
             // value overwrite a frame's `method`. Refused wherever it's read.
+            // Written before 0.8, and by other peers: read as none.
+            accept_params_null(),
             reject(
                 "framing-jsonrpc/reject-request-repeated-jsonrpc",
                 request_for(FRAMING_JSONRPC),
