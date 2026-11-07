@@ -1108,7 +1108,7 @@ mod tests {
                 Call::new(0, "m"),
                 1,
                 params,
-                &crate::format::Json,
+                &Json,
                 &mut typed,
             )
             .unwrap();
