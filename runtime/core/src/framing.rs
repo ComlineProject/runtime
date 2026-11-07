@@ -130,9 +130,20 @@ fn is_peer_refusal(frame: &[u8]) -> bool {
     parse::<RefusalIn>(frame).is_some_and(|r| r.result.is_none())
 }
 
-/// A response has its `result` or its `error`, never both.
+/// A member that's there, whatever it holds: `Option<&RawValue>` alone reads
+/// `null` as no member, and a response's `"result":null` is its result.
+fn present<'de, D: serde::Deserializer<'de>>(d: D) -> Result<Option<&'de RawValue>, D::Error> {
+    <&RawValue>::deserialize(d).map(Some)
+}
+
+/// A response has its `result` or its `error`: neither is no response, which is
+/// what a request reads as, and a `result` beside an `error` must be `null`.
 fn one_outcome(result: Option<&RawValue>, error: Option<&ErrIn<'_>>) -> Option<()> {
-    (result.is_none() || error.is_none()).then_some(())
+    match (result, error) {
+        (None, None) => None,
+        (Some(result), Some(_)) => (result.get() == "null").then_some(()),
+        _ => Some(()),
+    }
 }
 
 /// A response's envelope, from its `result` or `error`.
@@ -149,7 +160,11 @@ fn envelope_of<'f>(result: Option<&'f RawValue>, error: Option<ErrIn<'f>>) -> En
             // error this wire can name, so it is a fault.
             Err(_) => Envelope::Fault,
         },
-        None => Envelope::Ok(result.map(|p| p.get().as_bytes()).unwrap_or(b"null")),
+        // A `null` result is given as the same static bytes as absent data.
+        None => Envelope::Ok(match result {
+            Some(result) if result.get() != "null" => result.get().as_bytes(),
+            _ => b"null",
+        }),
     }
 }
 
@@ -541,7 +556,7 @@ impl Framing for JsonRpcFraming {
         struct RespIn<'a> {
             #[serde(rename = "jsonrpc")]
             _version: Version,
-            #[serde(borrow, default)]
+            #[serde(borrow, default, deserialize_with = "present")]
             result: Option<&'a RawValue>,
             #[serde(borrow, default)]
             error: Option<ErrIn<'a>>,
@@ -620,7 +635,7 @@ impl ConnectionFraming for JsonRpcFraming {
             params: Option<&'a RawValue>,
             #[serde(default, deserialize_with = "request_id")]
             id: Option<u64>,
-            #[serde(borrow, default)]
+            #[serde(borrow, default, deserialize_with = "present")]
             result: Option<&'a RawValue>,
             #[serde(borrow, default)]
             error: Option<ErrIn<'a>>,
@@ -950,6 +965,9 @@ mod tests {
         );
         // A reply has to say which call it answers.
         assert_eq!(f.decode(br#"{"jsonrpc":"2.0","result":1}"#), None);
+        // And what its outcome is: `null` is one, and nothing isn't.
+        assert_eq!(f.decode(br#"{"jsonrpc":"2.0","id":2}"#), None);
+        assert_eq!(f.decode(br#"{"jsonrpc":"2.0","error":null,"id":2}"#), None);
         assert_eq!(f.decode(b"[1,2]"), None);
     }
 
