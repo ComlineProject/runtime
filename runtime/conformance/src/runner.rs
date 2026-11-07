@@ -44,7 +44,7 @@ use crate::{Outcome, Profile, Vectors};
 /// early days: a minor bump may change anything, and says so in the
 /// changelog. The ops protocol also carries its own number (`protocol` in
 /// the `version` reply, [`OPS_PROTOCOL`]).
-pub const SPEC_VERSION: &str = "0.6";
+pub const SPEC_VERSION: &str = "0.7";
 
 /// The ops protocol's number, as a `version` reply states it. Ops and reply
 /// fields are only ever added under it.
@@ -300,7 +300,7 @@ pub fn questions(case: &Case) -> Vec<Question> {
         }
         return asked;
     }
-    if !case.op().decode_only() {
+    if !case.op().decode_only() && case.expect != Expect::Accept {
         asked.push(ask(None));
     }
     if !matches!(case.op(), Op::NameHash | Op::Encode) {

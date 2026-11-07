@@ -2,7 +2,7 @@
     "$schema": "https://json-schema.org/draft/2020-12/schema",
     "$defs": {
         "Case": {
-            "description": "One vector: an operation's input and the exact bytes it must produce and\ndecode from, or (`expect: \"reject\"`) bytes the operation must refuse. A\nrejection's input is only what selects the decoder, if anything. A case\nthat doesn't say `expect` is exact: `*` picks that when both could hold.",
+            "description": "One vector: an operation's input and the exact bytes it must produce and\ndecode from, or (`expect: \"reject\"`) bytes the operation must refuse. A\nrejection's input is only what selects the decoder, if anything. A case\nthat doesn't say `expect` is exact: `*` picks that when both could hold.\n`expect: \"accept\"` is bytes the operation must read as the input, though\nencoding the input needn't give them.",
             "anyOf": [
                 {
                     "type": "object",
@@ -265,6 +265,37 @@
                             "$ref": "#/$defs/Compare"
                         },
                         "expect": {
+                            "const": "accept"
+                        },
+                        "id": {
+                            "$ref": "#/$defs/CaseId"
+                        },
+                        "input": {
+                            "$ref": "#/$defs/RequestInput"
+                        },
+                        "op": {
+                            "const": "request"
+                        }
+                    },
+                    "required": [
+                        "bytes",
+                        "expect",
+                        "id",
+                        "input",
+                        "op"
+                    ]
+                },
+                {
+                    "type": "object",
+                    "additionalProperties": false,
+                    "properties": {
+                        "bytes": {
+                            "$ref": "#/$defs/Hex"
+                        },
+                        "compare": {
+                            "$ref": "#/$defs/Compare"
+                        },
+                        "expect": {
                             "const": "exact"
                         },
                         "id": {
@@ -302,6 +333,37 @@
                         },
                         "input": {
                             "$ref": "#/$defs/SelectsFraming"
+                        },
+                        "op": {
+                            "const": "response"
+                        }
+                    },
+                    "required": [
+                        "bytes",
+                        "expect",
+                        "id",
+                        "input",
+                        "op"
+                    ]
+                },
+                {
+                    "type": "object",
+                    "additionalProperties": false,
+                    "properties": {
+                        "bytes": {
+                            "$ref": "#/$defs/Hex"
+                        },
+                        "compare": {
+                            "$ref": "#/$defs/Compare"
+                        },
+                        "expect": {
+                            "const": "accept"
+                        },
+                        "id": {
+                            "$ref": "#/$defs/CaseId"
+                        },
+                        "input": {
+                            "$ref": "#/$defs/ResponseInput"
                         },
                         "op": {
                             "const": "response"

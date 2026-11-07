@@ -16,6 +16,13 @@ use crate::contract::{
 /// **name-oriented**, human-readable frame. Pair it with
 /// [`Json`](crate::format::Json).
 ///
+/// A payload is written into the frame's own JSON text, and that isn't
+/// checked: writing it costs every frame the same, and a peer refuses what it
+/// can't read. So bytes given to `encode_request_body` or a reply must be one
+/// JSON value, and params an array, an object or nothing. Anything else is a
+/// frame a peer refuses or, if it's still JSON (`[],"x":1`), one where what
+/// follows the first value is read as other members and lost.
+///
 /// Request:  `{"jsonrpc":"2.0","method":<name>,"params":<params>,"id":<n>}`
 /// Response: `{"jsonrpc":"2.0","result":<r>,"id":<n>}` or
 ///           `{"jsonrpc":"2.0","error":{"code":<ordinal>,"message":...,"data":<body>},"id":<n>}`

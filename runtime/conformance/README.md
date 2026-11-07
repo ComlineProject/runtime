@@ -67,6 +67,9 @@ The ops, and what their `input` holds:
   - An `encode` rejection is a value over its `type`'s bounds: encoding it
     must fail, before anything is written. Its `bytes` are empty and aren't
     decoded.
+- **`"expect": "accept"`:** decoding `bytes` must give the input, and nothing
+  asks to encode it: a frame a runtime must read but has no reason to write,
+  such as one with a member JSON-RPC doesn't name.
 - **Stream framing** (`stream`): a frame on a byte stream is
   `[len: u32 LE][len bytes]`, and a runtime refuses a `len` over its limit:
   by default 16 MiB (16,777,216 bytes) in every runtime, and `len == max` is
@@ -141,12 +144,12 @@ review as one.
 CONFORMANCE_BLESS=1 cargo test -p comline-runtime-conformance
 ```
 
-## The spec, version 0.6
+## The spec, version 0.7
 
 The case format above (`vectors/*.json`, `profiles/*.json`, the ops, values
 and types) and the ops protocol
 ([`comline-reference`'s README](../reference/README.md#the-protocol)) are a
-public spec, at version **0.6** (`runner::SPEC_VERSION`). Third-party
+public spec, at version **0.7** (`runner::SPEC_VERSION`). Third-party
 encodings ship vectors in this format, and `comline conformance --impl`
 drives their implementations over this protocol. While Comline is in its
 early days (0.x), a minor version may change anything, and the change is
@@ -176,13 +179,25 @@ What an implementation answers, and how its answers are judged:
   a number is an index or a wire number (`by_index`, `by_id`) isn't in the bytes,
   so the profile's word stands for that. Its `errors` needs an exact error
   response; a response's input holds only the ordinal, so `by_ordinal` and
-  `by_name` rest on the case passing. A format's facts are shown by `decode` cases of the
+  `by_name` rest on the case passing. Its `payload` is shown by requests: an
+  exact one with non-JSON params for `opaque`, and for `json`, an exact one with
+  JSON params and a refusal of that same frame with non-JSON in their place. A
+  format's `output` is shown by exact `encode` cases: all JSON for `json`, and
+  at least one not for `bytes`. Its other facts are shown by `decode` cases of the
   `Point` and `Color` shapes the official profiles use. A handshake's facts
   are shown by `handshake_check` cases: one the peer agrees in, accepted,
   and, per thing the fact covers, one differing in only that, refused.
 
 Changes:
 
+- **0.7:** a framing states `payload` (`opaque` or `json`) and a format states
+  `output` (`bytes` or `json`), and a profile without them is refused. New
+  `"expect": "accept"`. New cases on `jsonrpc@1`: a member written twice is
+  refused, in a request, a response and an error object; a payload in
+  `msgpack@1` or `packed@1` is refused; unknown members are read. Request params
+  a framing can't carry answer `not_implemented` by these facts, which replaces
+  0.6's rule on `jsonrpc@1` by name, and now covers params that aren't an array,
+  an object or `null`.
 - **0.6:** `calls` and `errors` facts must be shown by their cases, where any
   passing case used to do: a `calls` naming anything but exact requests, or a
   `by_name` whose frames lack the method's name (or a number whose frames hold
@@ -269,7 +284,17 @@ vectors, and the docs' language reference is rendered from it.
 `comline@2.json`): facts
 about how it encodes, which the version comparison turns into bumps. A format
 states `struct_fields`, `unknown_field`, `missing_optional`, `enum_variants`,
-`unknown_variant` and `integer_width`; a framing states `calls` and `errors`.
+`unknown_variant`, `integer_width` and `output`; a framing states `calls`,
+`errors` and `payload`.
+
+`payload` says what a framing needs of a payload, and `output` what a format
+writes. A framing takes a format when its `payload` is `opaque` (it carries the
+bytes as they are) or the two name the same grammar (`jsonrpc@1`'s is `json`).
+Tools decide by these two facts alone, so a third-party encoding is held to the
+same rule as an official one. `json` also bounds a request's params to what
+JSON-RPC 2.0 allows: an array or an object, or `null` for none. Neither is
+enforced on the wire: a runtime refuses what it can't read, and refusing a pair
+that can't work is up to tools that know both, such as a schema compiler.
 
 A handshake states what it establishes between the two ends, as booleans:
 `schema_agreement` (both were built from the same schema) and

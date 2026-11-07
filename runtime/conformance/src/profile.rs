@@ -8,10 +8,14 @@
 
 use serde::{Deserialize, Serialize};
 
-use comline_runtime::contract::HandshakeFrame;
+use comline_runtime::contract::{
+    HandshakeFrame, FORMAT_JSON, FORMAT_MSGPACK, FORMAT_PACKED, FRAMING_DATAGRAM, FRAMING_DATAGRAM2,
+    FRAMING_DATAGRAM3, FRAMING_JSONRPC,
+};
 
 use crate::comline2;
-use crate::{Case, Expect, Framed, Input, Op, Reply, ResponseIn, Value};
+use crate::engine::encode_with;
+use crate::{Case, Expect, Framed, Input, Op, Reply, RequestIn, ResponseIn, Value};
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Profile {
@@ -64,11 +68,16 @@ impl Facts {
                 of(Fact::EnumVariants, &f.enum_variants),
                 of(Fact::IntegerWidth, &f.integer_width),
                 of(Fact::MissingOptional, &f.missing_optional),
+                of(Fact::Output, &f.output),
                 of(Fact::StructFields, &f.struct_fields),
                 of(Fact::UnknownField, &f.unknown_field),
                 of(Fact::UnknownVariant, &f.unknown_variant),
             ],
-            Facts::Framing(f) => vec![of(Fact::Calls, &f.calls), of(Fact::Errors, &f.errors)],
+            Facts::Framing(f) => vec![
+                of(Fact::Calls, &f.calls),
+                of(Fact::Errors, &f.errors),
+                of(Fact::Payload, &f.payload),
+            ],
             Facts::Handshake(f) => [
                 f.encoding_agreement
                     .as_ref()
@@ -84,6 +93,37 @@ impl Facts {
     }
 }
 
+/// The profile of an official encoding, as shipped in `profiles/`.
+fn official(name: &str) -> Option<Profile> {
+    let text = match name {
+        FORMAT_JSON => include_str!("../profiles/json@1.json"),
+        FORMAT_MSGPACK => include_str!("../profiles/msgpack@1.json"),
+        FORMAT_PACKED => include_str!("../profiles/packed@1.json"),
+        FRAMING_DATAGRAM => include_str!("../profiles/datagram@1.json"),
+        FRAMING_DATAGRAM2 => include_str!("../profiles/datagram@2.json"),
+        FRAMING_DATAGRAM3 => include_str!("../profiles/datagram@3.json"),
+        FRAMING_JSONRPC => include_str!("../profiles/jsonrpc@1.json"),
+        _ => return None,
+    };
+    Some(serde_json::from_str(text).expect("an official profile parses"))
+}
+
+/// What the official framing `name` requires of a payload.
+pub(crate) fn official_payload(name: &str) -> Option<Payload> {
+    match official(name)?.facts {
+        Facts::Framing(f) => Some(f.payload.value),
+        _ => None,
+    }
+}
+
+/// What the official format `name` writes.
+pub(crate) fn official_output(name: &str) -> Option<Output> {
+    match official(name)?.facts {
+        Facts::Format(f) => Some(f.output.value),
+        _ => None,
+    }
+}
+
 /// A format states every fact.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -94,6 +134,7 @@ pub struct FormatFacts {
     pub enum_variants: Stated<EnumVariants>,
     pub unknown_variant: Stated<UnknownVariant>,
     pub integer_width: Stated<IntegerWidth>,
+    pub output: Stated<Output>,
 }
 
 /// A framing states every fact.
@@ -102,6 +143,7 @@ pub struct FormatFacts {
 pub struct FramingFacts {
     pub calls: Stated<Calls>,
     pub errors: Stated<Errors>,
+    pub payload: Stated<Payload>,
 }
 
 /// A handshake may leave a fact out, which reads as `false`: not established.
@@ -150,6 +192,37 @@ fact_values! {
     IntegerWidth { ByValue = "by_value", Exact = "exact" }
     Calls { ByIndex = "by_index", ByName = "by_name", ById = "by_id" }
     Errors { ByOrdinal = "by_ordinal", ByName = "by_name" }
+    Output { Bytes = "bytes", Json = "json" }
+    Payload { Opaque = "opaque", Json = "json" }
+}
+
+impl Payload {
+    /// Whether this framing can carry what a format with `output` writes: an
+    /// opaque one carries anything, and one that embeds a grammar carries
+    /// that grammar. This is the whole rule, so it names no encoding.
+    pub fn carries(self, output: Output) -> bool {
+        match self {
+            Payload::Opaque => true,
+            Payload::Json => output == Output::Json,
+        }
+    }
+
+    /// Whether this framing can carry `params`, a request's encoded params.
+    /// JSON-RPC 2.0 has them be an array or an object when given at all;
+    /// `null` is what `jsonrpc@1` writes for none, as it does for empty ones.
+    pub fn carries_params(self, params: &[u8]) -> bool {
+        match self {
+            Payload::Opaque => true,
+            Payload::Json => {
+                let structured = matches!(params.first(), Some(b'[' | b'{')) || params == b"null";
+                params.is_empty() || (structured && is_json(params))
+            }
+        }
+    }
+}
+
+fn is_json(bytes: &[u8]) -> bool {
+    serde_json::from_slice::<serde::de::IgnoredAny>(bytes).is_ok()
 }
 
 /// One stated fact.
@@ -163,6 +236,8 @@ pub enum Fact {
     IntegerWidth(IntegerWidth),
     Calls(Calls),
     Errors(Errors),
+    Output(Output),
+    Payload(Payload),
     SchemaAgreement(bool),
     EncodingAgreement(bool),
 }
@@ -178,6 +253,8 @@ impl Fact {
             Fact::IntegerWidth(_) => "integer_width",
             Fact::Calls(_) => "calls",
             Fact::Errors(_) => "errors",
+            Fact::Output(_) => "output",
+            Fact::Payload(_) => "payload",
             Fact::SchemaAgreement(_) => "schema_agreement",
             Fact::EncodingAgreement(_) => "encoding_agreement",
         }
@@ -194,6 +271,8 @@ impl Fact {
             Fact::IntegerWidth(v) => v.as_str(),
             Fact::Calls(v) => v.as_str(),
             Fact::Errors(v) => v.as_str(),
+            Fact::Output(v) => v.as_str(),
+            Fact::Payload(v) => v.as_str(),
             Fact::SchemaAgreement(true) | Fact::EncodingAgreement(true) => "true",
             Fact::SchemaAgreement(false) | Fact::EncodingAgreement(false) => "false",
         }
@@ -255,6 +334,9 @@ fn decoding_fact_shown(fact: Fact, first: &Case, cases: &[&Case]) -> bool {
         }
         Fact::Calls(calls) => calls_shown(calls, cases),
         Fact::Errors(_) => cases.iter().any(|c| carries_error(c)),
+        Fact::Output(output) => output_shown(output, cases),
+        Fact::Payload(Payload::Opaque) => cases.iter().any(|c| carries_non_json(c)),
+        Fact::Payload(Payload::Json) => embedding_shown(cases),
         Fact::SchemaAgreement(_) | Fact::EncodingAgreement(_) => {
             unreachable!("handshake facts aren't shown by decoding")
         }
@@ -289,6 +371,67 @@ fn carries_error(case: &Case) -> bool {
                 ..
             })) | Input::Envelope(Some(Reply::Err { .. }))
         )
+}
+
+/// `output` is shown by exact `encode` cases: each one's bytes are JSON for
+/// `json`, and for `bytes`, at least one's aren't. No list of cases shows that
+/// a format only ever writes JSON, which is `tests/payload.rs`'s to check.
+fn output_shown(output: Output, cases: &[&Case]) -> bool {
+    let encodes = cases
+        .iter()
+        .all(|c| c.expect == Expect::Exact && c.op() == Op::Encode);
+    encodes
+        && match output {
+            Output::Json => cases.iter().all(|c| is_json(&c.bytes.0)),
+            Output::Bytes => cases.iter().any(|c| !is_json(&c.bytes.0)),
+        }
+}
+
+/// A request's params as its format writes them, for a format this ships.
+fn params_of(i: &RequestIn) -> Option<Vec<u8>> {
+    encode_with(&i.format, &i.params)
+}
+
+/// An exact request whose params aren't JSON: passing it shows the framing
+/// carries them.
+fn carries_non_json(case: &Case) -> bool {
+    match &case.input {
+        Input::Request(Framed::Full(i)) if case.expect == Expect::Exact => {
+            params_of(i).is_some_and(|params| !is_json(&params))
+        }
+        _ => false,
+    }
+}
+
+/// `payload: json` is shown by a pair: an exact request with JSON params, and
+/// a refusal of that same frame with something that isn't JSON in their place.
+/// A framing that carries its payload opaquely would read that frame, so the
+/// refusal can only come from what the payload is.
+fn embedding_shown(cases: &[&Case]) -> bool {
+    let frames: Vec<(&[u8], Vec<u8>)> = cases
+        .iter()
+        .filter_map(|c| match &c.input {
+            Input::Request(Framed::Full(i)) if c.expect == Expect::Exact => {
+                Some((&c.bytes.0[..], params_of(i)?))
+            }
+            _ => None,
+        })
+        .collect();
+    cases.iter().any(|c| {
+        c.expect == Expect::Reject
+            && c.op() == Op::Request
+            && frames.iter().any(|(frame, params)| {
+                let Some(at) = frame.windows(params.len()).position(|w| w == params) else {
+                    return false;
+                };
+                let (head, tail) = (&frame[..at], &frame[at + params.len()..]);
+                let bytes = &c.bytes.0[..];
+                bytes.len() >= head.len() + tail.len()
+                    && bytes.starts_with(head)
+                    && bytes.ends_with(tail)
+                    && !is_json(&bytes[head.len()..bytes.len() - tail.len()])
+            })
+    })
 }
 
 /// A handshake fact stated `true` (`schema`: `schema_agreement`) is shown by
@@ -340,7 +483,12 @@ mod tests {
     fn a_kind_states_its_facts_with_their_values() {
         let by_id = json!({ "value": "by_id", "proven_by": ["a/b"] });
         let by_name = json!({ "value": "by_name", "proven_by": ["a/c"] });
-        let read = profile("framing", json!({ "calls": by_id, "errors": by_name })).unwrap();
+        let opaque = json!({ "value": "opaque", "proven_by": ["a/d"] });
+        let read = profile(
+            "framing",
+            json!({ "calls": by_id, "errors": by_name, "payload": opaque }),
+        )
+        .unwrap();
         assert_eq!(read.kind(), ProfileKind::Framing);
         let stated = read.facts.stated();
         assert_eq!(stated[0].0, Fact::Calls(Calls::ById));
@@ -348,12 +496,13 @@ mod tests {
             (stated[1].0.name(), stated[1].0.value()),
             ("errors", "by_name")
         );
+        assert_eq!(stated[2].0, Fact::Payload(Payload::Opaque));
 
         // A fact missing, an unknown fact, an unknown value.
-        assert!(profile("framing", json!({ "calls": by_id })).is_err());
-        let more = json!({ "calls": by_id, "errors": by_name, "more": by_name });
+        assert!(profile("framing", json!({ "calls": by_id, "errors": by_name })).is_err());
+        let more = json!({ "calls": by_id, "errors": by_name, "payload": opaque, "more": by_name });
         assert!(profile("framing", more).is_err());
-        let wrong = json!({ "calls": { "value": "by_ordinal" }, "errors": by_name });
+        let wrong = json!({ "calls": { "value": "by_ordinal" }, "errors": by_name, "payload": opaque });
         assert!(profile("framing", wrong).is_err());
     }
 

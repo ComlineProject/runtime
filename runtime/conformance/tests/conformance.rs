@@ -18,7 +18,8 @@ use comline_runtime::contract::{
     FRAMING_DATAGRAM3, FRAMING_JSONRPC, HANDSHAKE_COMLINE, HANDSHAKE_COMLINE2,
 };
 use comline_runtime_conformance::{
-    fact_shown, reference_cases, render, run, Case, Fact, Features, Outcome, Profile, ProvenClaim,
+    fact_shown, reference_cases, render, run, Case, Fact, Facts, Features, Outcome, Output, Payload,
+    Profile, ProvenClaim,
     Report, State, Support, Vectors,
 };
 
@@ -299,6 +300,88 @@ fn the_runner_passes_the_reference() {
             assert_eq!(proof.result, Ok(()), "{}: {}", profile.name, proof.fact);
         }
     }
+}
+
+/// The one rule on a framing and a format, over the official encodings'
+/// facts: JSON-RPC takes `json@1` only, and a datagram anything.
+#[test]
+fn official_pairs_follow_their_facts() {
+    let fact = |name: &str| -> Facts { read::<Profile>(&root().join("profiles").join(format!("{name}.json"))).facts };
+    let payload = |name: &str| match fact(name) {
+        Facts::Framing(f) => f.payload.value,
+        _ => panic!("`{name}` isn't a framing"),
+    };
+    let output = |name: &str| match fact(name) {
+        Facts::Format(f) => f.output.value,
+        _ => panic!("`{name}` isn't a format"),
+    };
+    for framing in [FRAMING_DATAGRAM, FRAMING_DATAGRAM2, FRAMING_DATAGRAM3] {
+        for format in [FORMAT_JSON, FORMAT_MSGPACK, FORMAT_PACKED] {
+            assert!(payload(framing).carries(output(format)), "{format} on {framing}");
+        }
+    }
+    assert!(payload(FRAMING_JSONRPC).carries(output(FORMAT_JSON)));
+    assert!(!payload(FRAMING_JSONRPC).carries(output(FORMAT_MSGPACK)));
+    assert!(!payload(FRAMING_JSONRPC).carries(output(FORMAT_PACKED)));
+}
+
+/// The rule goes by the fact, so a custom format that writes JSON fits.
+#[test]
+fn the_rule_names_no_encoding() {
+    assert!(Payload::Json.carries(Output::Json));
+    assert!(!Payload::Json.carries(Output::Bytes));
+    assert!(Payload::Opaque.carries(Output::Json));
+    assert!(Payload::Opaque.carries(Output::Bytes));
+}
+
+/// Params as JSON-RPC 2.0 has them: an array or an object when given, or
+/// `null`, which is what `jsonrpc@1` writes for none.
+#[test]
+fn json_payload_takes_structured_params() {
+    for fits in [&b""[..], b"null", b"[]", b"{}", br#"[7,"x"]"#] {
+        assert!(Payload::Json.carries_params(fits), "{}", String::from_utf8_lossy(fits));
+    }
+    for not in [&b"1"[..], br#""x""#, b"true", b"[", b"[],\"x\":[]", b"\x92\x07"] {
+        assert!(!Payload::Json.carries_params(not), "{}", String::from_utf8_lossy(not));
+        assert!(Payload::Opaque.carries_params(not));
+    }
+}
+
+/// `payload` and `output` need cases that show them, not just cases that pass.
+#[test]
+fn payload_and_output_facts_need_their_cases() {
+    let vectors: Vec<Vectors> = reference_cases();
+    let case = |id: &str| -> &Case {
+        vectors.iter().flat_map(|v| &v.cases).find(|c| c.id == id).unwrap_or_else(|| panic!("{id}"))
+    };
+    let exact = case("framing-jsonrpc/request");
+    let msgpack = case("framing-jsonrpc/reject-request-params-msgpack");
+    let scalar = case("framing-jsonrpc/reject-request-scalar-params");
+    let unrelated = case("framing-jsonrpc/reject-request-not-json");
+    let json = Fact::Payload(Payload::Json);
+    assert_eq!(fact_shown(json, &[exact, msgpack]), Ok(()));
+    assert!(fact_shown(json, &[exact]).is_err());
+    assert!(fact_shown(json, &[msgpack]).is_err());
+    assert!(fact_shown(json, &[exact, scalar]).is_err(), "its params are JSON");
+    assert!(fact_shown(json, &[exact, unrelated]).is_err(), "not that frame");
+    // A datagram has no refusal of that kind to name: its short frame isn't
+    // a frame with another payload.
+    let datagram = case("framing-datagram/request");
+    let short = case("framing-datagram/reject-short-request");
+    assert!(fact_shown(json, &[datagram, short]).is_err());
+
+    let opaque = Fact::Payload(Payload::Opaque);
+    assert_eq!(fact_shown(opaque, &[case("framing-datagram/request-params-msgpack")]), Ok(()));
+    assert!(fact_shown(opaque, &[datagram]).is_err(), "its params are JSON");
+    assert!(fact_shown(opaque, &[exact]).is_err());
+
+    let (writes_json, writes_bytes) = (Fact::Output(Output::Json), Fact::Output(Output::Bytes));
+    let (text, binary) = (case("format-json/struct"), case("format-msgpack/struct"));
+    assert_eq!(fact_shown(writes_json, &[text]), Ok(()));
+    assert!(fact_shown(writes_json, &[text, binary]).is_err());
+    assert_eq!(fact_shown(writes_bytes, &[binary]), Ok(()));
+    assert!(fact_shown(writes_bytes, &[text]).is_err());
+    assert!(fact_shown(writes_json, &[exact]).is_err(), "not an encode");
 }
 
 /// A handshake's facts are booleans; `false` (or leaving one out) claims

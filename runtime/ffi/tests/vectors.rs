@@ -392,31 +392,33 @@ fn request_case(case: &Case, framing: &'static str) -> Result<Ran, String> {
 
     // Encode, at the vector's id when the connection can be driven to it.
     let patched = request_id > DRIVABLE;
-    if !patched && !one_way {
-        conn.spend_ids(0, request_id);
-    }
-    let encoded = conn.request(
-        protocol,
-        call_id,
-        method.as_bytes(),
-        !one_way,
-        &params,
-        4096,
-    );
-    check(encoded.status == COMLINE_OK, || {
-        format!("encode gave {}", encoded.status)
-    })?;
-    let mut frame = encoded.bytes.clone();
-    if patched {
-        frame = with_request_id(framing, &frame, protocol, request_id)?;
-    } else if !one_way {
-        check(encoded.request_id == request_id, || {
-            format!("encoded as request {}", encoded.request_id)
+    if case.expect == Expect::Exact {
+        if !patched && !one_way {
+            conn.spend_ids(0, request_id);
+        }
+        let encoded = conn.request(
+            protocol,
+            call_id,
+            method.as_bytes(),
+            !one_way,
+            &params,
+            4096,
+        );
+        check(encoded.status == COMLINE_OK, || {
+            format!("encode gave {}", encoded.status)
         })?;
+        let mut frame = encoded.bytes.clone();
+        if patched {
+            frame = with_request_id(framing, &frame, protocol, request_id)?;
+        } else if !one_way {
+            check(encoded.request_id == request_id, || {
+                format!("encoded as request {}", encoded.request_id)
+            })?;
+        }
+        check(same(case, &frame), || format!("encodes to {}", hex(&frame)))?;
+        // A one-way call doesn't wait, and a call that expects a reply does.
+        check(conn.is_waiting() == Ok(!one_way), || "waiting".into())?;
     }
-    check(same(case, &frame), || format!("encodes to {}", hex(&frame)))?;
-    // A one-way call doesn't wait, and a call that expects a reply does.
-    check(conn.is_waiting() == Ok(!one_way), || "waiting".into())?;
 
     // Decode, on a fresh connection.
     let mut peer = Conn::new(&Setup::plain(framing)).map_err(|s| format!("new: {s}"))?;
@@ -481,14 +483,16 @@ fn response_case(case: &Case, framing: &'static str) -> Result<Ran, String> {
     let want = reply_of(&input.reply);
 
     // Encode: a reply carries the peer's request id, so nothing to drive.
-    let mut conn = Conn::new(&Setup::plain(framing)).map_err(|s| format!("new: {s}"))?;
-    let encoded = conn.reply(protocol, request_id, want.0, want.1, &want.2, 4096);
-    check(encoded.status == COMLINE_OK, || {
-        format!("encode gave {}", encoded.status)
-    })?;
-    check(same(case, &encoded.bytes), || {
-        format!("encodes to {}", hex(&encoded.bytes))
-    })?;
+    if case.expect == Expect::Exact {
+        let mut conn = Conn::new(&Setup::plain(framing)).map_err(|s| format!("new: {s}"))?;
+        let encoded = conn.reply(protocol, request_id, want.0, want.1, &want.2, 4096);
+        check(encoded.status == COMLINE_OK, || {
+            format!("encode gave {}", encoded.status)
+        })?;
+        check(same(case, &encoded.bytes), || {
+            format!("encodes to {}", hex(&encoded.bytes))
+        })?;
+    }
 
     // Decode, on a connection waiting on the vector's request id.
     check(request_id <= DRIVABLE, || {

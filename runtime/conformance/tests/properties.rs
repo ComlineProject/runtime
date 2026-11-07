@@ -475,6 +475,17 @@ proptest! {
     #![proptest_config(config())]
 
     #[test]
+    fn json_writes_only_json((_, value) in typed_value(FORMAT_JSON)) {
+        // What the profile's `output: json` claims.
+        let bytes = encode(FORMAT_JSON, &value);
+        prop_assert!(
+            serde_json::from_slice::<serde::de::IgnoredAny>(&bytes).is_ok(),
+            "{}",
+            String::from_utf8_lossy(&bytes)
+        );
+    }
+
+    #[test]
     fn json_round_trips((ty, value) in typed_value(FORMAT_JSON)) {
         round_trips(FORMAT_JSON, &ty, &value)?;
     }

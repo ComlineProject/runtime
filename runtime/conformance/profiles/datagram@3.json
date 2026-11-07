@@ -16,6 +16,13 @@
       "proven_by": [
         "framing-datagram3/response-err"
       ]
+    },
+    "payload": {
+      "value": "opaque",
+      "proven_by": [
+        "framing-datagram3/request-params-msgpack",
+        "framing-datagram3/request-params-packed"
+      ]
     }
   }
 }

@@ -190,6 +190,9 @@ pub enum Expect {
     Exact,
     /// Decoding `bytes` fails.
     Reject,
+    /// Decoding `bytes` gives the input, though encoding the input needn't
+    /// give `bytes`: a frame a runtime must read and has no reason to write.
+    Accept,
 }
 
 impl Op {

@@ -33,7 +33,8 @@ pub(crate) use engine::to_json;
 pub use json_equal::json_equal;
 pub use profile::{
     fact_shown, Calls, EnumVariants, Errors, Fact, Facts, FormatFacts, FramingFacts,
-    HandshakeFacts, IntegerWidth, MissingOptional, Profile, ProfileKind, Stated, StructFields,
+    HandshakeFacts, IntegerWidth, MissingOptional, Output, Payload, Profile, ProfileKind, Stated,
+    StructFields,
     UnknownField, UnknownVariant,
 };
 pub use reference::reference_cases;

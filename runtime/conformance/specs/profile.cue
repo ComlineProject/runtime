@@ -16,6 +16,7 @@ package conformance
 		enum_variants!:    close({value!: "by_name" | "by_index", proven_by!: #ProvenBy})
 		unknown_variant!:  close({value!: "rejected" | "tolerated", proven_by!: #ProvenBy})
 		integer_width!:    close({value!: "by_value" | "exact", proven_by!: #ProvenBy})
+		output!:           close({value!: "bytes" | "json", proven_by!: #ProvenBy})
 	})
 })
 
@@ -27,6 +28,7 @@ package conformance
 	facts!: close({
 		calls!:  close({value!: "by_index" | "by_name" | "by_id", proven_by!: #ProvenBy})
 		errors!: close({value!: "by_ordinal" | "by_name", proven_by!: #ProvenBy})
+		payload!: close({value!: "opaque" | "json", proven_by!: #ProvenBy})
 	})
 })
 

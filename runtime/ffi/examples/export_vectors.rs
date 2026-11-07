@@ -104,11 +104,16 @@ fn main() {
     std::fs::create_dir_all(dir).unwrap_or_else(|e| fail(&format!("{}: {e}", dir.display())));
     for feature in FILES {
         let vectors = vectors(feature);
-        let mut text = format!(
-            "comline-ffi-vectors {VERSION} {feature} {}\n",
-            vectors.cases.len()
-        );
-        for case in &vectors.cases {
+        // `"expect": "accept"` has no line: `tests/vectors.rs` feeds the ABI
+        // those frames, and a harness's lines always encode.
+        let cases: Vec<&Case> = vectors
+            .cases
+            .iter()
+            .filter(|case| case.expect != Expect::Accept)
+            .collect();
+        let count = cases.len();
+        let mut text = format!("comline-ffi-vectors {VERSION} {feature} {count}\n");
+        for case in cases {
             let line = line(case).unwrap_or_else(|why| fail(&format!("{}: {why}", case.id)));
             assert!(line.len() < MAX_LINE, "{}: a line over {MAX_LINE}", case.id);
             text.push_str(&line);
@@ -116,7 +121,7 @@ fn main() {
         }
         let path = dir.join(format!("{feature}.txt"));
         std::fs::write(&path, text).unwrap_or_else(|e| fail(&format!("{}: {e}", path.display())));
-        println!("{}: {} cases", path.display(), vectors.cases.len());
+        println!("{}: {} cases", path.display(), count);
     }
 }
 
