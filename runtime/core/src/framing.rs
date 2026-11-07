@@ -211,6 +211,7 @@ fn put_u64(n: u64, out: &mut dyn BufMut) {
 
 /// Writes a request from its encoded params, which say nothing when empty or
 /// `null`: JSON-RPC 2.0 has `params` omitted then, not `null`.
+#[inline(always)]
 fn put_request_body(name: &str, request_id: Option<u64>, params: &[u8], out: &mut dyn BufMut) {
     // By length first: params that say something are almost all longer.
     let has_params = params.len() > 4 || !matches!(params, b"" | b"null");
@@ -248,6 +249,8 @@ where
 }
 
 /// The `id`, which a notification (`None`) goes without, and the closing brace.
+/// Inlined: this is on every request, and a call of its own shows on the gate.
+#[inline(always)]
 fn put_request_end(request_id: Option<u64>, out: &mut dyn BufMut) {
     if let Some(id) = request_id {
         out.put_slice(br#","id":"#);
