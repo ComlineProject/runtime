@@ -57,8 +57,8 @@ use std::ptr;
 
 use comline_runtime::connection::{Event, State};
 use comline_runtime::contract::{
-    ConnectionFraming, Datagram2Framing, Envelope, HandshakeFrame, RequestCall, RuntimeError,
-    SliceBuf, FRAMING_DATAGRAM2, FRAMING_JSONRPC,
+    ConnectionFraming, Datagram2Framing, Datagram3Framing, Envelope, HandshakeFrame, RequestCall,
+    RuntimeError, SliceBuf, FRAMING_DATAGRAM2, FRAMING_DATAGRAM3, FRAMING_JSONRPC,
 };
 use comline_runtime::framing::JsonRpcFraming;
 use comline_runtime_ffi::*;
@@ -735,7 +735,8 @@ impl Ffi {
 /// These break the rule that nothing allocates after
 /// `comline_connection_new`; they are the core's bugs, not the rule's.
 fn serde_json_allocates(status: comline_status, frame: &[u8]) -> bool {
-    if status == COMLINE_ERR_FRAMING || status == COMLINE_ERR_PEER_REFUSED || frame.contains(&b'\\') {
+    if status == COMLINE_ERR_FRAMING || status == COMLINE_ERR_PEER_REFUSED || frame.contains(&b'\\')
+    {
         return true;
     }
     // Without a backslash, a `"` always opens or closes a string.
@@ -760,6 +761,7 @@ fn serde_json_allocates(status: comline_status, frame: &[u8]) -> bool {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum Fr {
     Datagram2,
+    Datagram3,
     JsonRpc,
 }
 
@@ -769,6 +771,10 @@ macro_rules! framed {
         match $fr {
             Fr::Datagram2 => {
                 let $f = &Datagram2Framing;
+                $body
+            }
+            Fr::Datagram3 => {
+                let $f = &Datagram3Framing;
                 $body
             }
             Fr::JsonRpc => {
@@ -830,6 +836,7 @@ impl Reference {
         }
         let fr = match framing {
             Some(FRAMING_DATAGRAM2) => Some(Fr::Datagram2),
+            Some(FRAMING_DATAGRAM3) => Some(Fr::Datagram3),
             Some(FRAMING_JSONRPC) => Some(Fr::JsonRpc),
             Some(_) => {
                 either |= bit(COMLINE_ERR_UNKNOWN_FRAMING);
@@ -1240,10 +1247,10 @@ impl Run {
         Self {
             ffi,
             reference,
-            fr: if framing == FRAMING_JSONRPC {
-                Fr::JsonRpc
-            } else {
-                Fr::Datagram2
+            fr: match framing.as_str() {
+                FRAMING_JSONRPC => Fr::JsonRpc,
+                FRAMING_DATAGRAM3 => Fr::Datagram3,
+                _ => Fr::Datagram2,
             },
             stream: config.stream == 1,
             unordered: config.unordered == 1,
@@ -1708,9 +1715,10 @@ impl Run {
             self.read = read;
             let fed = fed?;
             let consumed = match fed.status {
-                COMLINE_OK | COMLINE_ERR_FRAMING | COMLINE_ERR_PEER_REFUSED | COMLINE_ERR_HANDSHAKE => {
-                    fed.consumed
-                }
+                COMLINE_OK
+                | COMLINE_ERR_FRAMING
+                | COMLINE_ERR_PEER_REFUSED
+                | COMLINE_ERR_HANDSHAKE => fed.consumed,
                 _ => 0,
             };
             if consumed == 0 {
@@ -1912,7 +1920,7 @@ fn check_event(ev: &comline_event, fr: Fr) -> Result<(), String> {
             } else {
                 ensure!(
                     ev.flags == COMLINE_EVENT_HAS_PROTOCOL,
-                    "a datagram@2 request's flags {:#x}",
+                    "a datagram request's flags {:#x}",
                     ev.flags
                 );
             }

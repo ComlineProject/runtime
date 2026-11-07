@@ -112,7 +112,7 @@ function bodyLenOf(r) {
 
 /** One random encode: its arguments, and the bound's two views of it. */
 function caseOf(r) {
-  const framing = r.pick(["datagram@2", "jsonrpc@1"]);
+  const framing = r.pick(["datagram@2", "datagram@3", "jsonrpc@1"]);
   const stream = r.int(2) === 1;
   const kind = r.pick(["request", "reply"]);
   const bodyLen = bodyLenOf(r);
@@ -166,7 +166,7 @@ function checkCase(c, bound, slack) {
     if (c.kind === "request") {
       for (let i = 0; i < c.spend; i++) conn.encodeRequest(0, 0, "", false, "", 64);
       exact = bound({
-        ...shape, protocol: c.protocol, name: c.name, expectsReply: c.expectsReply,
+        ...shape, protocol: c.protocol, callId: c.callId, name: c.name, expectsReply: c.expectsReply,
         requestId: BigInt(c.spend),
       });
       loose = bound({ ...shape, nameLen: utf8Len(c.name) });

@@ -26,6 +26,21 @@
 /* ── layouts ─────────────────────────────────────────────────────────────
  * The numbers `src/lib.rs` holds the Rust types to, from this side. */
 
+_Static_assert(sizeof(comline_refusal) == 8, "comline_refusal size");
+_Static_assert(offsetof(comline_refusal, reason) == 0, "comline_refusal.reason");
+_Static_assert(offsetof(comline_refusal, side) == 1, "comline_refusal.side");
+_Static_assert(offsetof(comline_refusal, has_protocol) == 2, "comline_refusal.has_protocol");
+_Static_assert(offsetof(comline_refusal, protocol) == 4, "comline_refusal.protocol");
+_Static_assert(sizeof(comline_protocol_outcome) == 4, "comline_protocol_outcome size");
+_Static_assert(offsetof(comline_protocol_outcome, number) == 0, "comline_protocol_outcome.number");
+_Static_assert(offsetof(comline_protocol_outcome, reason) == 2, "comline_protocol_outcome.reason");
+_Static_assert(sizeof(comline_version) == 12, "comline_version size");
+_Static_assert(offsetof(comline_version, patch) == 8, "comline_version.patch");
+_Static_assert(offsetof(comline_comline2_config, hello_len) == sizeof(void *), "comline_comline2_config.hello_len");
+_Static_assert(offsetof(comline_comline2_config, side) == 2 * sizeof(void *), "comline_comline2_config.side");
+_Static_assert(offsetof(comline_comline2_config, exchange) == 2 * sizeof(void *) + 4, "comline_comline2_config.exchange");
+_Static_assert(sizeof(comline_comline2_config) == 2 * sizeof(void *) + 8, "comline_comline2_config size");
+
 _Static_assert(sizeof(comline_span) == 8, "comline_span size");
 _Static_assert(offsetof(comline_span, offset) == 0, "comline_span.offset");
 _Static_assert(offsetof(comline_span, len) == 4, "comline_span.len");
@@ -80,8 +95,9 @@ _Static_assert(COMLINE_HANDSHAKE_LEN == 31, "the comline@1 frame");
 /* ── the files ─────────────────────────────────────────────────────────── */
 
 static const char *const FILES[] = {
-    "name-hash",         "handshake",         "envelope",
-    "framing-datagram",  "framing-datagram2", "framing-jsonrpc",
+    "name-hash",         "handshake",         "handshake-comline2",
+    "envelope",          "framing-datagram",  "framing-datagram2",
+    "framing-datagram3", "framing-jsonrpc",
 };
 #define NFILES (sizeof FILES / sizeof FILES[0])
 
@@ -624,8 +640,8 @@ static enum ran case_request(const line *l) {
     int patched = strcmp(l->how, "patched") == 0;
     CHECK(l->n == 10 && (patched || strcmp(l->how, "exact") == 0));
     const char *framing = l->f[0];
-    int datagram2 = strcmp(framing, "datagram@2") == 0;
-    CHECK(datagram2 || strcmp(framing, "jsonrpc@1") == 0);
+    int datagram = strcmp(framing, "datagram@2") == 0 || strcmp(framing, "datagram@3") == 0;
+    CHECK(datagram || strcmp(framing, "jsonrpc@1") == 0);
     FIELD_U64(protocol, 1, UINT16_MAX);
     FIELD_U64(call_id, 2, UINT16_MAX);
     FIELD_U64(one_way, 4, 1);
@@ -682,7 +698,7 @@ static enum ran case_request(const line *l) {
     } else if (!span_is(&input, f.ev.body, params.p, params.n)) {
         goto out;
     }
-    if (datagram2) {
+    if (datagram) {
         if (!(f.ev.flags & COMLINE_EVENT_HAS_PROTOCOL) || (f.ev.flags & COMLINE_EVENT_CALL_BY_NAME) ||
             f.ev.protocol != protocol || f.ev.call_id != call_id) {
             fprintf(stderr, "%s: feed gave flags %#x, protocol %u, call %u\n", case_id,
@@ -771,6 +787,199 @@ out:
     return r;
 }
 
+/* A `comline@2` connection with `hello` as its facts; on `datagram@3`. */
+static comline_status comline2_new(const bytes *hello, uint8_t side, uint8_t scope, uint8_t newer,
+                                   uint8_t svd, uint8_t exchange, comline_connection **out) {
+    comline_config cfg;
+    memset(&cfg, 0, sizeof cfg);
+    cfg.wire_format = (const uint8_t *)"packed@1";
+    cfg.wire_format_len = 8;
+    cfg.framing = (const uint8_t *)"datagram@3";
+    cfg.framing_len = 10;
+    cfg.max_waiting = 16;
+    cfg.handshake = COMLINE_HANDSHAKE_COMLINE2;
+    comline_comline2_config c2;
+    memset(&c2, 0, sizeof c2);
+    c2.hello = hello->p;
+    c2.hello_len = hello->n;
+    c2.side = side;
+    c2.scope = scope;
+    c2.newer_consumer = newer;
+    c2.same_version_differs = svd;
+    c2.exchange = exchange;
+    *out = NULL;
+    return comline_connection_new_comline2(&cfg, &c2, out);
+}
+
+static enum ran case_comline2_message(const line *l) {
+    uint8_t kind = 0xff, reason = 0xff;
+    if (strcmp(l->how, "reject") == 0) {
+        CHECK(l->n == 1);
+        FIELD_BYTES(frame, 0);
+        comline_status status = comline_comline2_message_check(frame.p, frame.n, &kind, &reason);
+        bytes_free(&frame);
+        if (status != COMLINE_ERR_HANDSHAKE || kind != 0 || reason == 0) {
+            fprintf(stderr, "%s: check gave %d, kind %u, reason %u\n", case_id, (int)status, kind, reason);
+            return FAILED;
+        }
+        return FULL;
+    }
+    CHECK(strcmp(l->how, "exact") == 0 && l->n == 3);
+    FIELD_U64(type, 0, 3);
+    FIELD_U64(exchange, 1, 1);
+    FIELD_BYTES(frame, 2);
+    enum ran r = FAILED;
+    comline_connection *conn = NULL;
+    comline_status status = comline_comline2_message_check(frame.p, frame.n, &kind, &reason);
+    if (status != COMLINE_OK || kind != type || reason != 0) {
+        fprintf(stderr, "%s: check gave %d, kind %u, reason %u\n", case_id, (int)status, kind, reason);
+        goto out;
+    }
+    if (type == COMLINE_COMLINE2_HELLO) {
+        /* A hello is what a connection given it writes. */
+        if (comline2_new(&frame, COMLINE_SIDE_INITIATOR, 0, 0, 0, (uint8_t)exchange, &conn) != COMLINE_OK) {
+            fprintf(stderr, "%s: new failed\n", case_id);
+            goto out;
+        }
+        static uint8_t out_buf[OUT_CAP];
+        size_t written = SIZE_MAX;
+        status = comline_connection_start(conn, out_buf, OUT_CAP, &written);
+        if (status != COMLINE_OK || !same(out_buf, written, &frame)) {
+            fprintf(stderr, "%s: start gave %d\n", case_id, (int)status);
+            goto out;
+        }
+    }
+    r = FULL;
+out:
+    comline_connection_free(conn);
+    bytes_free(&frame);
+    return r;
+}
+
+/* Appends `numbers`, joined by `+`, `-` when there are none. */
+static void put_joined(char *text, size_t cap, const uint16_t *numbers, size_t n) {
+    if (n == 0) {
+        snprintf(text + strlen(text), cap - strlen(text), "-");
+        return;
+    }
+    for (size_t i = 0; i < n; i++) {
+        snprintf(text + strlen(text), cap - strlen(text), "%s%u", i ? "+" : "", numbers[i]);
+    }
+}
+
+/* What the connection's handshake came to, as `tests/common/cases.rs`' `outcome_of`
+ * writes it, read through the ABI alone. 0 when a reader fails. */
+static int outcome(comline_connection *conn, char *text, size_t cap) {
+    comline_refusal refusal;
+    text[0] = '\0';
+    if (comline_connection_refusal(conn, &refusal) == COMLINE_OK) {
+        if (refusal.has_protocol) {
+            snprintf(text, cap, "refused/%u/%u/%u", refusal.reason, refusal.side, refusal.protocol);
+        } else {
+            snprintf(text, cap, "refused/%u/%u/-", refusal.reason, refusal.side);
+        }
+        return 1;
+    }
+    comline_version version;
+    uint8_t pre[64];
+    size_t written = 0;
+    if (comline_connection_peer_version(conn, &version, pre, sizeof pre, &written) != COMLINE_OK) return 0;
+    snprintf(text, cap, "accepted/%u/%u/%u/", version.major, version.minor, version.patch);
+    if (written == 0) snprintf(text + strlen(text), cap - strlen(text), "-");
+    else snprintf(text + strlen(text), cap - strlen(text), "%.*s", (int)written, (const char *)pre);
+    snprintf(text + strlen(text), cap - strlen(text), "/");
+    comline_protocol_outcome protocols[32];
+    size_t count = 0;
+    if (comline_connection_protocols(conn, protocols, 32, &count) != COMLINE_OK) return 0;
+    if (count == 0) snprintf(text + strlen(text), cap - strlen(text), "-");
+    for (size_t i = 0; i < count; i++) {
+        snprintf(text + strlen(text), cap - strlen(text), "%s%u:", i ? "," : "", protocols[i].number);
+        if (protocols[i].reason != 0) {
+            snprintf(text + strlen(text), cap - strlen(text), "r:%u", protocols[i].reason);
+            continue;
+        }
+        uint16_t lacks[64];
+        size_t n = 0;
+        if (comline_connection_peer_lacks(conn, protocols[i].number, lacks, 64, &n) != COMLINE_OK) return 0;
+        snprintf(text + strlen(text), cap - strlen(text), "a:");
+        put_joined(text, cap, lacks, n);
+    }
+    snprintf(text + strlen(text), cap - strlen(text), "/");
+    uint16_t warnings[32];
+    size_t n = 0;
+    if (comline_connection_warnings(conn, warnings, 32, &n) != COMLINE_OK) return 0;
+    put_joined(text, cap, warnings, n);
+    return 1;
+}
+
+static enum ran case_comline2_negotiate(const line *l) {
+    CHECK(strcmp(l->how, "exact") == 0 && l->n == 10);
+    FIELD_U64(side, 0, 1);
+    FIELD_U64(scope, 1, 1);
+    FIELD_U64(newer, 2, 1);
+    FIELD_U64(svd, 3, 1);
+    FIELD_U64(exchange, 4, 1);
+    FIELD_BYTES(local, 5);
+    FIELD_BYTES(first, 6);
+    FIELD_BYTES(input, 7);
+    FIELD_BYTES(want, 8);
+    const char *want_outcome = l->f[9];
+    int refused = strncmp(want_outcome, "refused", 7) == 0;
+    enum ran r = FAILED;
+    comline_connection *conn = NULL;
+    static uint8_t out_buf[OUT_CAP];
+    size_t written = SIZE_MAX;
+    static char got[1024];
+    if (comline2_new(&local, (uint8_t)side, (uint8_t)scope, (uint8_t)newer, (uint8_t)svd,
+                     (uint8_t)exchange, &conn) != COMLINE_OK) {
+        fprintf(stderr, "%s: new failed\n", case_id);
+        goto out;
+    }
+    if (comline_connection_start(conn, out_buf, OUT_CAP, &written) != COMLINE_OK) {
+        fprintf(stderr, "%s: start failed\n", case_id);
+        goto out;
+    }
+    if (first.n > 0) {
+        fed f = feed(conn, &first);
+        if (f.status != COMLINE_OK ||
+            comline_connection_start(conn, out_buf, OUT_CAP, &written) != COMLINE_OK) {
+            fprintf(stderr, "%s: the first feed gave %d\n", case_id, (int)f.status);
+            goto out;
+        }
+    }
+    fed f = feed(conn, &input);
+    comline_status expected = refused ? COMLINE_ERR_REFUSED : COMLINE_OK;
+    if (f.status != expected || f.consumed != input.n ||
+        ((f.ev.flags & COMLINE_EVENT_SEND) != 0) != (want.n != 0)) {
+        fprintf(stderr, "%s: feed gave %d, consumed %zu, flags %#x\n", case_id, (int)f.status,
+                f.consumed, (unsigned)f.ev.flags);
+        goto out;
+    }
+    comline_status status = comline_connection_start(conn, out_buf, OUT_CAP, &written);
+    if (refused && want.n == 0) {
+        /* Nothing left to say: the refusal closed it. */
+        if (status != COMLINE_ERR_STATE) {
+            fprintf(stderr, "%s: start gave %d\n", case_id, (int)status);
+            goto out;
+        }
+    } else if (status != COMLINE_OK || !same(out_buf, written, &want)) {
+        fprintf(stderr, "%s: start gave %d\n", case_id, (int)status);
+        goto out;
+    }
+    if (!outcome(conn, got, sizeof got) || strcmp(got, want_outcome) != 0) {
+        fprintf(stderr, "%s: came to %s, expected %s\n", case_id, got, want_outcome);
+        goto out;
+    }
+    r = FULL;
+out:
+    comline_connection_free(conn);
+    bytes_free(&local);
+    bytes_free(&first);
+    bytes_free(&input);
+    bytes_free(&want);
+    return r;
+}
+
 /* `datagram@1`: no ABI operation does it, and the ABI refuses it. */
 static enum ran case_unmapped(const line *l) {
     CHECK(l->n == 1 && strcmp(l->how, "refused") == 0);
@@ -823,9 +1032,9 @@ static unsigned replay_file(const char *dir, const char *feature) {
     char *header[MAX_FIELDS];
     uint64_t expected = 0;
     if (!read_line(file, buf, sizeof buf) || split(buf, header, MAX_FIELDS) != 4 ||
-        strcmp(header[0], "comline-ffi-vectors") != 0 || strcmp(header[1], "1") != 0 ||
+        strcmp(header[0], "comline-ffi-vectors") != 0 || strcmp(header[1], "2") != 0 ||
         strcmp(header[2], feature) != 0 || !parse_u64(header[3], 1u << 20, &expected)) {
-        fprintf(stderr, "%s: not a version 1 export of %s\n", path, feature);
+        fprintf(stderr, "%s: not a version 2 export of %s\n", path, feature);
         fclose(file);
         return 1;
     }
@@ -847,6 +1056,8 @@ static unsigned replay_file(const char *dir, const char *feature) {
         if (strcmp(op, "name_hash") == 0) r = case_name_hash(&l);
         else if (strcmp(op, "handshake") == 0) r = case_handshake(&l);
         else if (strcmp(op, "handshake_check") == 0) r = case_handshake_check(&l);
+        else if (strcmp(op, "comline2_message") == 0) r = case_comline2_message(&l);
+        else if (strcmp(op, "comline2_negotiate") == 0) r = case_comline2_negotiate(&l);
         else if (strcmp(op, "envelope") == 0) r = case_envelope(&l);
         else if (strcmp(op, "request") == 0) r = case_request(&l);
         else if (strcmp(op, "response") == 0) r = case_response(&l);

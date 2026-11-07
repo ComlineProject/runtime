@@ -84,6 +84,12 @@ function everyCallPoisoned(comline, conns) {
     });
     assert.equal(conn.abandon(7n), POISONED);
     assert.deepEqual(conn.isWaiting(), { status: POISONED });
+    assert.equal(conn.checkCall(0, 0), POISONED);
+    assert.deepEqual(conn.refusal(), { status: POISONED });
+    assert.deepEqual(conn.warnings(4), { status: POISONED, written: 0 });
+    assert.deepEqual(conn.protocols(4), { status: POISONED, written: 0 });
+    assert.deepEqual(conn.peerLacks(0, 4), { status: POISONED, written: 0 });
+    assert.deepEqual(conn.peerVersion(4), { status: POISONED, written: 0 });
   }
   assert.deepEqual(comline.nameHash("json@1"), { status: POISONED });
   assert.deepEqual(comline.handshakeEncode(1n, "json@1", "datagram@2", 0, 64), {
@@ -95,6 +101,7 @@ function everyCallPoisoned(comline, conns) {
     peer: null,
   });
   assert.deepEqual(comline.methodNameUnescape("a", 8), { status: POISONED, written: 0 });
+  assert.deepEqual(comline.comline2MessageCheck(new Uint8Array(1)), { status: POISONED, kind: 0, reason: 0 });
   assert.deepEqual(comline.connectionNew(setup), { status: POISONED, connection: null });
   assert.equal(comline.supports("datagram@2"), false);
   assert.equal(comline.poisoned, true);

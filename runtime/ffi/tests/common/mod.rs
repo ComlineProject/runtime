@@ -82,7 +82,138 @@ pub struct Fed {
 
 pub struct Conn(pub *mut comline_connection);
 
+/// `comline_comline2_config`, defaults but for what a test sets.
+pub fn comline2_config(hello: &[u8], side: u8, exchange: u8) -> comline_comline2_config {
+    comline_comline2_config {
+        hello: hello.as_ptr(),
+        hello_len: hello.len(),
+        side,
+        scope: COMLINE_SCOPE_PROTOCOL,
+        newer_consumer: COMLINE_NEWER_CONSUMER_DEGRADE,
+        same_version_differs: COMLINE_SAME_VERSION_DIFFERS_REFUSE,
+        exchange,
+        _reserved: [0; 3],
+    }
+}
+
 impl Conn {
+    /// A `comline@2` connection on `framing`, message mode.
+    pub fn comline2(
+        framing: &'static str,
+        config: &comline_comline2_config,
+    ) -> Result<Self, comline_status> {
+        let setup = Setup {
+            handshake: COMLINE_HANDSHAKE_COMLINE2,
+            ..Setup::plain(framing)
+        };
+        let mut conn = ptr::null_mut();
+        let status = unsafe { comline_connection_new_comline2(&setup.config(), config, &mut conn) };
+        if status == COMLINE_OK {
+            assert!(!conn.is_null());
+            Ok(Self(conn))
+        } else {
+            assert!(conn.is_null(), "an error leaves *out null");
+            Err(status)
+        }
+    }
+
+    pub fn check_call(&mut self, protocol: u16, function: u16) -> comline_status {
+        unsafe { comline_connection_check_call(self.0, protocol, function) }
+    }
+
+    pub fn refusal(&mut self) -> Result<comline_refusal, comline_status> {
+        let mut refusal = comline_refusal {
+            reason: 0xff,
+            ..Default::default()
+        };
+        match unsafe { comline_connection_refusal(self.0, &mut refusal) } {
+            COMLINE_OK => Ok(refusal),
+            status => Err(status),
+        }
+    }
+
+    pub fn warnings(&mut self) -> Result<Vec<u16>, comline_status> {
+        numbers(|out, cap, written| unsafe {
+            comline_connection_warnings(self.0, out, cap, written)
+        })
+    }
+
+    pub fn peer_lacks(&mut self, protocol: u16) -> Result<Vec<u16>, comline_status> {
+        numbers(|out, cap, written| unsafe {
+            comline_connection_peer_lacks(self.0, protocol, out, cap, written)
+        })
+    }
+
+    pub fn protocols(&mut self) -> Result<Vec<comline_protocol_outcome>, comline_status> {
+        let mut written = 0;
+        let status =
+            unsafe { comline_connection_protocols(self.0, ptr::null_mut(), 0, &mut written) };
+        if status != COMLINE_OK && status != COMLINE_BUFFER_TOO_SMALL {
+            return Err(status);
+        }
+        let mut out = vec![comline_protocol_outcome::default(); written];
+        let status = unsafe {
+            comline_connection_protocols(self.0, out.as_mut_ptr(), out.len(), &mut written)
+        };
+        assert_eq!(status, COMLINE_OK);
+        Ok(out)
+    }
+
+    pub fn peer_version(&mut self) -> Result<(comline_version, String), comline_status> {
+        let mut version = comline_version::default();
+        let mut written = 0;
+        let status = unsafe {
+            comline_connection_peer_version(self.0, &mut version, ptr::null_mut(), 0, &mut written)
+        };
+        if status != COMLINE_OK && status != COMLINE_BUFFER_TOO_SMALL {
+            return Err(status);
+        }
+        let mut pre = vec![0u8; written];
+        let status = unsafe {
+            comline_connection_peer_version(
+                self.0,
+                &mut version,
+                pre.as_mut_ptr(),
+                pre.len(),
+                &mut written,
+            )
+        };
+        assert_eq!(status, COMLINE_OK);
+        Ok((
+            version,
+            String::from_utf8(pre).expect("a pre-release is UTF-8"),
+        ))
+    }
+
+    /// What the handshake came to, as `cases::outcome_of` writes it, read
+    /// through the ABI alone.
+    pub fn outcome(&mut self) -> Result<String, comline_status> {
+        if let Ok(r) = self.refusal() {
+            let protocol = (r.has_protocol == 1).then_some(r.protocol);
+            return Ok(cases::refused_text(r.reason, r.side, protocol));
+        }
+        let (version, pre) = self.peer_version()?;
+        let mut protocols = Vec::new();
+        for p in self.protocols()? {
+            protocols.push(if p.reason == 0 {
+                format!(
+                    "{}:a:{}",
+                    p.number,
+                    cases::joined(&self.peer_lacks(p.number)?)
+                )
+            } else {
+                format!("{}:r:{}", p.number, p.reason)
+            });
+        }
+        let warnings = self.warnings()?;
+        Ok(cases::accepted_text(
+            (version.major, version.minor, version.patch),
+            &pre,
+            &protocols,
+            &warnings,
+        ))
+    }
+
     pub fn new(setup: &Setup) -> Result<Self, comline_status> {
         Self::from_config(&setup.config())
     }
@@ -210,6 +341,21 @@ impl Drop for Conn {
     fn drop(&mut self) {
         unsafe { comline_connection_free(self.0) };
     }
+}
+
+/// A list of numbers from a function that says how many there are.
+fn numbers(
+    mut call: impl FnMut(*mut u16, usize, *mut usize) -> comline_status,
+) -> Result<Vec<u16>, comline_status> {
+    let mut written = 0;
+    let status = call(ptr::null_mut(), 0, &mut written);
+    if status != COMLINE_OK && status != COMLINE_BUFFER_TOO_SMALL {
+        return Err(status);
+    }
+    let mut out = vec![0u16; written];
+    let status = call(out.as_mut_ptr(), out.len(), &mut written);
+    assert_eq!(status, COMLINE_OK);
+    Ok(out)
 }
 
 fn finish(status: comline_status, mut out: Vec<u8>, written: usize, request_id: u64) -> Encoded {

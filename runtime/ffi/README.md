@@ -1,8 +1,8 @@
 # comline-runtime-ffi
 
-The C ABI over `comline-runtime`: the `comline@1` handshake, the envelopes,
-the connection framings (`datagram@2`, `jsonrpc@1`), connection state and
-frame limits, for every language that isn't Rust. Codecs, transports, async
+The C ABI over `comline-runtime`: the `comline@1` and `comline@2` handshakes,
+the envelopes, the connection framings (`datagram@2`, `datagram@3`,
+`jsonrpc@1`), connection state and frame limits, for every language that isn't Rust. Codecs, transports, async
 and dispatch stay in each host.
 
 - `src/lib.rs`: the ABI, and the rules every function keeps.
@@ -71,7 +71,10 @@ input, retry sizes, no request id spent on a refusal, no allocation after
 `comline_connection_new`, except `jsonrpc@1`'s decode, runtime#58). The driver is `tests/common/drive.rs`; it runs on
 proptest's sequences in `tests/differential.rs`, and on fuzzer input in the
 `ffi_feed` (rules only) and `ffi_vs_core` targets in
-[`runtime/fuzz`](../fuzz/README.md).
+[`runtime/fuzz`](../fuzz/README.md). `comline@2` isn't in that driver: its steps
+are proven by the vectors, its whole exchanges and rules by `tests/comline2.rs`
+and `js/test/comline2.test.mjs`, and what a peer may send by the `ffi_comline2`
+fuzz target.
 
 ```sh
 PROPTEST_CASES=100000 cargo test --release -p comline-runtime-ffi --test differential
@@ -94,6 +97,25 @@ is built as a host links it, without this crate's `test-hooks`.
 ```sh
 cargo bench -p comline-runtime-ffi-bench   # needs Valgrind and iai-callgrind-runner
 ```
+
+## `comline@2`
+
+A connection made with `comline_connection_new_comline2` takes this end's facts
+as an encoded hello message, and its side and parameters. A generator can write the
+hello out as a constant. It then runs like any handshake on a connection:
+
+- `comline_connection_start` gives the next message to send, or nothing, and
+  `comline_connection_feed` takes the peer's. Call `start` once at first, and again
+  whenever an event or a refusal has `COMLINE_EVENT_SEND`.
+- `feed` gives `COMLINE_EVENT_HANDSHAKE_CONTINUE`, then `COMLINE_EVENT_HANDSHAKE_OK`,
+  or `COMLINE_ERR_REFUSED`, and `comline_connection_refusal` gives the reason and side.
+- `comline_connection_check_call` comes before each request: `COMLINE_ERR_UNAVAILABLE`
+  fails the call locally. `comline_connection_warnings` lists the protocols that
+  connected under `same_version_differs = warn`, and `comline_connection_protocols`,
+  `comline_connection_peer_lacks` and `comline_connection_peer_version` say the rest.
+
+Its handshake allocates, since the peer picks the size of its lists. Nothing
+allocates once it's over.
 
 ## The wasm32 build
 
@@ -135,7 +157,7 @@ way.
 
 **Sizing an encode.** `encodeBound({ framing, stream, kind, bodyLen, ... })`
 is the most bytes an encode can write, so `cap` never needs a retry. Given
-everything the frame holds (`datagram@2`: `protocol`; `jsonrpc@1`: the
+everything the frame holds (`datagram@2`: `protocol`; `datagram@3`: `protocol` and `callId`; `jsonrpc@1`: the
 `name`, ids and error id) it is exact, from the framings' writers in
 `comline-runtime`: `datagram@2`'s fixed header with its protocol varint,
 and `jsonrpc@1`'s fixed members, its name escaped as serde_json escapes it,

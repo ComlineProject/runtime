@@ -36,6 +36,7 @@ import {
   EventFlag,
   EventKind,
   Handshake,
+  Side,
   Status,
 } from "../comline.mjs";
 
@@ -49,9 +50,11 @@ const WASM =
 const FILES = [
   "name-hash",
   "handshake",
+  "handshake-comline2",
   "envelope",
   "framing-datagram",
   "framing-datagram2",
+  "framing-datagram3",
   "framing-jsonrpc",
 ];
 
@@ -391,8 +394,8 @@ function caseRequest(how, f) {
   const patched = how === "patched";
   check((patched || how === "exact") && f.length === 10, "malformed");
   const framing = f[0];
-  const datagram2 = framing === "datagram@2";
-  check(datagram2 || framing === "jsonrpc@1", `framing ${framing}`);
+  const datagram = framing === "datagram@2" || framing === "datagram@3";
+  check(datagram || framing === "jsonrpc@1", `framing ${framing}`);
   const protocol = numField(f[1], 0xffff);
   const callId = numField(f[2], 0xffff);
   const method = bytesField(f[3]);
@@ -413,7 +416,7 @@ function caseRequest(how, f) {
     const request = { framing, kind: "request", bodyLen: none ? 0 : params.length };
     const encoded = sizedEncode(
       encodeBound({
-        ...request, protocol, name: method, expectsReply: !oneWay, requestId: drive,
+        ...request, protocol, callId, name: method, expectsReply: !oneWay, requestId: drive,
       }),
       encodeBound({ ...request, nameLen: method.length }),
       (cap) => conn.encodeRequest(protocol, callId, method, !oneWay, params, cap),
@@ -458,7 +461,7 @@ function caseRequest(how, f) {
   } else {
     sameBytes(at(input, ev.body), params, "params");
   }
-  if (datagram2) {
+  if (datagram) {
     check(
       (ev.flags & EventFlag.HAS_PROTOCOL) !== 0 &&
         (ev.flags & EventFlag.CALL_BY_NAME) === 0 &&
@@ -523,6 +526,105 @@ function caseResponse(how, f) {
   return FULL;
 }
 
+/** A `comline@2` connection with `hello` as its facts, on `datagram@3`. */
+function comline2Setup(hello, side, scope, newerConsumer, sameVersionDiffers, exchange) {
+  return {
+    framing: "datagram@3",
+    wireFormat: "packed@1",
+    handshake: Handshake.COMLINE2,
+    maxWaiting: 16,
+    comline2: { hello, side, scope, newerConsumer, sameVersionDiffers, exchange },
+  };
+}
+
+function caseComline2Message(how, f) {
+  if (how === "reject") {
+    check(f.length === 1, "malformed");
+    const { status, kind, reason } = comline.comline2MessageCheck(bytesField(f[0]));
+    check(status === Status.ERR_HANDSHAKE && kind === 0 && reason !== 0, `check gave ${status}`);
+    return FULL;
+  }
+  check(how === "exact" && f.length === 3, "malformed");
+  const type = numField(f[0], 3);
+  const exchange = numField(f[1], 1);
+  const frame = bytesField(f[2]);
+  const { status, kind, reason } = comline.comline2MessageCheck(frame);
+  check(status === Status.OK && kind === type && reason === 0, `check gave ${status}, kind ${kind}`);
+  if (type === 1) {
+    // A hello is what a connection given it writes.
+    withConn(comline2Setup(frame, Side.INITIATOR, 0, 0, 0, exchange), (conn) => {
+      const hello = conn.start(4096);
+      check(hello.status === Status.OK, `start gave ${hello.status}`);
+      sameBytes(hello.bytes, frame, "hello");
+    });
+  }
+  return FULL;
+}
+
+const joined = (numbers) => (numbers.length ? numbers.join("+") : "-");
+
+/** What the handshake came to, as `tests/common/cases.rs`' `outcome_of` writes
+ * it, read through the ABI alone. */
+function outcomeOf(conn) {
+  const refusal = conn.refusal();
+  if (refusal.status === Status.OK) {
+    const { reason, side, protocol } = refusal.refusal;
+    return `refused/${reason}/${side}/${protocol ?? "-"}`;
+  }
+  const version = conn.peerVersion(64);
+  check(version.status === Status.OK, `peerVersion gave ${version.status}`);
+  const protocols = conn.protocols(32);
+  check(protocols.status === Status.OK, `protocols gave ${protocols.status}`);
+  const rendered = protocols.protocols.map((p) => {
+    if (p.reason !== 0) return `${p.number}:r:${p.reason}`;
+    const lacks = conn.peerLacks(p.number, 64);
+    check(lacks.status === Status.OK, `peerLacks gave ${lacks.status}`);
+    return `${p.number}:a:${joined(lacks.numbers)}`;
+  });
+  const warnings = conn.warnings(32);
+  check(warnings.status === Status.OK, `warnings gave ${warnings.status}`);
+  const { major, minor, patch } = version.version;
+  return (
+    `accepted/${major}/${minor}/${patch}/${version.pre || "-"}/` +
+    `${rendered.length ? rendered.join(",") : "-"}/${joined(warnings.numbers)}`
+  );
+}
+
+function caseComline2Negotiate(how, f) {
+  check(how === "exact" && f.length === 10, "malformed");
+  const [side, scope, newer, svd, exchange] = f.slice(0, 5).map((v) => numField(v, 1));
+  const local = bytesField(f[5]);
+  const first = bytesField(f[6]);
+  const input = bytesField(f[7]);
+  const want = bytesField(f[8]);
+  const outcome = f[9];
+  const refused = outcome.startsWith("refused");
+  withConn(comline2Setup(local, side, scope, newer, svd, exchange), (conn) => {
+    check(conn.start(4096).status === Status.OK, "start");
+    if (first.length) {
+      const fed = conn.feed(first);
+      check(fed.status === Status.OK, `the first feed gave ${fed.status}`);
+      check(conn.start(4096).status === Status.OK, "start after the first feed");
+    }
+    const fed = conn.feed(input);
+    const expected = refused ? Status.ERR_REFUSED : Status.OK;
+    check(fed.status === expected, `feed gave ${fed.status}, expected ${expected}`);
+    check(fed.consumed === input.length, `consumed ${fed.consumed}`);
+    check(((fed.event.flags & EventFlag.SEND) !== 0) === (want.length !== 0), "the SEND flag");
+    const reply = conn.start(4096);
+    if (refused && want.length === 0) {
+      // Nothing left to say: the refusal closed it.
+      check(reply.status === Status.ERR_STATE, `start gave ${reply.status}`);
+    } else {
+      check(reply.status === Status.OK, `start gave ${reply.status}`);
+      sameBytes(reply.bytes, want, "reply");
+    }
+    const got = outcomeOf(conn);
+    check(got === outcome, `came to ${got}, expected ${outcome}`);
+  });
+  return FULL;
+}
+
 /** `datagram@1`: no ABI operation does it, and the ABI refuses it. */
 function caseUnmapped(how, f) {
   check(how === "refused" && f.length === 1, "malformed");
@@ -537,6 +639,8 @@ const OPS = {
   name_hash: caseNameHash,
   handshake: caseHandshake,
   handshake_check: caseHandshakeCheck,
+  comline2_message: caseComline2Message,
+  comline2_negotiate: caseComline2Negotiate,
   envelope: caseEnvelope,
   request: caseRequest,
   response: caseResponse,
@@ -555,10 +659,10 @@ function replay(feature, counts) {
   assert.ok(
     head.length === 4 &&
       head[0] === "comline-ffi-vectors" &&
-      head[1] === "1" &&
+      head[1] === "2" &&
       head[2] === feature &&
       /^[0-9]+$/.test(head[3]),
-    `${path}: not a version 1 export of ${feature}`,
+    `${path}: not a version 2 export of ${feature}`,
   );
   const expected = Number(head[3]);
   const failures = [];
