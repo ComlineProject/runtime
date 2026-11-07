@@ -212,7 +212,8 @@ fn put_u64(n: u64, out: &mut dyn BufMut) {
 /// Writes a request from its encoded params, which say nothing when empty or
 /// `null`: JSON-RPC 2.0 has `params` omitted then, not `null`.
 fn put_request_body(name: &str, request_id: Option<u64>, params: &[u8], out: &mut dyn BufMut) {
-    let has_params = !params.is_empty() && params != b"null";
+    // By length first: params that say something are almost all longer.
+    let has_params = params.len() > 4 || !matches!(params, b"" | b"null");
     put_method(name, has_params, out);
     if has_params {
         out.put_slice(params);
