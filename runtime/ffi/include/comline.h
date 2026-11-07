@@ -165,7 +165,9 @@ typedef struct comline_config {
   /*
    The wire format's name (`"packed@1"`), UTF-8, not NUL-terminated. The
    codecs are the host's, so any name is taken; only the handshake reads
-   it, hashed.
+   it, hashed. Bodies aren't checked: on `jsonrpc@1` each must be one JSON
+   value, and a request's params an array, an object or empty, or a peer
+   refuses the frame.
    */
   const uint8_t *wire_format;
   size_t wire_format_len;

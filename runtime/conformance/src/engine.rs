@@ -18,6 +18,7 @@ use comline_runtime::format::{Json, MsgPack, Packed};
 use comline_runtime::framing::JsonRpcFraming;
 
 use crate::runner::{judge, questions};
+use crate::profile::{official_output, official_payload};
 use crate::{
     comline2, hex, intern, json_equal, seed, Case, Compare, DecodeIn, Expect, Framed, Hex, Input, Op,
     Outcome, Reply, RequestIn, ResponseIn, StreamPrefixIn, StreamSplit, StreamSplitIn, Type, TypeSeed,
@@ -205,16 +206,32 @@ fn encode_request_bodies(i: &RequestIn) -> Result<Vec<(&'static str, Vec<u8>)>, 
     Ok(bodies)
 }
 
+/// Refuses a request its framing can't carry, by the facts of the official
+/// profiles. An encoding without one is left to what comes next, which says
+/// it isn't implemented.
+fn fits(i: &RequestIn) -> Result<(), Outcome> {
+    let (Some(payload), Some(output)) = (official_payload(&i.framing), official_output(&i.format))
+    else {
+        return Ok(());
+    };
+    let carried = payload.carries(output)
+        && encode_with(&i.format, &i.params).is_none_or(|params| payload.carries_params(&params));
+    if carried {
+        return Ok(());
+    }
+    Err(Outcome::NotImplemented(format!(
+        "these params in `{}` on `{}`: it takes `{}`, and they're `{}`",
+        i.format,
+        i.framing,
+        payload.as_str(),
+        output.as_str(),
+    )))
+}
+
 /// Encodes `input` for `op` with `comline-runtime`.
 pub(crate) fn encode(input: &Input) -> Result<Vec<u8>, Outcome> {
     if let Input::Request(Framed::Full(i)) = input {
-        // Its params are JSON inside the frame: anything else isn't JSON-RPC.
-        if i.framing == FRAMING_JSONRPC && i.format != FORMAT_JSON {
-            return Err(Outcome::NotImplemented(format!(
-                "format `{}` on `{}`",
-                i.format, i.framing
-            )));
-        }
+        fits(i)?;
     }
     let mut out = Vec::new();
     match input {
@@ -628,7 +645,7 @@ fn request_bodies_match(case: &Case) -> Result<(), Outcome> {
     let Input::Request(Framed::Full(i)) = &case.input else {
         return Ok(());
     };
-    if case.expect == Expect::Reject {
+    if case.expect != Expect::Exact {
         return Ok(());
     }
     let want = &case.bytes.0;

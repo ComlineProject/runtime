@@ -371,7 +371,10 @@ pub fn reference_cases() -> Vec<Vectors> {
                 .cases
                 .extend(decode_cases("format-msgpack", FORMAT_MSGPACK)),
             "format-packed" => v.cases.extend(decode_cases("format-packed", FORMAT_PACKED)),
-            "framing-jsonrpc" => v.cases.extend(found_jsonrpc_cases()),
+            "framing-jsonrpc" => {
+                v.cases.extend(found_jsonrpc_cases());
+                v.cases.extend(jsonrpc_unknown_members());
+            }
             "handshake" => v.cases.extend(handshake_check_cases()),
             _ => {}
         }
@@ -1126,6 +1129,73 @@ fn found_jsonrpc_cases() -> Vec<Case> {
     ]
 }
 
+/// `framing-jsonrpc/request` and its responses with the payload in a format
+/// that isn't JSON: `jsonrpc@1` embeds a payload as a JSON value, so the frame
+/// isn't JSON-RPC. `payload: json` is proven by these.
+fn non_json_payloads() -> Vec<Case> {
+    let request_for = || Input::Request(Framed::Selector { framing: FRAMING_JSONRPC.into() });
+    let response_for = || Input::Response(Framed::Selector { framing: FRAMING_JSONRPC.into() });
+    let params = Value::Array(vec![Value::U32(7), Value::String("x".into())]);
+    let mut cases = Vec::new();
+    for (name, format) in [("msgpack", FORMAT_MSGPACK), ("packed", FORMAT_PACKED)] {
+        let bytes = encode_with(format, &params).expect("the params encode");
+        let framed = |head: &str, tail: &str| [head.as_bytes(), &bytes, tail.as_bytes()].concat();
+        cases.push(reject(
+            &format!("framing-jsonrpc/reject-request-params-{name}"),
+            request_for(),
+            &framed(r#"{"jsonrpc":"2.0","method":"greet","params":"#, r#","id":42}"#),
+        ));
+        cases.push(reject(
+            &format!("framing-jsonrpc/reject-response-result-{name}"),
+            response_for(),
+            &framed(r#"{"jsonrpc":"2.0","result":"#, r#","id":7}"#),
+        ));
+        cases.push(reject(
+            &format!("framing-jsonrpc/reject-response-error-data-{name}"),
+            response_for(),
+            &framed(
+                r#"{"jsonrpc":"2.0","error":{"code":2,"message":"application error","data":"#,
+                r#"},"id":7}"#,
+            ),
+        ));
+    }
+    cases
+}
+
+/// Members JSON-RPC 2.0 doesn't name, in a frame otherwise like the reference's
+/// own. The specification doesn't forbid them, so a reader ignores them and an
+/// ordinary JSON-RPC peer can send them.
+fn jsonrpc_unknown_members() -> Vec<Case> {
+    let accept = |(id, input): (String, Input), bytes: &[u8]| Case {
+        id,
+        input,
+        bytes: Hex(bytes.to_vec()),
+        expect: Expect::Accept,
+        compare: Compare::Bytes,
+    };
+    let params = Value::Array(vec![Value::U32(7), Value::String("x".into())]);
+    let p = |id: &str| format!("framing-jsonrpc/{id}");
+    vec![
+        accept(
+            request(p("accept-request-unknown-member"), FRAMING_JSONRPC, 0, "greet", 42, &params),
+            br#"{"jsonrpc":"2.0","method":"greet","params":[7,"x"],"x":[1],"id":42}"#,
+        ),
+        accept(
+            response(p("accept-response-unknown-member"), FRAMING_JSONRPC, 7, ok(br#"{"body":"hi"}"#)),
+            br#"{"jsonrpc":"2.0","result":{"body":"hi"},"x":[1],"id":7}"#,
+        ),
+        accept(
+            response(
+                p("accept-response-error-unknown-member"),
+                FRAMING_JSONRPC,
+                7,
+                Reply::Err { id: 2, body: Hex(br#"{"why":"no"}"#.to_vec()) },
+            ),
+            br#"{"jsonrpc":"2.0","error":{"code":2,"message":"application error","x":[1],"data":{"why":"no"}},"id":7}"#,
+        ),
+    ]
+}
+
 /// Stream framing (`contract::stream`): length prefixes, and streams split
 /// into frames, at the default limit and at a small one, on both sides of
 /// each.
@@ -1503,6 +1573,64 @@ fn rejections(feature: &str) -> Vec<Case> {
                 response_for(FRAMING_JSONRPC),
                 br#"{"result":1,"id":1}"#,
             ),
+            // A member written twice, which JSON leaves to the reader and a
+            // last-wins reader gets wrong: it lets params that aren't one JSON
+            // value overwrite a frame's `method`. Refused wherever it's read.
+            reject(
+                "framing-jsonrpc/reject-request-repeated-jsonrpc",
+                request_for(FRAMING_JSONRPC),
+                br#"{"jsonrpc":"2.0","jsonrpc":"2.0","method":"greet","params":[],"id":1}"#,
+            ),
+            reject(
+                "framing-jsonrpc/reject-request-repeated-method",
+                request_for(FRAMING_JSONRPC),
+                br#"{"jsonrpc":"2.0","method":"greet","params":[],"method":"other","id":1}"#,
+            ),
+            reject(
+                "framing-jsonrpc/reject-request-repeated-params",
+                request_for(FRAMING_JSONRPC),
+                br#"{"jsonrpc":"2.0","method":"greet","params":[],"params":[1],"id":1}"#,
+            ),
+            reject(
+                "framing-jsonrpc/reject-request-repeated-id",
+                request_for(FRAMING_JSONRPC),
+                br#"{"jsonrpc":"2.0","method":"greet","id":1,"params":[],"id":2}"#,
+            ),
+            reject(
+                "framing-jsonrpc/reject-response-repeated-jsonrpc",
+                response_for(FRAMING_JSONRPC),
+                br#"{"jsonrpc":"2.0","jsonrpc":"2.0","result":1,"id":1}"#,
+            ),
+            reject(
+                "framing-jsonrpc/reject-response-repeated-result",
+                response_for(FRAMING_JSONRPC),
+                br#"{"jsonrpc":"2.0","result":1,"result":2,"id":1}"#,
+            ),
+            reject(
+                "framing-jsonrpc/reject-response-repeated-id",
+                response_for(FRAMING_JSONRPC),
+                br#"{"jsonrpc":"2.0","result":1,"id":1,"id":2}"#,
+            ),
+            reject(
+                "framing-jsonrpc/reject-response-repeated-error",
+                response_for(FRAMING_JSONRPC),
+                br#"{"jsonrpc":"2.0","error":{"code":1,"message":"x"},"error":{"code":2,"message":"y"},"id":1}"#,
+            ),
+            reject(
+                "framing-jsonrpc/reject-response-repeated-error-code",
+                response_for(FRAMING_JSONRPC),
+                br#"{"jsonrpc":"2.0","error":{"code":1,"code":2,"message":"x"},"id":1}"#,
+            ),
+            reject(
+                "framing-jsonrpc/reject-response-repeated-error-message",
+                response_for(FRAMING_JSONRPC),
+                br#"{"jsonrpc":"2.0","error":{"code":1,"message":"x","message":"y"},"id":1}"#,
+            ),
+            reject(
+                "framing-jsonrpc/reject-response-repeated-error-data",
+                response_for(FRAMING_JSONRPC),
+                br#"{"jsonrpc":"2.0","error":{"code":1,"message":"x","data":1,"data":2},"id":1}"#,
+            ),
             // Found by comline-typescript's differential tests (#42): JSON
             // text is UTF-8 throughout, so `\xff` is refused even in a member
             // the framing ignores.
@@ -1531,7 +1659,10 @@ fn rejections(feature: &str) -> Vec<Case> {
                 response_for(FRAMING_JSONRPC),
                 b"{\"jsonrpc\":\"2.0\",\"error\":{\"code\":1,\"message\":\"\xff\"},\"id\":1}",
             ),
-        ],
+        ]
+        .into_iter()
+        .chain(non_json_payloads())
+        .collect(),
         _ => vec![],
     }
 }

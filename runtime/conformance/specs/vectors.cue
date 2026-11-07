@@ -11,6 +11,8 @@ package conformance
 // decode from, or (`expect: "reject"`) bytes the operation must refuse. A
 // rejection's input is only what selects the decoder, if anything. A case
 // that doesn't say `expect` is exact: `*` picks that when both could hold.
+// `expect: "accept"` is bytes the operation must read as the input, though
+// encoding the input needn't give them.
 #Case:
 	*close({id!: #CaseId, bytes!: #Hex, compare?: #Compare, expect?: "exact", op!: "name_hash", input!: close({name!: string})}) |
 	*close({id!: #CaseId, bytes!: #Hex, compare?: #Compare, expect?: "exact", op!: "handshake", input!: #HandshakeFrame}) |
@@ -20,8 +22,10 @@ package conformance
 	close({id!: #CaseId, bytes!: #Hex, compare?: #Compare, expect!: "reject", op!: "envelope", input?: #Reply}) |
 	*close({id!: #CaseId, bytes!: #Hex, compare?: #Compare, expect?: "exact", op!: "request", input!: #RequestInput}) |
 	close({id!: #CaseId, bytes!: #Hex, compare?: #Compare, expect!: "reject", op!: "request", input!: #SelectsFraming}) |
+	close({id!: #CaseId, bytes!: #Hex, compare?: #Compare, expect!: "accept", op!: "request", input!: #RequestInput}) |
 	*close({id!: #CaseId, bytes!: #Hex, compare?: #Compare, expect?: "exact", op!: "response", input!: #ResponseInput}) |
 	close({id!: #CaseId, bytes!: #Hex, compare?: #Compare, expect!: "reject", op!: "response", input!: #SelectsFraming}) |
+	close({id!: #CaseId, bytes!: #Hex, compare?: #Compare, expect!: "accept", op!: "response", input!: #ResponseInput}) |
 	close({id!: #CaseId, bytes!: #Hex, compare?: #Compare, expect?: #Expect, op!: "encode", input!: #EncodeInput}) |
 	*close({id!: #CaseId, bytes!: #Hex, compare?: #Compare, expect?: "exact", op!: "decode", input!: #DecodedInput}) |
 	close({id!: #CaseId, bytes!: #Hex, compare?: #Compare, expect!: "reject", op!: "decode", input!: #DecodeInput}) |

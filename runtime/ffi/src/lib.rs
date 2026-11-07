@@ -218,7 +218,9 @@ pub struct comline_config {
     pub ir_hash: u64,
     /// The wire format's name (`"packed@1"`), UTF-8, not NUL-terminated. The
     /// codecs are the host's, so any name is taken; only the handshake reads
-    /// it, hashed.
+    /// it, hashed. Bodies aren't checked: on `jsonrpc@1` each must be one JSON
+    /// value, and a request's params an array, an object or empty, or a peer
+    /// refuses the frame.
     pub wire_format: *const u8,
     pub wire_format_len: usize,
     /// The framing's name: `"datagram@2"` or `"jsonrpc@1"`. UTF-8, not

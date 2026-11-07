@@ -111,6 +111,25 @@
                                 "value"
                             ]
                         },
+                        "output": {
+                            "type": "object",
+                            "additionalProperties": false,
+                            "properties": {
+                                "proven_by": {
+                                    "$ref": "#/$defs/ProvenBy"
+                                },
+                                "value": {
+                                    "enum": [
+                                        "bytes",
+                                        "json"
+                                    ]
+                                }
+                            },
+                            "required": [
+                                "proven_by",
+                                "value"
+                            ]
+                        },
                         "struct_fields": {
                             "type": "object",
                             "additionalProperties": false,
@@ -173,6 +192,7 @@
                         "enum_variants",
                         "integer_width",
                         "missing_optional",
+                        "output",
                         "struct_fields",
                         "unknown_field",
                         "unknown_variant"
@@ -241,11 +261,31 @@
                                 "proven_by",
                                 "value"
                             ]
+                        },
+                        "payload": {
+                            "type": "object",
+                            "additionalProperties": false,
+                            "properties": {
+                                "proven_by": {
+                                    "$ref": "#/$defs/ProvenBy"
+                                },
+                                "value": {
+                                    "enum": [
+                                        "opaque",
+                                        "json"
+                                    ]
+                                }
+                            },
+                            "required": [
+                                "proven_by",
+                                "value"
+                            ]
                         }
                     },
                     "required": [
                         "calls",
-                        "errors"
+                        "errors",
+                        "payload"
                     ]
                 },
                 "kind": {

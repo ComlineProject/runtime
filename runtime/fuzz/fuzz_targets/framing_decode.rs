@@ -15,6 +15,9 @@
 //! JSON-RPC response or reply is re-encoded and decoded again instead, and
 //! must give the same thing. A JSON-RPC request's method name is
 //! `&'static str` on the encoding side, so requests are only decoded.
+//!
+//! The bytes also go in as a JSON-RPC payload, which is embedded in the frame's
+//! text, so they must not change what the frame calls or answers.
 
 #![no_main]
 
@@ -66,7 +69,33 @@ fn reencodes(out: &[u8], bytes: &[u8], prefix_only: bool, what: &dyn std::fmt::D
     }
 }
 
+/// `bytes` as a JSON-RPC payload: whatever they are, a frame that's read at
+/// all still calls what it called and answers what it answered.
+fn payload_stays_inside(bytes: &[u8]) {
+    let f = JsonRpcFraming;
+    let mut frame = Vec::new();
+    Framing::encode_request_body(&f, 7, "m", 42, bytes, &mut frame);
+    if let Some(request) = Framing::decode_request(&f, &frame) {
+        assert_eq!(request.request_id, 42, "{frame:?}");
+        assert!(matches!(request.call, RequestCall::Name(name) if name == "m"), "{frame:?}");
+    }
+    frame.clear();
+    Framing::encode_response_ok(&f, 42, bytes, &mut frame);
+    if let Some((id, envelope)) = Framing::decode_response(&f, &frame) {
+        assert_eq!(id, 42, "{frame:?}");
+        assert!(matches!(envelope, Envelope::Ok(_)), "{frame:?}");
+    }
+    frame.clear();
+    Framing::encode_response_err(&f, 42, 2, bytes, &mut frame);
+    if let Some((id, envelope)) = Framing::decode_response(&f, &frame) {
+        assert_eq!(id, 42, "{frame:?}");
+        assert!(matches!(envelope, Envelope::Err { id: 2, .. }), "{frame:?}");
+    }
+}
+
 fuzz_target!(|bytes: &[u8]| {
+    payload_stays_inside(bytes);
+
     if let Some(envelope) = Envelope::decode(bytes) {
         let mut out = Vec::new();
         envelope.encode(&mut out);
