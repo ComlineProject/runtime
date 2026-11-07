@@ -1,9 +1,18 @@
 {
   "runtime": "rust",
-  "commit": "3fb9c1727559367e01c06f4a04afad9a194554cd",
+  "commit": "9a56972553c03ead45a28cce0bc22aa16748bea7",
   "toolchain": "rustc 1.98.0 (88d9e12ae 2026-08-18)",
   "metric": "instructions",
   "benches": {
+    "comline2/answer": {
+      "ir": 4718
+    },
+    "comline2/decode": {
+      "ir": 1926
+    },
+    "comline2/encode": {
+      "ir": 1996
+    },
     "connection/step": {
       "ir": 972
     },
@@ -433,6 +442,18 @@
     "framing/decode/datagram@2/65536": {
       "ir": 98
     },
+    "framing/decode/datagram@3/16": {
+      "ir": 108
+    },
+    "framing/decode/datagram@3/256": {
+      "ir": 108
+    },
+    "framing/decode/datagram@3/4096": {
+      "ir": 108
+    },
+    "framing/decode/datagram@3/65536": {
+      "ir": 108
+    },
     "framing/decode/jsonrpc@1/16": {
       "ir": 1487
     },
@@ -467,6 +488,18 @@
       "ir": 714
     },
     "framing/encode/datagram@2/65536": {
+      "ir": 65807
+    },
+    "framing/encode/datagram@3/16": {
+      "ir": 314
+    },
+    "framing/encode/datagram@3/256": {
+      "ir": 333
+    },
+    "framing/encode/datagram@3/4096": {
+      "ir": 714
+    },
+    "framing/encode/datagram@3/65536": {
       "ir": 65807
     },
     "framing/encode/jsonrpc@1/16": {
