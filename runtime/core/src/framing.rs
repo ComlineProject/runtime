@@ -152,11 +152,11 @@ fn method_of(method: &RawValue) -> Option<MethodName<'_>> {
     MethodName::from_json(text)
 }
 
-/// Writes `{"jsonrpc":"2.0","method":<name>`, then `,"params":` if
-/// `has_params`, with the name a JSON string escaped as serde_json escapes one: `"` and `\` by backslash,
+/// Writes `{"jsonrpc":"2.0","method":<name>`, up to the name's closing quote,
+/// which comes with what follows it, with the name a JSON string escaped as serde_json escapes one: `"` and `\` by backslash,
 /// control characters as `\b`, `\f`, `\n`, `\r`, `\t` or `\u00XX`, and
 /// nothing else. A generated name needs no escape, and goes out in one slice.
-fn put_method(name: &str, has_params: bool, out: &mut dyn BufMut) {
+fn put_method(name: &str, out: &mut dyn BufMut) {
     const HEX: &[u8; 16] = b"0123456789abcdef";
     out.put_slice(br#"{"jsonrpc":"2.0","method":""#);
     let bytes = name.as_bytes();
@@ -189,7 +189,6 @@ fn put_method(name: &str, has_params: bool, out: &mut dyn BufMut) {
         start = i + 1;
     }
     out.put_slice(&bytes[start..]);
-    out.put_slice(if has_params { br#"","params":"# } else { br#"""# });
 }
 
 /// Writes `n` in decimal, as `u64`'s `Display` writes it, from a buffer on
@@ -209,15 +208,20 @@ fn put_u64(n: u64, out: &mut dyn BufMut) {
     out.put_slice(&digits[start..]);
 }
 
+const METHOD_END: &[u8] = br#"""#;
+const METHOD_THEN_PARAMS: &[u8] = br#"","params":"#;
+
 /// Writes a request from its encoded params, which say nothing when empty or
 /// `null`: JSON-RPC 2.0 has `params` omitted then, not `null`.
 #[inline(always)]
 fn put_request_body(name: &str, request_id: Option<u64>, params: &[u8], out: &mut dyn BufMut) {
+    put_method(name, out);
     // By length first: params that say something are almost all longer.
-    let has_params = params.len() > 4 || !matches!(params, b"" | b"null");
-    put_method(name, has_params, out);
-    if has_params {
+    if params.len() > 4 || !matches!(params, b"" | b"null") {
+        out.put_slice(METHOD_THEN_PARAMS);
         out.put_slice(params);
+    } else {
+        out.put_slice(METHOD_END);
     }
     put_request_end(request_id, out);
 }
@@ -235,11 +239,12 @@ where
     W: WireFormat,
     P: Serialize + ?Sized,
 {
+    put_method(name, out);
     if params.serialize(NoParams).is_err() {
-        put_method(name, true, out);
+        out.put_slice(METHOD_THEN_PARAMS);
         fmt.encode(params, out)?;
     } else {
-        put_method(name, false, out);
+        out.put_slice(METHOD_END);
         let mut held = HeldNull { out, matched: 0, passing: false };
         fmt.encode(params, &mut held)?;
         held.finish();
