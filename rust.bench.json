@@ -1,6 +1,6 @@
 {
   "runtime": "rust",
-  "commit": "0325240fad77b0710dddd62635f7e558c92b1758",
+  "commit": "3d749427a80986bb293a5cdf9165be4fa02186f7",
   "toolchain": "rustc 1.98.0 (88d9e12ae 2026-08-18)",
   "metric": "instructions",
   "benches": {
@@ -137,28 +137,28 @@
       "ir": 299
     },
     "ffi/abi/feed/jsonrpc@1/message/16": {
-      "ir": 1690
+      "ir": 1692
     },
     "ffi/abi/feed/jsonrpc@1/message/256": {
-      "ir": 2365
+      "ir": 2367
     },
     "ffi/abi/feed/jsonrpc@1/message/4096": {
-      "ir": 13165
+      "ir": 13167
     },
     "ffi/abi/feed/jsonrpc@1/message/65536": {
-      "ir": 185965
+      "ir": 185967
     },
     "ffi/abi/feed/jsonrpc@1/stream/16": {
-      "ir": 1792
+      "ir": 1794
     },
     "ffi/abi/feed/jsonrpc@1/stream/256": {
-      "ir": 2467
+      "ir": 2469
     },
     "ffi/abi/feed/jsonrpc@1/stream/4096": {
-      "ir": 13267
+      "ir": 13269
     },
     "ffi/abi/feed/jsonrpc@1/stream/65536": {
-      "ir": 186067
+      "ir": 186069
     },
     "ffi/abi/handshake-check": {
       "ir": 138
@@ -293,28 +293,28 @@
       "ir": 146
     },
     "ffi/core/feed/jsonrpc@1/message/16": {
-      "ir": 1533
+      "ir": 1539
     },
     "ffi/core/feed/jsonrpc@1/message/256": {
-      "ir": 2208
+      "ir": 2214
     },
     "ffi/core/feed/jsonrpc@1/message/4096": {
-      "ir": 13008
+      "ir": 13014
     },
     "ffi/core/feed/jsonrpc@1/message/65536": {
-      "ir": 185808
+      "ir": 185814
     },
     "ffi/core/feed/jsonrpc@1/stream/16": {
-      "ir": 1639
+      "ir": 1645
     },
     "ffi/core/feed/jsonrpc@1/stream/256": {
-      "ir": 2314
+      "ir": 2320
     },
     "ffi/core/feed/jsonrpc@1/stream/4096": {
-      "ir": 13114
+      "ir": 13120
     },
     "ffi/core/feed/jsonrpc@1/stream/65536": {
-      "ir": 185914
+      "ir": 185920
     },
     "ffi/core/handshake-check": {
       "ir": 100
