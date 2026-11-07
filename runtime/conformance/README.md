@@ -145,12 +145,12 @@ review as one.
 CONFORMANCE_BLESS=1 cargo test -p comline-runtime-conformance
 ```
 
-## The spec, version 0.9
+## The spec, version 0.10
 
 The case format above (`vectors/*.json`, `profiles/*.json`, the ops, values
 and types) and the ops protocol
 ([`comline-reference`'s README](../reference/README.md#the-protocol)) are a
-public spec, at version **0.9** (`runner::SPEC_VERSION`). Third-party
+public spec, at version **0.10** (`runner::SPEC_VERSION`). Third-party
 encodings ship vectors in this format, and `comline conformance --impl`
 drives their implementations over this protocol. While Comline is in its
 early days (0.x), a minor version may change anything, and the change is
@@ -178,7 +178,10 @@ What an implementation answers, and how its answers are judged:
   value (`fact_shown`). A framing's `calls` is shown by exact `request` cases
   whose bytes hold the method's name for `by_name` and don't otherwise; whether
   a number is an index or a wire number (`by_index`, `by_id`) isn't in the bytes,
-  so the profile's word stands for that. Its `errors` needs an exact error
+  so the profile's word stands for that. Its `directions` is shown by real frames
+  read the other way: for `both`, the bytes of an exact request refused as a
+  response and those of an exact response refused as a request, and for `one`,
+  such bytes accepted as the other. Its `errors` needs an exact error
   response; a response's input holds only the ordinal, so `by_ordinal` and
   `by_name` rest on the case passing. Its `payload` is shown by requests: an
   exact one with non-JSON params for `opaque`, and for `json`, an exact one with
@@ -191,6 +194,15 @@ What an implementation answers, and how its answers are judged:
 
 Changes:
 
+- **0.10:** a framing states `directions`: `both`, when a frame says whether it's
+  a request or a response so calls can go both ways on one transport, or `one`,
+  when it doesn't. A profile without it is refused. New cases, on `datagram@2`,
+  `@3` and `jsonrpc@1`: `reject-response-as-request` and
+  `reject-request-as-response`; on `datagram@1`: `accept-request-as-response`.
+  No frame's bytes change. `jsonrpc@1` refuses a response with neither `result`
+  nor `error`, which JSON-RPC 2.0 doesn't allow and which it used to read as a
+  `null` result, a request's frame among them; new case
+  `reject-response-no-outcome`.
 - **0.9:** new op `peer_refusal`: JSON-RPC 2.0's answer to a request a peer
   can't read, an error whose `id` is `null`, is read as that. It answers no call,
   so it stays no `response`, and a `null` id on anything else stays refused. It
