@@ -13,7 +13,7 @@
 
 #[allow(unused_imports)] // Not every target that includes this file needs it.
 pub use comline_runtime_conformance::hex;
-use comline_runtime_conformance::{Framed, Input, Reply, RequestIn, Vectors, Wire};
+use comline_runtime_conformance::{encode_as, Framed, Input, Reply, RequestIn, Vectors, Wire};
 use comline_runtime_ffi::{COMLINE_ENVELOPE_ERR, COMLINE_ENVELOPE_FAULT, COMLINE_ENVELOPE_OK};
 
 /// The files with cases on the ABI: every one a `comline_connection` or a
@@ -72,15 +72,10 @@ pub fn framing_of(input: &Input) -> Option<&str> {
     }
 }
 
-/// A vector's params, as the host's `json@1` codec writes them.
+/// A vector's params, as the host's codec writes them.
 pub fn params_of(input: &RequestIn) -> Result<Vec<u8>, String> {
-    if input.format != "json@1" {
-        return Err(format!(
-            "params in {}: only json@1 is encoded here",
-            input.format
-        ));
-    }
-    serde_json::to_vec(&Wire(&input.params)).map_err(|e| e.to_string())
+    encode_as(&input.format, &Wire(&input.params))
+        .ok_or_else(|| format!("params in {} don't encode", input.format))
 }
 
 /// `(envelope, error_id, body)` from an `envelope` / `response` input.

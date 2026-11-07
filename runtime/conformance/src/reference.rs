@@ -46,6 +46,7 @@ pub fn reference_cases() -> Vec<Vectors> {
             FORMAT_PACKED,
             FRAMING_DATAGRAM,
             FRAMING_DATAGRAM2,
+            FRAMING_DATAGRAM3,
             FRAMING_JSONRPC,
             "com.acme.custom-format",
         ]
@@ -91,6 +92,13 @@ pub fn reference_cases() -> Vec<Vectors> {
                 0x0102_0304_0506_0708,
                 FORMAT_PACKED,
                 FRAMING_DATAGRAM2,
+                0,
+            ),
+            handshake(
+                "handshake/packed-datagram3",
+                0x0102_0304_0506_0708,
+                FORMAT_PACKED,
+                FRAMING_DATAGRAM3,
                 0,
             ),
             handshake(
@@ -165,6 +173,13 @@ pub fn reference_cases() -> Vec<Vectors> {
                 &said,
             ));
         }
+        let mut binary = Vec::new();
+        if framing == FRAMING_DATAGRAM {
+            for (name, format) in [("msgpack", FORMAT_MSGPACK), ("packed", FORMAT_PACKED)] {
+                let id = p(&format!("request-params-{name}"));
+                binary.push(with_format(request(id, framing, 3, "greet", 42, &params), format));
+            }
+        }
         feature(
             feature_id,
             [
@@ -190,6 +205,7 @@ pub fn reference_cases() -> Vec<Vectors> {
                     response(p("response-fault"), framing, 9, Reply::Fault),
                 ],
                 connection,
+                binary,
             ]
             .concat(),
         );
@@ -233,6 +249,20 @@ pub fn reference_cases() -> Vec<Vectors> {
                     &Value::Array(vec![]),
                 ),
                 u16::MAX,
+            ),
+            on(
+                with_format(
+                    request(p("request-params-msgpack"), FRAMING_DATAGRAM2, 3, "greet", 42, &params),
+                    FORMAT_MSGPACK,
+                ),
+                0,
+            ),
+            on(
+                with_format(
+                    request(p("request-params-packed"), FRAMING_DATAGRAM2, 3, "greet", 42, &params),
+                    FORMAT_PACKED,
+                ),
+                0,
             ),
             on(
                 response(
@@ -288,6 +318,20 @@ pub fn reference_cases() -> Vec<Vectors> {
                     &Value::Array(vec![]),
                 ),
                 u16::MAX,
+            ),
+            d3(
+                with_format(
+                    request(p("request-params-msgpack"), FRAMING_DATAGRAM3, 3, "greet", 42, &params),
+                    FORMAT_MSGPACK,
+                ),
+                0,
+            ),
+            d3(
+                with_format(
+                    request(p("request-params-packed"), FRAMING_DATAGRAM3, 3, "greet", 42, &params),
+                    FORMAT_PACKED,
+                ),
+                0,
             ),
             d3(response(p("response-ok"), FRAMING_DATAGRAM3, 7, ok(br#"{"body":"hi"}"#)), 0),
             d3(response(p("response-err"), FRAMING_DATAGRAM3, 7, err(2, br#"{"why":"no"}"#)), 1),
@@ -472,6 +516,15 @@ fn request(
         params: params.clone(),
     };
     (id, Input::Request(Framed::Full(input)))
+}
+
+/// The same call with its params in `format`, for a framing that carries them
+/// as bytes.
+fn with_format((id, mut input): (String, Input), format: &str) -> (String, Input) {
+    if let Input::Request(Framed::Full(i)) = &mut input {
+        i.format = format.into();
+    }
+    (id, input)
 }
 
 fn response(

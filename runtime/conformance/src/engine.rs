@@ -55,6 +55,10 @@ macro_rules! with_params_format {
                 let $f = MsgPack;
                 $body
             }
+            FORMAT_PACKED => {
+                let $f = Packed;
+                $body
+            }
             other => return Err(Outcome::NotImplemented(format!("format `{other}`"))),
         }
     };
@@ -203,6 +207,15 @@ fn encode_request_bodies(i: &RequestIn) -> Result<Vec<(&'static str, Vec<u8>)>, 
 
 /// Encodes `input` for `op` with `comline-runtime`.
 pub(crate) fn encode(input: &Input) -> Result<Vec<u8>, Outcome> {
+    if let Input::Request(Framed::Full(i)) = input {
+        // Its params are JSON inside the frame: anything else isn't JSON-RPC.
+        if i.framing == FRAMING_JSONRPC && i.format != FORMAT_JSON {
+            return Err(Outcome::NotImplemented(format!(
+                "format `{}` on `{}`",
+                i.format, i.framing
+            )));
+        }
+    }
     let mut out = Vec::new();
     match input {
         Input::NameHash(i) => {
@@ -672,6 +685,15 @@ mod tests {
         assert!(matches!(
             run(&case(Op::Envelope, reply, &[2], Expect::Reject)),
             Outcome::Fail(why) if why.contains("accepted bytes")
+        ));
+        // JSON-RPC's params are JSON, whatever the format says.
+        let binary = json!({
+            "framing": "jsonrpc@1", "call_id": 1, "method": "m", "request_id": "1",
+            "format": "msgpack@1", "params": { "u8": 1 },
+        });
+        assert!(matches!(
+            run(&case(Op::Request, binary, &[], Expect::Exact)),
+            Outcome::NotImplemented(_)
         ));
         // A format it doesn't ship isn't a pass, even for a rejection.
         let value = json!({ "format": "nope@1", "value": { "u8": 1 } });

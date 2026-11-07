@@ -141,12 +141,12 @@ review as one.
 CONFORMANCE_BLESS=1 cargo test -p comline-runtime-conformance
 ```
 
-## The spec, version 0.5
+## The spec, version 0.6
 
 The case format above (`vectors/*.json`, `profiles/*.json`, the ops, values
 and types) and the ops protocol
 ([`comline-reference`'s README](../reference/README.md#the-protocol)) are a
-public spec, at version **0.5** (`runner::SPEC_VERSION`). Third-party
+public spec, at version **0.6** (`runner::SPEC_VERSION`). Third-party
 encodings ship vectors in this format, and `comline conformance --impl`
 drives their implementations over this protocol. While Comline is in its
 early days (0.x), a minor version may change anything, and the change is
@@ -171,13 +171,26 @@ What an implementation answers, and how its answers are judged:
   exactly, and a rejection is refused. A `not_implemented` answer makes the
   case not implemented; an `error` fails it.
 - A profile fact is proven when every case it names passes and shows its
-  value (`fact_shown`). A format's facts are shown by `decode` cases of the
+  value (`fact_shown`). A framing's `calls` is shown by exact `request` cases
+  whose bytes hold the method's name for `by_name` and don't otherwise; whether
+  a number is an index or a wire number (`by_index`, `by_id`) isn't in the bytes,
+  so the profile's word stands for that. Its `errors` needs an exact error
+  response; a response's input holds only the ordinal, so `by_ordinal` and
+  `by_name` rest on the case passing. A format's facts are shown by `decode` cases of the
   `Point` and `Color` shapes the official profiles use. A handshake's facts
   are shown by `handshake_check` cases: one the peer agrees in, accepted,
   and, per thing the fact covers, one differing in only that, refused.
 
 Changes:
 
+- **0.6:** `calls` and `errors` facts must be shown by their cases, where any
+  passing case used to do: a `calls` naming anything but exact requests, or a
+  `by_name` whose frames lack the method's name (or a number whose frames hold
+  it), is unproven, and so is an `errors` naming no exact error response. New
+  cases: request params in `msgpack@1` and `packed@1` on `datagram@1`, `@2` and
+  `@3`; `name-hash/datagram@3` and `handshake/packed-datagram3`. Request params
+  in a format other than `json@1` on `jsonrpc@1` aren't JSON-RPC, and answer
+  `not_implemented`. New benchmarks: `datagram@3` framing, and `comline2.json`.
 - **0.5:** the corpus's format is specified in [`specs/`](specs/readme.md),
   and every file may name its schema in a top-level `$schema`, which a reader
   ignores. The runner reads inputs and profiles by their shape, and refuses at

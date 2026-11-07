@@ -17,8 +17,9 @@ use std::path::{Path, PathBuf};
 
 use comline_runtime::contract::{
     FORMAT_JSON, FORMAT_MSGPACK, FORMAT_PACKED, FRAMING_DATAGRAM, FRAMING_DATAGRAM2,
-    FRAMING_JSONRPC,
+    FRAMING_DATAGRAM3, FRAMING_JSONRPC,
 };
+use comline_runtime::comline2::Hello;
 use comline_runtime_conformance::{
     check, decimal, decode_typed, encode_as, HandshakeIn, Hex, Reply, Type, Value, Wire,
 };
@@ -143,6 +144,21 @@ enum HandshakeOp {
 
 #[derive(Debug, Deserialize)]
 #[serde(deny_unknown_fields)]
+struct Comline2Bench {
+    hello: Hello,
+    ops: Vec<Comline2Op>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Deserialize)]
+#[serde(rename_all = "snake_case")]
+enum Comline2Op {
+    Encode,
+    Decode,
+    Answer,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
 struct Connection {
     framing: String,
     format: String,
@@ -255,7 +271,7 @@ fn framing_definitions_match_the_benches() {
     let framings: Framings = read("framings.json");
     assert_eq!(
         framings.framings,
-        [FRAMING_DATAGRAM, FRAMING_DATAGRAM2, FRAMING_JSONRPC]
+        [FRAMING_DATAGRAM, FRAMING_DATAGRAM2, FRAMING_DATAGRAM3, FRAMING_JSONRPC]
     );
     assert_eq!(framings.payload_sizes, definitions::PAYLOAD_SIZES);
     assert_eq!(framings.frame.kind, "ok");
@@ -286,8 +302,26 @@ fn handshake_definition_matches_the_benches() {
 }
 
 #[test]
+fn comline2_definition_matches_the_benches() {
+    let comline2: Comline2Bench = read("comline2.json");
+    assert_eq!(comline2.hello, definitions::comline2_hello());
+    assert_eq!(comline2.hello, comline2.hello.clone().canonical());
+    assert_eq!(
+        comline2.ops,
+        [Comline2Op::Encode, Comline2Op::Decode, Comline2Op::Answer]
+    );
+}
+
+#[test]
 fn connection_definition_matches_the_benches() {
     let connection: Connection = read("connection.json");
+    // The params name a shape, in another file.
+    let formats: Formats = read("formats.json");
+    assert!(
+        formats.shapes.iter().any(|s| s.id == connection.params),
+        "no shape `{}`",
+        connection.params
+    );
     assert_eq!(connection.framing, definitions::CONNECTION_FRAMING);
     assert_eq!(connection.format, definitions::CONNECTION_FORMAT);
     assert_eq!(connection.protocol, definitions::CONNECTION_PROTOCOL);
