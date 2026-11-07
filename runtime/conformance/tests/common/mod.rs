@@ -15,7 +15,7 @@
 
 use comline_runtime::contract::{WireFormat, FORMAT_JSON, FORMAT_MSGPACK, FORMAT_PACKED};
 use comline_runtime::format::{Json, MsgPack, Packed};
-use comline_runtime_conformance::{decode_typed, Type, Value, Wire};
+use comline_runtime_conformance::{decode_typed, encode_as, Type, Value, Wire};
 use serde::de::DeserializeOwned;
 use serde::{Deserialize, Serialize};
 
@@ -80,15 +80,7 @@ struct Denied {}
 pub const FORMATS: [&str; 3] = [FORMAT_JSON, FORMAT_MSGPACK, FORMAT_PACKED];
 
 pub fn encode(format: &str, value: &impl Serialize) -> Vec<u8> {
-    let mut out = Vec::new();
-    match format {
-        FORMAT_JSON => Json.encode(value, &mut out),
-        FORMAT_MSGPACK => MsgPack.encode(value, &mut out),
-        FORMAT_PACKED => Packed.encode(value, &mut out),
-        _ => unreachable!(),
-    }
-    .expect("samples encode");
-    out
+    encode_as(format, value).expect("samples encode")
 }
 
 fn derive_decode<T: DeserializeOwned>(format: &str, bytes: &[u8]) -> Option<T> {

@@ -300,5 +300,5 @@ fn session_runs_a_connection() {
 }
 
 fn hex(text: &str) -> String {
-    text.bytes().map(|b| format!("{b:02x}")).collect()
+    comline_runtime_conformance::hex(text.as_bytes())
 }

@@ -7,6 +7,8 @@
 //! The files and the ops protocol hold an input as JSON; [`Input::parse`] is
 //! the one place it's read, so nothing past it looks fields up by name.
 
+use std::fmt::Write as _;
+
 use serde::de::Error as _;
 use serde::{Deserialize, Deserializer, Serialize, Serializer};
 use serde_json::Value as Json;
@@ -20,15 +22,18 @@ use crate::{decimal, Type, Value};
 #[derive(Debug, Clone, PartialEq, Eq, Default)]
 pub struct Hex(pub Vec<u8>);
 
+/// `bytes` as lowercase hex.
+pub fn hex(bytes: &[u8]) -> String {
+    let mut out = String::with_capacity(bytes.len() * 2);
+    for b in bytes {
+        let _ = write!(out, "{b:02x}");
+    }
+    out
+}
+
 impl Serialize for Hex {
     fn serialize<S: Serializer>(&self, s: S) -> Result<S::Ok, S::Error> {
-        s.serialize_str(
-            &self
-                .0
-                .iter()
-                .map(|b| format!("{b:02x}"))
-                .collect::<String>(),
-        )
+        s.serialize_str(&hex(&self.0))
     }
 }
 
@@ -454,18 +459,19 @@ mod tests {
     use super::*;
     use serde_json::json;
 
-    fn hex(text: &str) -> Result<Hex, serde_json::Error> {
+    fn read(text: &str) -> Result<Hex, serde_json::Error> {
         serde_json::from_value(json!(text))
     }
 
     #[test]
     fn hex_is_lowercase_pairs() {
-        assert_eq!(hex("00ff").unwrap(), Hex(vec![0, 255]));
-        assert_eq!(hex("").unwrap(), Hex(vec![]));
+        assert_eq!(read("00ff").unwrap(), Hex(vec![0, 255]));
+        assert_eq!(read("").unwrap(), Hex(vec![]));
         // A slice of `aéb` by bytes lands inside `é`.
         for bad in ["aéb", "+a", "FF", "0", "zz"] {
-            assert!(hex(bad).is_err(), "{bad}");
+            assert!(read(bad).is_err(), "{bad}");
         }
+        assert_eq!(hex(&[0, 171, 255]), "00abff");
     }
 
     #[test]

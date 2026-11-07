@@ -16,12 +16,11 @@
 use std::path::{Path, PathBuf};
 
 use comline_runtime::contract::{
-    WireFormat, FORMAT_JSON, FORMAT_MSGPACK, FORMAT_PACKED, FRAMING_DATAGRAM, FRAMING_DATAGRAM2,
+    FORMAT_JSON, FORMAT_MSGPACK, FORMAT_PACKED, FRAMING_DATAGRAM, FRAMING_DATAGRAM2,
     FRAMING_JSONRPC,
 };
-use comline_runtime::format::{Json, MsgPack, Packed};
 use comline_runtime_conformance::{
-    check, decimal, decode_typed, HandshakeIn, Hex, Reply, Type, Value, Wire,
+    check, decimal, decode_typed, encode_as, HandshakeIn, Hex, Reply, Type, Value, Wire,
 };
 use serde::{Deserialize, Deserializer, Serialize};
 use serde_json::{json, Value as JsonValue};
@@ -180,15 +179,7 @@ fn read<T: for<'de> Deserialize<'de>>(name: &str) -> T {
 }
 
 fn encode(format: &str, value: &(impl Serialize + ?Sized)) -> Vec<u8> {
-    let mut out = Vec::new();
-    match format {
-        FORMAT_JSON => Json.encode(value, &mut out),
-        FORMAT_MSGPACK => MsgPack.encode(value, &mut out),
-        FORMAT_PACKED => Packed.encode(value, &mut out),
-        other => panic!("unknown format `{other}`"),
-    }
-    .expect("bench values encode");
-    out
+    encode_as(format, value).expect("bench values encode")
 }
 
 /// The mirror of shape `id`, encoded in `format`.
@@ -237,7 +228,8 @@ fn shapes_round_trip_in_every_format() {
             );
         }
     }
-    let Value::Array(items) = &formats.shapes[3].value else {
+    let large = formats.shapes.iter().find(|s| s.id == "large-array");
+    let Some(Value::Array(items)) = large.map(|s| &s.value) else {
         panic!("large-array isn't an array");
     };
     assert_eq!(items.len(), definitions::LARGE_ARRAY_LEN);
