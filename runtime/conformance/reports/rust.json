@@ -343,6 +343,8 @@
         "framing-datagram/response-ok-exact-numbers",
         "framing-datagram/response-err",
         "framing-datagram/response-fault",
+        "framing-datagram/request-params-msgpack",
+        "framing-datagram/request-params-packed",
         "framing-datagram/reject-short-request",
         "framing-datagram/reject-short-response",
         "framing-datagram/reject-response-without-envelope"
@@ -354,6 +356,8 @@
         "framing-datagram2/request",
         "framing-datagram2/request-two-byte-protocol",
         "framing-datagram2/request-large-ids",
+        "framing-datagram2/request-params-msgpack",
+        "framing-datagram2/request-params-packed",
         "framing-datagram2/response-ok",
         "framing-datagram2/response-err",
         "framing-datagram2/response-fault",
@@ -371,6 +375,8 @@
         "framing-datagram3/request",
         "framing-datagram3/request-two-byte-numbers",
         "framing-datagram3/request-large-ids",
+        "framing-datagram3/request-params-msgpack",
+        "framing-datagram3/request-params-packed",
         "framing-datagram3/response-ok",
         "framing-datagram3/response-err",
         "framing-datagram3/response-fault",
@@ -422,6 +428,7 @@
         "handshake/msgpack-datagram",
         "handshake/msgpack-datagram2",
         "handshake/packed-datagram2",
+        "handshake/packed-datagram3",
         "handshake/json-jsonrpc",
         "handshake/reject-empty",
         "handshake/reject-truncated",
@@ -513,6 +520,7 @@
         "name-hash/packed@1",
         "name-hash/datagram@1",
         "name-hash/datagram@2",
+        "name-hash/datagram@3",
         "name-hash/jsonrpc@1",
         "name-hash/com.acme.custom-format"
       ]

@@ -9,6 +9,7 @@ value and type encoding (see [the corpus README](../README.md)).
 | [`formats.json`](formats.json) | encode and decode, per format, per shape |
 | [`framings.json`](framings.json) | framing encode and decode, per framing, per payload size |
 | [`handshake.json`](handshake.json) | the handshake frame: encode, decode, check |
+| [`comline2.json`](comline2.json) | the `comline@2` hello: encode, decode, answer |
 | [`connection.json`](connection.json) | one connection step: issue a call, receive its reply |
 
 ## `formats.json`
@@ -47,7 +48,8 @@ in Rust that's a `serde` derive, not the corpus's `Value`.
 ## `framings.json`
 
 The measured frame is an `ok` response to request `request_id` (`42`), on
-protocol `protocol` (`1`) for a framing that carries one (`datagram@2`). Its
+protocol `protocol` (`1`) for a framing that carries one (`datagram@2`,
+`datagram@3`). Its
 payload, already encoded, is `size` bytes for each of `payload_sizes`: a JSON
 string, `"`, then `size - 2` copies of `payload_fill` (`a`), then `"`, so it's
 valid JSON for `jsonrpc@1` too.
@@ -60,6 +62,13 @@ request id and envelope.
 `frame` is a handshake frame, with names unhashed as in a `handshake` case.
 **Encode** writes it, **decode** reads its bytes back, and **check** compares
 it with an identical frame from the peer.
+
+## `comline2.json`
+
+`hello` is a `comline@2` hello, as a `comline2_message` case states one: an
+`offer`, canonical. **Encode** writes it as a message, **decode** reads the
+message back, and **answer** is the responder's negotiation step, with default
+parameters and this same hello as its own, reading the peer's: it accepts.
 
 ## `connection.json`
 
@@ -77,6 +86,7 @@ Results name each benchmark by an id built from the definitions:
 | format | `format/<encode\|decode>/<shape>/<format>`, e.g. `format/decode/nested/packed@1` |
 | framing | `framing/<encode\|decode>/<framing>/<size>`, e.g. `framing/encode/jsonrpc@1/4096` |
 | handshake | `handshake/<encode\|decode\|check>` |
+| `comline@2` | `comline2/<encode\|decode\|answer>` |
 | connection | `connection/step` |
 
 ## Results: `reports/<lang>.bench.json`

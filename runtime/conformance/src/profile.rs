@@ -11,7 +11,7 @@ use serde::{Deserialize, Serialize};
 use comline_runtime::contract::HandshakeFrame;
 
 use crate::comline2;
-use crate::{Case, Expect, Input, Op, Value};
+use crate::{Case, Expect, Framed, Input, Op, Reply, ResponseIn, Value};
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Profile {
@@ -253,13 +253,42 @@ fn decoding_fact_shown(fact: Fact, first: &Case, cases: &[&Case]) -> bool {
         Fact::IntegerWidth(IntegerWidth::Exact) => {
             cases.len() == 2 && cases.iter().all(|c| c.expect == Expect::Reject)
         }
-        // Shown by the cases passing: the framing carries the call and the
-        // error that way, and decoding reads them back.
-        Fact::Calls(_) | Fact::Errors(_) => true,
+        Fact::Calls(calls) => calls_shown(calls, cases),
+        Fact::Errors(_) => cases.iter().any(|c| carries_error(c)),
         Fact::SchemaAgreement(_) | Fact::EncodingAgreement(_) => {
             unreachable!("handshake facts aren't shown by decoding")
         }
     }
+}
+
+/// `calls` is shown by the frames: each is an exact request, whose bytes hold
+/// its method's name for `by_name` and don't otherwise. Whether a number is an
+/// index or a wire number (`by_index`, `by_id`) isn't in the bytes, so the
+/// profile's word stands for that.
+fn calls_shown(calls: Calls, cases: &[&Case]) -> bool {
+    let holds_name = |bytes: &[u8], name: &[u8]| {
+        !name.is_empty() && bytes.windows(name.len()).any(|window| window == name)
+    };
+    cases.iter().all(|case| match &case.input {
+        Input::Request(Framed::Full(i)) if case.expect == Expect::Exact => {
+            holds_name(&case.bytes.0, i.method.as_bytes()) == (calls == Calls::ByName)
+        }
+        _ => false,
+    })
+}
+
+/// A case that shows how a framing carries an error: an exact error response.
+/// A response's input holds only the error's ordinal, so whether the frame has
+/// that or a name (`by_ordinal`, `by_name`) rests on the case passing.
+fn carries_error(case: &Case) -> bool {
+    case.expect == Expect::Exact
+        && matches!(
+            &case.input,
+            Input::Response(Framed::Full(ResponseIn {
+                reply: Reply::Err { .. },
+                ..
+            })) | Input::Envelope(Some(Reply::Err { .. }))
+        )
 }
 
 /// A handshake fact stated `true` (`schema`: `schema_agreement`) is shown by
@@ -337,6 +366,49 @@ mod tests {
             json!({ "schema_agreement": { "value": "true" } })
         )
         .is_err());
+    }
+
+    #[test]
+    fn calls_and_errors_are_shown_by_the_frames() {
+        let case = |input, bytes: &[u8], expect| Case {
+            id: "a/b".into(),
+            input,
+            bytes: crate::Hex(bytes.to_vec()),
+            expect,
+            compare: crate::Compare::Bytes,
+        };
+        let request = |method: &str| {
+            Input::parse(
+                Op::Request,
+                &json!({
+                    "framing": "f", "call_id": 1, "method": method, "request_id": "1",
+                    "format": "json@1", "params": { "unit": null },
+                }),
+            )
+            .unwrap()
+        };
+        let named = case(request("greet"), b"REQ greet", Expect::Exact);
+        let numbered = case(request("greet"), &[1, 0, 1], Expect::Exact);
+        let shown = |calls, case: &Case| fact_shown(Fact::Calls(calls), &[case]).is_ok();
+        assert!(shown(Calls::ByName, &named));
+        assert!(!shown(Calls::ById, &named));
+        assert!(!shown(Calls::ByIndex, &named));
+        assert!(shown(Calls::ById, &numbered));
+        assert!(shown(Calls::ByIndex, &numbered));
+        assert!(!shown(Calls::ByName, &numbered));
+        // A rejection, or a selector, says nothing about calls.
+        let refused = case(request("greet"), b"REQ greet", Expect::Reject);
+        assert!(!shown(Calls::ByName, &refused));
+        let selector = Input::parse(Op::Request, &json!({ "framing": "f" })).unwrap();
+        assert!(!shown(Calls::ById, &case(selector, &[1], Expect::Reject)));
+        assert!(fact_shown(Fact::Calls(Calls::ById), &[]).is_err());
+
+        let reply = |kind: serde_json::Value| Input::parse(Op::Envelope, &kind).unwrap();
+        let err = reply(json!({ "kind": "err", "id": 1, "body": "" }));
+        let errors = Fact::Errors(Errors::ByOrdinal);
+        assert!(fact_shown(errors, &[&case(err, &[1], Expect::Exact)]).is_ok());
+        let fault = reply(json!({ "kind": "fault" }));
+        assert!(fact_shown(errors, &[&case(fault, &[2], Expect::Exact)]).is_err());
     }
 
     #[test]

@@ -23,9 +23,10 @@ use iai_callgrind::{library_benchmark, library_benchmark_group, main};
 use serde::de::DeserializeOwned;
 use serde::Serialize;
 
+use comline_runtime::comline2::{Comline2, Message, Params};
 use comline_runtime::connection::{Event, State};
 use comline_runtime::contract::{
-    Call, ConnectionFraming, Datagram2Framing, DatagramFraming, Envelope, Frame, Framing,
+    Call, ConnectionFraming, Datagram2Framing, Datagram3Framing, DatagramFraming, Envelope, Frame, Framing,
     HandshakeFrame, WireFormat,
 };
 use comline_runtime::format::{Json, MsgPack, Packed};
@@ -190,6 +191,17 @@ fn datagram2_frame(size: usize) -> Vec<u8> {
     out
 }
 
+fn datagram3_frame(size: usize) -> Vec<u8> {
+    let mut out = Vec::new();
+    Datagram3Framing.encode_reply(
+        FRAME_PROTOCOL,
+        FRAME_REQUEST_ID,
+        &Envelope::Ok(&payload(size)),
+        &mut out,
+    );
+    out
+}
+
 fn jsonrpc1_frame(size: usize) -> Vec<u8> {
     let mut out = Vec::new();
     Framing::encode_response_ok(&JsonRpcFraming, FRAME_REQUEST_ID, &payload(size), &mut out);
@@ -215,6 +227,22 @@ fn encode_datagram1(input: (Vec<u8>, Vec<u8>)) -> (Vec<u8>, Vec<u8>) {
 fn encode_datagram2(input: (Vec<u8>, Vec<u8>)) -> (Vec<u8>, Vec<u8>) {
     let (payload, mut out) = input;
     Datagram2Framing.encode_reply(
+        FRAME_PROTOCOL,
+        FRAME_REQUEST_ID,
+        &Envelope::Ok(&payload),
+        &mut out,
+    );
+    (payload, out)
+}
+
+#[library_benchmark]
+#[bench::b16(args = (16), setup = encode_setup)]
+#[bench::b256(args = (256), setup = encode_setup)]
+#[bench::b4096(args = (4096), setup = encode_setup)]
+#[bench::b65536(args = (65536), setup = encode_setup)]
+fn encode_datagram3(input: (Vec<u8>, Vec<u8>)) -> (Vec<u8>, Vec<u8>) {
+    let (payload, mut out) = input;
+    Datagram3Framing.encode_reply(
         FRAME_PROTOCOL,
         FRAME_REQUEST_ID,
         &Envelope::Ok(&payload),
@@ -266,6 +294,25 @@ fn decode_datagram2(frame: Vec<u8>) -> Vec<u8> {
 }
 
 #[library_benchmark]
+#[bench::b16(args = (16), setup = datagram3_frame)]
+#[bench::b256(args = (256), setup = datagram3_frame)]
+#[bench::b4096(args = (4096), setup = datagram3_frame)]
+#[bench::b65536(args = (65536), setup = datagram3_frame)]
+fn decode_datagram3(frame: Vec<u8>) -> Vec<u8> {
+    let decoded = Datagram3Framing.decode(&frame);
+    assert!(matches!(
+        decoded,
+        Some(Frame::Reply {
+            request_id: FRAME_REQUEST_ID,
+            envelope: Envelope::Ok(_),
+            ..
+        })
+    ));
+    black_box(decoded);
+    frame
+}
+
+#[library_benchmark]
 #[bench::b16(args = (16), setup = jsonrpc1_frame)]
 #[bench::b256(args = (256), setup = jsonrpc1_frame)]
 #[bench::b4096(args = (4096), setup = jsonrpc1_frame)]
@@ -282,6 +329,7 @@ library_benchmark_group!(
     benchmarks =
         encode_datagram1, decode_datagram1,
         encode_datagram2, decode_datagram2,
+        encode_datagram3, decode_datagram3,
         encode_jsonrpc1, decode_jsonrpc1
 );
 
@@ -337,6 +385,59 @@ fn handshake_check(pair: (HandshakeFrame, HandshakeFrame)) {
 library_benchmark_group!(
     name = handshake;
     benchmarks = handshake_encode, handshake_decode, handshake_check
+);
+
+// ── the comline@2 handshake ─────────────────────────────────────────────────
+
+fn comline2_message() -> Message {
+    Message::Hello(comline2_hello())
+}
+
+fn comline2_bytes() -> Vec<u8> {
+    comline2_message().to_bytes()
+}
+
+fn comline2_encode_setup() -> (Message, Vec<u8>) {
+    (comline2_message(), Vec::with_capacity(comline2_bytes().len()))
+}
+
+fn comline2_answer_setup() -> (Comline2, Vec<u8>) {
+    (
+        Comline2::new(Params::default(), comline2_hello()),
+        comline2_bytes(),
+    )
+}
+
+#[library_benchmark]
+#[bench::hello(setup = comline2_encode_setup)]
+fn comline2_encode(input: (Message, Vec<u8>)) -> (Message, Vec<u8>) {
+    let (message, mut out) = input;
+    message.encode(&mut out);
+    (message, out)
+}
+
+#[library_benchmark]
+#[bench::hello(setup = comline2_bytes)]
+fn comline2_decode(bytes: Vec<u8>) -> Vec<u8> {
+    let decoded = Message::decode(&bytes);
+    assert!(matches!(decoded, Ok(Message::Hello(_))));
+    let _ = black_box(decoded);
+    bytes
+}
+
+#[library_benchmark]
+#[bench::hello(setup = comline2_answer_setup)]
+fn comline2_answer(input: (Comline2, Vec<u8>)) -> (Comline2, Vec<u8>) {
+    let (local, peer) = input;
+    let step = local.answer_offer(&peer);
+    assert!(step.result.is_ok());
+    black_box(step);
+    (local, peer)
+}
+
+library_benchmark_group!(
+    name = comline2;
+    benchmarks = comline2_encode, comline2_decode, comline2_answer
 );
 
 // ── the connection step ─────────────────────────────────────────────────────
@@ -416,5 +517,6 @@ main!(
     library_benchmark_groups = formats,
     framings,
     handshake,
+    comline2,
     connection
 );

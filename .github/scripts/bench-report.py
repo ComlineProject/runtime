@@ -65,7 +65,12 @@ DEFINITIONS_TARGET = ("comline-runtime", "runtime")
 ABI_PREFIX, CORE_PREFIX = "ffi/abi/", "ffi/core/"
 
 FORMATS = {"json": "json@1", "msgpack": "msgpack@1", "packed": "packed@1"}
-FRAMINGS = {"datagram1": "datagram@1", "datagram2": "datagram@2", "jsonrpc1": "jsonrpc@1"}
+FRAMINGS = {
+    "datagram1": "datagram@1",
+    "datagram2": "datagram@2",
+    "datagram3": "datagram@3",
+    "jsonrpc1": "jsonrpc@1",
+}
 # Each table of the ledger: its required keys, and its optional ones.
 TABLES = {
     "accepted": ({"pr", "bench", "max_percent", "reason"}, set()),
@@ -85,6 +90,8 @@ def bench_id(summary):
         return f"framing/{op}/{FRAMINGS[rest]}/{case[1:]}"
     if group == "handshake":
         return f"handshake/{rest}"
+    if group == "comline2":
+        return f"comline2/{rest}"
     if group == "connection":
         return f"connection/{rest}"
     return "/".join(p for p in (group, function, case) if p)

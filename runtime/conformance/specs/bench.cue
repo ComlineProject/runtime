@@ -1,7 +1,7 @@
 package conformance
 
 // One file of `benches/`: the work every runtime's benchmarks measure.
-#Bench: #Formats | #Framings | #Handshake | #Connection
+#Bench: #Formats | #Framings | #Handshake | #Comline2Bench | #Connection
 
 // `formats.json`: encode and decode, per format, per shape.
 #Formats: close({
@@ -74,6 +74,13 @@ package conformance
 	$schema?: string
 	frame!:   #HandshakeFrame
 	ops!: [...("encode" | "decode" | "check")]
+})
+
+// `comline2.json`: the `comline@2` handshake's hello.
+#Comline2Bench: close({
+	$schema?: string
+	hello!:   #Comline2Hello
+	ops!: [...("encode" | "decode" | "answer")]
 })
 
 // `connection.json`: one connection step, a call and its reply.

@@ -1,6 +1,226 @@
 {
     "$schema": "https://json-schema.org/draft/2020-12/schema",
     "$defs": {
+        "Comline2Bench": {
+            "type": "object",
+            "description": "`comline2.json`: the `comline@2` handshake's hello.",
+            "additionalProperties": false,
+            "properties": {
+                "$schema": {
+                    "type": "string"
+                },
+                "hello": {
+                    "$ref": "#/$defs/Comline2Hello"
+                },
+                "ops": {
+                    "type": "array",
+                    "items": {
+                        "enum": [
+                            "encode",
+                            "decode",
+                            "answer"
+                        ]
+                    }
+                }
+            },
+            "required": [
+                "hello",
+                "ops"
+            ]
+        },
+        "Comline2Hello": {
+            "type": "object",
+            "additionalProperties": false,
+            "properties": {
+                "encodings": {
+                    "type": "array",
+                    "items": {
+                        "type": "object",
+                        "additionalProperties": false,
+                        "properties": {
+                            "kind": {
+                                "enum": [
+                                    "format",
+                                    "framing",
+                                    "handshake"
+                                ]
+                            },
+                            "param_hash": {
+                                "$ref": "#/$defs/Hash128"
+                            }
+                        },
+                        "required": [
+                            "kind",
+                            "param_hash"
+                        ]
+                    }
+                },
+                "exchange": {
+                    "enum": [
+                        "offer",
+                        "symmetric"
+                    ]
+                },
+                "package_id": {
+                    "$ref": "#/$defs/Hash128"
+                },
+                "protocols": {
+                    "type": "array",
+                    "items": {
+                        "type": "object",
+                        "additionalProperties": false,
+                        "properties": {
+                            "functions": {
+                                "type": "array",
+                                "items": {
+                                    "allOf": [
+                                        {
+                                            "type": "number"
+                                        },
+                                        {
+                                            "type": "integer",
+                                            "maximum": 65535,
+                                            "minimum": 0
+                                        }
+                                    ]
+                                }
+                            },
+                            "line": {
+                                "$ref": "#/$defs/Comline2Release"
+                            },
+                            "number": {
+                                "allOf": [
+                                    {
+                                        "type": "number"
+                                    },
+                                    {
+                                        "type": "integer",
+                                        "maximum": 65535,
+                                        "minimum": 0
+                                    }
+                                ]
+                            },
+                            "shape_hash": {
+                                "$ref": "#/$defs/Hash128"
+                            }
+                        },
+                        "required": [
+                            "functions",
+                            "line",
+                            "number",
+                            "shape_hash"
+                        ]
+                    }
+                },
+                "version": {
+                    "$ref": "#/$defs/Comline2Version"
+                }
+            },
+            "required": [
+                "encodings",
+                "exchange",
+                "package_id",
+                "protocols",
+                "version"
+            ]
+        },
+        "Comline2Release": {
+            "type": "object",
+            "additionalProperties": false,
+            "properties": {
+                "major": {
+                    "allOf": [
+                        {
+                            "type": "number"
+                        },
+                        {
+                            "type": "integer",
+                            "maximum": 4294967295,
+                            "minimum": 0
+                        }
+                    ]
+                },
+                "minor": {
+                    "allOf": [
+                        {
+                            "type": "number"
+                        },
+                        {
+                            "type": "integer",
+                            "maximum": 4294967295,
+                            "minimum": 0
+                        }
+                    ]
+                },
+                "patch": {
+                    "allOf": [
+                        {
+                            "type": "number"
+                        },
+                        {
+                            "type": "integer",
+                            "maximum": 4294967295,
+                            "minimum": 0
+                        }
+                    ]
+                }
+            },
+            "required": [
+                "major",
+                "minor",
+                "patch"
+            ]
+        },
+        "Comline2Version": {
+            "type": "object",
+            "additionalProperties": false,
+            "properties": {
+                "major": {
+                    "allOf": [
+                        {
+                            "type": "number"
+                        },
+                        {
+                            "type": "integer",
+                            "maximum": 4294967295,
+                            "minimum": 0
+                        }
+                    ]
+                },
+                "minor": {
+                    "allOf": [
+                        {
+                            "type": "number"
+                        },
+                        {
+                            "type": "integer",
+                            "maximum": 4294967295,
+                            "minimum": 0
+                        }
+                    ]
+                },
+                "patch": {
+                    "allOf": [
+                        {
+                            "type": "number"
+                        },
+                        {
+                            "type": "integer",
+                            "maximum": 4294967295,
+                            "minimum": 0
+                        }
+                    ]
+                },
+                "pre": {
+                    "type": "string"
+                }
+            },
+            "required": [
+                "major",
+                "minor",
+                "patch"
+            ]
+        },
         "Connection": {
             "type": "object",
             "description": "`connection.json`: one connection step, a call and its reply.",
@@ -278,6 +498,10 @@
                 "ir_hash",
                 "wire_format"
             ]
+        },
+        "Hash128": {
+            "type": "string",
+            "pattern": "^[0-9a-f]{32}$"
         },
         "Hex": {
             "type": "string",
@@ -1173,6 +1397,9 @@
         },
         {
             "$ref": "#/$defs/Handshake"
+        },
+        {
+            "$ref": "#/$defs/Comline2Bench"
         },
         {
             "$ref": "#/$defs/Connection"

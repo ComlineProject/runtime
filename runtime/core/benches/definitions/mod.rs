@@ -17,6 +17,9 @@
 
 #![allow(dead_code)]
 
+use comline_runtime::comline2::{
+    Encoding, EncodingKind, Exchange, Hash128, Hello, PackageVersion, Protocol, Release,
+};
 use serde::{Deserialize, Serialize};
 
 // ── framings.json ───────────────────────────────────────────────────────────
@@ -27,7 +30,7 @@ pub const PAYLOAD_SIZES: [usize; 4] = [16, 256, 4096, 65536];
 /// The request id of the measured `ok` response.
 pub const FRAME_REQUEST_ID: u64 = 42;
 
-/// Its protocol, for a framing that carries one (`datagram@2`).
+/// Its protocol, for a framing that carries one (`datagram@2`, `datagram@3`).
 pub const FRAME_PROTOCOL: u16 = 1;
 
 /// The payload of `size` bytes: a JSON string, `"` then `size - 2` copies of
@@ -45,6 +48,34 @@ pub const HANDSHAKE_IR_HASH: u64 = 12_302_652_060_662_169_617;
 pub const HANDSHAKE_WIRE_FORMAT: &str = "packed@1";
 pub const HANDSHAKE_FRAMING: &str = "datagram@2";
 pub const HANDSHAKE_CAPABILITIES: u32 = 3;
+
+// ── comline2.json ───────────────────────────────────────────────────────────
+
+/// The hello each end of the measured `comline@2` handshake sends: an `offer`
+/// with default parameters, each end speaking the same schema.
+pub fn comline2_hello() -> Hello {
+    let hash = |byte: u8| Hash128([byte; 16]);
+    let protocol = |number: u16, line: (u32, u32, u32), shape: u8, functions: &[u16]| Protocol {
+        number,
+        line: Release::new(line.0, line.1, line.2),
+        shape_hash: hash(shape),
+        functions: functions.to_vec(),
+    };
+    Hello {
+        exchange: Exchange::Offer,
+        package_id: hash(0x01),
+        version: PackageVersion::release(0, 3, 0),
+        encodings: vec![
+            Encoding { kind: EncodingKind::Format, param_hash: hash(0x11) },
+            Encoding { kind: EncodingKind::Framing, param_hash: hash(0x22) },
+            Encoding { kind: EncodingKind::Handshake, param_hash: hash(0x33) },
+        ],
+        protocols: vec![
+            protocol(0, (0, 2, 0), 0xa0, &[0, 1, 2]),
+            protocol(1, (0, 1, 0), 0xb0, &[0, 1]),
+        ],
+    }
+}
 
 // ── connection.json ─────────────────────────────────────────────────────────
 //

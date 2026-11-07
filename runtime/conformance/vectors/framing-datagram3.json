@@ -58,6 +58,52 @@
       "bytes": "00ffff03ffff03ffffffffffffffff5b5d"
     },
     {
+      "id": "framing-datagram3/request-params-msgpack",
+      "op": "request",
+      "input": {
+        "call_id": 3,
+        "format": "msgpack@1",
+        "framing": "datagram@3",
+        "method": "greet",
+        "params": {
+          "array": [
+            {
+              "u32": 7
+            },
+            {
+              "string": "x"
+            }
+          ]
+        },
+        "protocol": 0,
+        "request_id": "42"
+      },
+      "bytes": "0000032a000000000000009207a178"
+    },
+    {
+      "id": "framing-datagram3/request-params-packed",
+      "op": "request",
+      "input": {
+        "call_id": 3,
+        "format": "packed@1",
+        "framing": "datagram@3",
+        "method": "greet",
+        "params": {
+          "array": [
+            {
+              "u32": 7
+            },
+            {
+              "string": "x"
+            }
+          ]
+        },
+        "protocol": 0,
+        "request_id": "42"
+      },
+      "bytes": "0000032a0000000000000002070000000178"
+    },
+    {
       "id": "framing-datagram3/response-ok",
       "op": "response",
       "input": {
