@@ -38,7 +38,7 @@ mod common;
 
 use std::collections::BTreeMap;
 
-use comline_runtime_conformance::{json_equal, Case, Compare, Expect, Op};
+use comline_runtime_conformance::{json_equal, Case, Compare, Expect, Framed, Input, Op};
 use comline_runtime_ffi::*;
 use common::cases::*;
 use common::*;
@@ -134,9 +134,8 @@ fn datagram1_is_refused_on_a_connection() {
 }
 
 fn replay(case: &Case) -> Result<Ran, String> {
-    let input = &case.input;
-    let framing = input["framing"].as_str();
-    match (case.op, framing) {
+    let framing = framing_of(&case.input);
+    match (case.op(), framing) {
         // The free handshake functions take any name, `datagram@1` too.
         (Op::NameHash, _) => name_hash_case(case),
         (Op::Handshake, _) => handshake_case(case),
@@ -147,7 +146,7 @@ fn replay(case: &Case) -> Result<Ran, String> {
         (Op::Envelope, _) => envelope_case(case),
         (Op::Request, Some(f @ ("datagram@2" | "jsonrpc@1"))) => request_case(case, leak(f)),
         (Op::Response, Some(f @ ("datagram@2" | "jsonrpc@1"))) => response_case(case, leak(f)),
-        _ => Err(format!("no mapping for {:?} on {framing:?}", case.op)),
+        _ => Err(format!("no mapping for {:?} on {framing:?}", case.op())),
     }
 }
 
@@ -175,7 +174,10 @@ fn same(case: &Case, encoded: &[u8]) -> bool {
 // ── name_hash ──────────────────────────────────────────────────────────────
 
 fn name_hash_case(case: &Case) -> Result<Ran, String> {
-    let hash = name_hash(str_of(&case.input["name"]));
+    let Input::NameHash(input) = &case.input else {
+        return Err("not a name_hash input".into());
+    };
+    let hash = name_hash(&input.name);
     check(hash.to_le_bytes() == case.bytes.0.as_slice(), || {
         format!("hash {hash:#x}, expected {}", hex(&case.bytes.0))
     })?;
@@ -191,12 +193,14 @@ fn some_frame() -> Vec<u8> {
 
 /// One end's frame, from the input, against the peer's: agreeing or not.
 fn handshake_check_case(case: &Case) -> Result<Ran, String> {
-    let input = &case.input;
+    let Input::HandshakeCheck(input) = &case.input else {
+        return Err("not a handshake_check input".into());
+    };
     let ours = handshake_encode(
-        u64_of(&input["ir_hash"]),
-        str_of(&input["wire_format"]),
-        str_of(&input["framing"]),
-        input["capabilities"].as_u64().expect("bits") as u32,
+        input.ir_hash,
+        &input.wire_format,
+        &input.framing,
+        input.capabilities,
         64,
     )
     .bytes;
@@ -236,11 +240,13 @@ fn handshake_case(case: &Case) -> Result<Ran, String> {
         return Ok(Ran::Full);
     }
 
-    let input = &case.input;
-    let ir_hash = u64_of(&input["ir_hash"]);
-    let wire_format = str_of(&input["wire_format"]);
-    let framing = str_of(&input["framing"]);
-    let capabilities = input["capabilities"].as_u64().expect("bits") as u32;
+    let Input::Handshake(Some(input)) = &case.input else {
+        return Err("an exact handshake case has no input".into());
+    };
+    let ir_hash = input.ir_hash;
+    let wire_format = input.wire_format.as_str();
+    let framing = input.framing.as_str();
+    let capabilities = input.capabilities;
 
     // Encode.
     let too_small = handshake_encode(ir_hash, wire_format, framing, capabilities, 30);
@@ -334,7 +340,10 @@ fn envelope_case(case: &Case) -> Result<Ran, String> {
         return Ok(Ran::Full);
     }
 
-    let want = reply_of(&case.input);
+    let Input::Envelope(Some(reply)) = &case.input else {
+        return Err("an exact envelope case has no input".into());
+    };
+    let want = reply_of(reply);
     let mut conn = Conn::new(&Setup::plain("datagram@2")).map_err(|s| format!("new: {s}"))?;
     let encoded = conn.reply(0, 0, want.0, want.1, &want.2, 256);
     check(
@@ -371,12 +380,14 @@ fn request_case(case: &Case, framing: &'static str) -> Result<Ran, String> {
         return Ok(Ran::RejectedAsOtherKind("read as a reply"));
     }
 
-    let input = &case.input;
-    let request_id = u64_of(&input["request_id"]);
-    let protocol = input["protocol"].as_u64().unwrap_or(0) as u16;
-    let call_id = input["call_id"].as_u64().expect("a call id") as u16;
-    let method = str_of(&input["method"]);
-    let one_way = input["one_way"].as_bool().unwrap_or(false);
+    let Input::Request(Framed::Full(input)) = &case.input else {
+        return Err("an exact request case has only a selector".into());
+    };
+    let request_id = input.request_id;
+    let protocol = input.protocol.unwrap_or(0);
+    let call_id = input.call_id;
+    let method = input.method.as_str();
+    let one_way = input.one_way;
     let params = params_of(input)?;
 
     // Encode, at the vector's id when the connection can be driven to it.
@@ -462,10 +473,12 @@ fn response_case(case: &Case, framing: &'static str) -> Result<Ran, String> {
         return Ok(Ran::RejectedAsOtherKind("read as a request"));
     }
 
-    let input = &case.input;
-    let request_id = u64_of(&input["request_id"]);
-    let protocol = input["protocol"].as_u64().unwrap_or(0) as u16;
-    let want = reply_of(input);
+    let Input::Response(Framed::Full(input)) = &case.input else {
+        return Err("an exact response case has only a selector".into());
+    };
+    let request_id = input.request_id;
+    let protocol = input.protocol.unwrap_or(0);
+    let want = reply_of(&input.reply);
 
     // Encode: a reply carries the peer's request id, so nothing to drive.
     let mut conn = Conn::new(&Setup::plain(framing)).map_err(|s| format!("new: {s}"))?;

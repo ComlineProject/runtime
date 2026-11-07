@@ -5,7 +5,8 @@
 //! The shared benchmark definitions (`benches/`) are well formed, and the
 //! Rust benches (`runtime/core/benches/`) measure exactly what they define.
 //!
-//! - Every shape's value fits its type and round-trips through `Wire` and
+//! - A generated value expands to what its definition says, and every shape's
+//!   value fits its type and round-trips through `Wire` and
 //!   `decode_typed` in every format.
 //! - Each hand-written mirror type in `core/benches/definitions` encodes to
 //!   exactly the bytes its shape's value does, in every format.
@@ -19,8 +20,11 @@ use comline_runtime::contract::{
     FRAMING_JSONRPC,
 };
 use comline_runtime::format::{Json, MsgPack, Packed};
-use comline_runtime_conformance::{check, decode_typed, Type, Value, Wire};
-use serde::{Deserialize, Serialize};
+use comline_runtime_conformance::{
+    check, decimal, decode_typed, HandshakeIn, Hex, Reply, Type, Value, Wire,
+};
+use serde::{Deserialize, Deserializer, Serialize};
+use serde_json::{json, Value as JsonValue};
 
 #[path = "../../core/benches/definitions/mod.rs"]
 mod definitions;
@@ -39,7 +43,70 @@ struct Shape {
     description: String,
     #[serde(rename = "type")]
     ty: Type,
+    #[serde(deserialize_with = "generated")]
     value: Value,
+}
+
+/// A shape's value: as a corpus value is written, or `generate`d. Expanded
+/// here, it is a corpus value from then on.
+fn generated<'de, D: Deserializer<'de>>(d: D) -> Result<Value, D::Error> {
+    Value::deserialize(expand(JsonValue::deserialize(d)?).map_err(serde::de::Error::custom)?)
+        .map_err(serde::de::Error::custom)
+}
+
+/// `{"generate": {"count": N, "item": ...}}` as the array of its `N` items,
+/// in which each sequence holds its number for that item's index. Anything
+/// else as it is.
+fn expand(value: JsonValue) -> Result<JsonValue, String> {
+    let Some(generate) = value.get("generate") else {
+        return Ok(value);
+    };
+    let Generate { count, item } =
+        Generate::deserialize(generate).map_err(|e| format!("bad `generate`: {e}"))?;
+    let items = (0..count)
+        .map(|index| instantiate(&item, index))
+        .collect::<Result<Vec<_>, _>>()?;
+    Ok(json!({ "array": items }))
+}
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct Generate {
+    count: i64,
+    item: JsonValue,
+}
+
+/// A number per item: `start + step * index`, then `modulo` (Euclidean) if
+/// it has one. Reading the result into its type refuses one that won't fit.
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct Sequence {
+    start: i64,
+    step: i64,
+    modulo: Option<i64>,
+}
+
+fn instantiate(item: &JsonValue, index: i64) -> Result<JsonValue, String> {
+    Ok(match item {
+        JsonValue::Object(fields) if fields.contains_key("start") => {
+            let s = Sequence::deserialize(item).map_err(|e| format!("bad sequence: {e}"))?;
+            let number = s.start + s.step * index;
+            json!(s.modulo.map_or(number, |m| number.rem_euclid(m)))
+        }
+        JsonValue::Object(fields) => JsonValue::Object(
+            fields
+                .iter()
+                .map(|(k, v)| Ok((k.clone(), instantiate(v, index)?)))
+                .collect::<Result<_, String>>()?,
+        ),
+        JsonValue::Array(items) => JsonValue::Array(
+            items
+                .iter()
+                .map(|v| instantiate(v, index))
+                .collect::<Result<_, _>>()?,
+        ),
+        other => other.clone(),
+    })
 }
 
 #[derive(Debug, Deserialize)]
@@ -54,7 +121,8 @@ struct Framings {
 #[serde(deny_unknown_fields)]
 struct FramingFrame {
     kind: String,
-    request_id: String,
+    #[serde(with = "decimal")]
+    request_id: u64,
     protocol: u16,
     payload_fill: String,
 }
@@ -62,17 +130,16 @@ struct FramingFrame {
 #[derive(Debug, Deserialize)]
 #[serde(deny_unknown_fields)]
 struct Handshake {
-    frame: HandshakeFrame,
-    ops: Vec<String>,
+    frame: HandshakeIn,
+    ops: Vec<HandshakeOp>,
 }
 
-#[derive(Debug, Deserialize)]
-#[serde(deny_unknown_fields)]
-struct HandshakeFrame {
-    ir_hash: String,
-    wire_format: String,
-    framing: String,
-    capabilities: u32,
+#[derive(Debug, Clone, Copy, PartialEq, Deserialize)]
+#[serde(rename_all = "snake_case")]
+enum HandshakeOp {
+    Encode,
+    Decode,
+    Check,
 }
 
 #[derive(Debug, Deserialize)]
@@ -83,7 +150,7 @@ struct Connection {
     protocol: u16,
     call: ConnectionCall,
     params: String,
-    reply: ConnectionReply,
+    reply: Reply,
 }
 
 #[derive(Debug, Deserialize)]
@@ -91,13 +158,6 @@ struct Connection {
 struct ConnectionCall {
     id: u16,
     name: String,
-}
-
-#[derive(Debug, Deserialize)]
-#[serde(deny_unknown_fields)]
-struct ConnectionReply {
-    kind: String,
-    payload: String,
 }
 
 const FORMATS: [&str; 3] = [FORMAT_JSON, FORMAT_MSGPACK, FORMAT_PACKED];
@@ -110,7 +170,13 @@ fn read<T: for<'de> Deserialize<'de>>(name: &str) -> T {
     let path = benches_dir().join(name);
     let text = std::fs::read_to_string(&path)
         .unwrap_or_else(|e| panic!("reading {}: {e}", path.display()));
-    serde_json::from_str(&text).unwrap_or_else(|e| panic!("parsing {}: {e}", path.display()))
+    // `$schema` is for editors and `cue vet`; the rest is held to the structs.
+    let mut json: serde_json::Value =
+        serde_json::from_str(&text).unwrap_or_else(|e| panic!("parsing {}: {e}", path.display()));
+    if let Some(fields) = json.as_object_mut() {
+        fields.remove("$schema");
+    }
+    serde_json::from_value(json).unwrap_or_else(|e| panic!("parsing {}: {e}", path.display()))
 }
 
 fn encode(format: &str, value: &(impl Serialize + ?Sized)) -> Vec<u8> {
@@ -201,10 +267,7 @@ fn framing_definitions_match_the_benches() {
     );
     assert_eq!(framings.payload_sizes, definitions::PAYLOAD_SIZES);
     assert_eq!(framings.frame.kind, "ok");
-    assert_eq!(
-        framings.frame.request_id,
-        definitions::FRAME_REQUEST_ID.to_string()
-    );
+    assert_eq!(framings.frame.request_id, definitions::FRAME_REQUEST_ID);
     assert_eq!(framings.frame.protocol, definitions::FRAME_PROTOCOL);
     assert_eq!(framings.frame.payload_fill, "a");
     for size in definitions::PAYLOAD_SIZES {
@@ -220,11 +283,14 @@ fn framing_definitions_match_the_benches() {
 fn handshake_definition_matches_the_benches() {
     let handshake: Handshake = read("handshake.json");
     let frame = &handshake.frame;
-    assert_eq!(frame.ir_hash, definitions::HANDSHAKE_IR_HASH.to_string());
+    assert_eq!(frame.ir_hash, definitions::HANDSHAKE_IR_HASH);
     assert_eq!(frame.wire_format, definitions::HANDSHAKE_WIRE_FORMAT);
     assert_eq!(frame.framing, definitions::HANDSHAKE_FRAMING);
     assert_eq!(frame.capabilities, definitions::HANDSHAKE_CAPABILITIES);
-    assert_eq!(handshake.ops, ["encode", "decode", "check"]);
+    assert_eq!(
+        handshake.ops,
+        [HandshakeOp::Encode, HandshakeOp::Decode, HandshakeOp::Check]
+    );
 }
 
 #[test]
@@ -238,6 +304,31 @@ fn connection_definition_matches_the_benches() {
         definitions::CONNECTION_CALL
     );
     assert_eq!(connection.params, definitions::CONNECTION_PARAMS);
-    assert_eq!(connection.reply.kind, "ok");
-    assert_eq!(connection.reply.payload, "");
+    assert_eq!(connection.reply, Reply::Ok { payload: Hex(vec![]) });
+}
+
+#[test]
+fn a_generated_value_expands_to_its_items() {
+    let read = |value: JsonValue| {
+        serde_json::from_value::<Shape>(json!({
+            "id": "x", "description": "x", "type": "u8", "value": value,
+        }))
+        .map(|shape| shape.value)
+    };
+    let sequence = json!({ "start": 10, "step": -4, "modulo": 7 });
+    assert_eq!(
+        read(json!({ "generate": { "count": 4, "item": { "u8": sequence } } })).unwrap(),
+        // 10, 6, 2, -2: a negative wraps to 5.
+        Value::Array([3, 6, 2, 5].map(Value::U8).to_vec())
+    );
+    assert_eq!(
+        read(json!({ "generate": { "count": 0, "item": { "u8": 1 } } })).unwrap(),
+        Value::Array(vec![])
+    );
+    assert_eq!(read(json!({ "u8": 1 })).unwrap(), Value::U8(1));
+    // A number that won't fit its type, a field a sequence hasn't got.
+    let over = json!({ "generate": { "count": 2, "item": { "u8": { "start": 255, "step": 1 } } } });
+    assert!(read(over).is_err());
+    let more = json!({ "generate": { "count": 1, "item": { "u8": { "start": 0, "step": 1, "by": 2 } } } });
+    assert!(read(more).is_err());
 }

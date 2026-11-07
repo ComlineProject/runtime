@@ -84,7 +84,7 @@ use std::path::Path;
 
 use comline_runtime::contract::{ConnectionFraming, Datagram2Framing, Envelope, HandshakeFrame};
 use comline_runtime::framing::JsonRpcFraming;
-use comline_runtime_conformance::{json_equal, Case, Compare, Expect, Op};
+use comline_runtime_conformance::{json_equal, Case, Compare, Expect, Framed, Input, Op};
 use comline_runtime_ffi::{COMLINE_ENVELOPE_ERR, COMLINE_ENVELOPE_FAULT, COMLINE_ENVELOPE_OK};
 
 use cases::*;
@@ -157,43 +157,43 @@ fn line(case: &Case) -> Result<String, String> {
         return Err("an id with a space in it".into());
     }
     let input = &case.input;
-    let framing = input["framing"].as_str();
+    let framing = framing_of(input);
     let reject = case.expect == Expect::Reject;
     let mut out = String::new();
     let id = &case.id;
-    match (case.op, framing) {
-        (Op::NameHash, _) => {
+    match (input, framing) {
+        (Input::NameHash(i), _) => {
             exact_only(case)?;
             write!(
                 out,
                 "name_hash {id} exact {} {}",
-                bytes(str_of(&input["name"]).as_bytes()),
+                bytes(i.name.as_bytes()),
                 bytes(&case.bytes.0)
             )
         }
-        (Op::Handshake, _) if reject => {
+        (Input::Handshake(_), _) if reject => {
             write!(out, "handshake {id} reject {}", bytes(&case.bytes.0))
         }
-        (Op::Handshake, _) => {
+        (Input::Handshake(Some(i)), _) => {
             exact_only(case)?;
             write!(
                 out,
                 "handshake {id} exact {} {} {} {} {} {}",
-                u64_of(&input["ir_hash"]),
-                name(str_of(&input["wire_format"]))?,
-                name(str_of(&input["framing"]))?,
-                input["capabilities"].as_u64().ok_or("capabilities")? as u32,
+                i.ir_hash,
+                name(&i.wire_format)?,
+                name(&i.framing)?,
+                i.capabilities,
                 bytes(&case.bytes.0),
                 bytes(&case.bytes.0),
             )
         }
-        (Op::HandshakeCheck, _) => {
+        (Input::HandshakeCheck(i), _) => {
             let mut ours = Vec::new();
             HandshakeFrame::new(
-                u64_of(&input["ir_hash"]),
-                name(str_of(&input["wire_format"]))?,
-                name(str_of(&input["framing"]))?,
-                input["capabilities"].as_u64().ok_or("capabilities")? as u32,
+                i.ir_hash,
+                name(&i.wire_format)?,
+                name(&i.framing)?,
+                i.capabilities,
             )
             .encode(&mut ours);
             let how = if reject { "reject" } else { "exact" };
@@ -205,14 +205,15 @@ fn line(case: &Case) -> Result<String, String> {
             )
         }
         (_, Some("datagram@1")) => write!(out, "unmapped {id} refused datagram@1"),
-        (Op::Envelope, _) => {
+        (Input::Envelope(reply), _) => {
             let mut frame = REPLY_HEADER.to_vec();
             frame.extend_from_slice(&case.bytes.0);
             if reject {
                 write!(out, "envelope {id} reject {}", bytes(&frame))
             } else {
                 exact_only(case)?;
-                let (envelope, error_id, body) = reply_of(input);
+                let reply = reply.as_ref().ok_or("an exact envelope case has no input")?;
+                let (envelope, error_id, body) = reply_of(reply);
                 write!(
                     out,
                     "envelope {id} exact {envelope} {error_id} {} {} {}",
@@ -222,21 +223,23 @@ fn line(case: &Case) -> Result<String, String> {
                 )
             }
         }
-        (Op::Request | Op::Response, Some(f @ ("datagram@2" | "jsonrpc@1"))) if reject => {
-            let op = if case.op == Op::Request {
+        (Input::Request(_) | Input::Response(_), Some(f @ ("datagram@2" | "jsonrpc@1")))
+            if reject =>
+        {
+            let op = if case.op() == Op::Request {
                 "request"
             } else {
                 "response"
             };
             write!(out, "{op} {id} reject {f} {}", bytes(&case.bytes.0))
         }
-        (Op::Request, Some(f @ ("datagram@2" | "jsonrpc@1"))) => {
-            let request_id = u64_of(&input["request_id"]);
-            let protocol = input["protocol"].as_u64().unwrap_or(0) as u16;
-            let call_id = input["call_id"].as_u64().ok_or("call_id")? as u16;
-            let method = str_of(&input["method"]);
-            let one_way = input["one_way"].as_bool().unwrap_or(false);
-            let params = params_of(input)?;
+        (Input::Request(Framed::Full(i)), Some(f @ ("datagram@2" | "jsonrpc@1"))) => {
+            let request_id = i.request_id;
+            let protocol = i.protocol.unwrap_or(0);
+            let call_id = i.call_id;
+            let method = i.method.as_str();
+            let one_way = i.one_way;
+            let params = params_of(i)?;
             let patched = request_id > DRIVABLE;
             let drive = if patched || one_way { 0 } else { request_id };
             let encoded = if case.compare == Compare::Bytes && !patched {
@@ -267,10 +270,10 @@ fn line(case: &Case) -> Result<String, String> {
                 bytes(&encoded),
             )
         }
-        (Op::Response, Some(f @ ("datagram@2" | "jsonrpc@1"))) => {
-            let request_id = u64_of(&input["request_id"]);
-            let protocol = input["protocol"].as_u64().unwrap_or(0) as u16;
-            let (envelope, error_id, body) = reply_of(input);
+        (Input::Response(Framed::Full(i)), Some(f @ ("datagram@2" | "jsonrpc@1"))) => {
+            let request_id = i.request_id;
+            let protocol = i.protocol.unwrap_or(0);
+            let (envelope, error_id, body) = reply_of(&i.reply);
             if request_id > DRIVABLE {
                 return Err("a reply id too large to wait on".into());
             }
@@ -301,7 +304,7 @@ fn line(case: &Case) -> Result<String, String> {
                 bytes(&encoded),
             )
         }
-        _ => return Err(format!("no mapping for {:?} on {framing:?}", case.op)),
+        _ => return Err(format!("no mapping for {:?} on {framing:?}", case.op())),
     }
     .map_err(|e| e.to_string())?;
     Ok(out)
@@ -315,7 +318,7 @@ fn exact_only(case: &Case) -> Result<(), String> {
     } else {
         Err(format!(
             "{:?} with \"compare\": \"json\" isn't exported",
-            case.op
+            case.op()
         ))
     }
 }

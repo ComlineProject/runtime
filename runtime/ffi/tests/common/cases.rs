@@ -11,7 +11,7 @@
 
 #![allow(dead_code)]
 
-use comline_runtime_conformance::{Value, Vectors, Wire};
+use comline_runtime_conformance::{Framed, Input, Reply, RequestIn, Vectors, Wire};
 use comline_runtime_ffi::{COMLINE_ENVELOPE_ERR, COMLINE_ENVELOPE_FAULT, COMLINE_ENVELOPE_OK};
 
 /// The files with cases on the ABI: every one a `comline_connection` or a
@@ -63,47 +63,34 @@ pub fn hex(bytes: &[u8]) -> String {
     bytes.iter().map(|b| format!("{b:02x}")).collect()
 }
 
-pub fn u64_of(v: &serde_json::Value) -> u64 {
-    v.as_str()
-        .expect("a 64-bit integer is a decimal string")
-        .parse()
-        .expect("a decimal")
-}
-
-pub fn str_of(v: &serde_json::Value) -> &str {
-    v.as_str().expect("a string")
-}
-
-pub fn bytes_of(v: &serde_json::Value) -> Vec<u8> {
-    let text = str_of(v);
-    (0..text.len())
-        .step_by(2)
-        .map(|i| u8::from_str_radix(&text[i..i + 2], 16).expect("hex"))
-        .collect()
+/// The framing a `request` or `response` input names.
+pub fn framing_of(input: &Input) -> Option<&str> {
+    match input {
+        Input::Request(Framed::Full(i)) => Some(&i.framing),
+        Input::Response(Framed::Full(i)) => Some(&i.framing),
+        Input::Request(Framed::Selector { framing })
+        | Input::Response(Framed::Selector { framing }) => Some(framing),
+        _ => None,
+    }
 }
 
 /// A vector's params, as the host's `json@1` codec writes them.
-pub fn params_of(input: &serde_json::Value) -> Result<Vec<u8>, String> {
-    let format = str_of(&input["format"]);
-    if format != "json@1" {
-        return Err(format!("params in {format}: only json@1 is encoded here"));
+pub fn params_of(input: &RequestIn) -> Result<Vec<u8>, String> {
+    if input.format != "json@1" {
+        return Err(format!(
+            "params in {}: only json@1 is encoded here",
+            input.format
+        ));
     }
-    let value: Value =
-        serde_json::from_value(input["params"].clone()).map_err(|e| e.to_string())?;
-    serde_json::to_vec(&Wire(&value)).map_err(|e| e.to_string())
+    serde_json::to_vec(&Wire(&input.params)).map_err(|e| e.to_string())
 }
 
 /// `(envelope, error_id, body)` from an `envelope` / `response` input.
-pub fn reply_of(input: &serde_json::Value) -> (u8, u16, Vec<u8>) {
-    match str_of(&input["kind"]) {
-        "ok" => (COMLINE_ENVELOPE_OK, 0, bytes_of(&input["payload"])),
-        "err" => (
-            COMLINE_ENVELOPE_ERR,
-            input["id"].as_u64().expect("an ordinal") as u16,
-            bytes_of(&input["body"]),
-        ),
-        "fault" => (COMLINE_ENVELOPE_FAULT, 0, Vec::new()),
-        other => panic!("kind {other}"),
+pub fn reply_of(reply: &Reply) -> (u8, u16, Vec<u8>) {
+    match reply {
+        Reply::Ok { payload } => (COMLINE_ENVELOPE_OK, 0, payload.0.clone()),
+        Reply::Err { id, body } => (COMLINE_ENVELOPE_ERR, *id, body.0.clone()),
+        Reply::Fault => (COMLINE_ENVELOPE_FAULT, 0, Vec::new()),
     }
 }
 

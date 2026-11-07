@@ -1,4 +1,5 @@
 {
+  "$schema": "../specs/gen/profile.schema.json",
   "name": "datagram@3",
   "kind": "framing",
   "facts": {

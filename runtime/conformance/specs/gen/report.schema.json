@@ -1,0 +1,108 @@
+{
+    "$schema": "https://json-schema.org/draft/2020-12/schema",
+    "$defs": {
+        "CaseId": {
+            "type": "string",
+            "description": "A vector case's id: `<feature>/<name>`.",
+            "pattern": "^[a-z0-9.@_-]+/[a-z0-9.@_-]+$"
+        },
+        "ProvenClaim": {
+            "description": "A claim, with the cases that prove it.",
+            "anyOf": [
+                {
+                    "type": "object",
+                    "additionalProperties": false,
+                    "properties": {
+                        "note": {
+                            "type": "string"
+                        },
+                        "proven_by": {
+                            "type": "array",
+                            "items": {
+                                "$ref": "#/$defs/CaseId"
+                            }
+                        },
+                        "state": {
+                            "anyOf": [
+                                {
+                                    "const": "supported"
+                                },
+                                {
+                                    "const": "unsupported"
+                                }
+                            ]
+                        },
+                        "tracking": {
+                            "type": "string"
+                        }
+                    },
+                    "required": [
+                        "proven_by",
+                        "state"
+                    ]
+                },
+                {
+                    "type": "object",
+                    "additionalProperties": false,
+                    "properties": {
+                        "failing": {
+                            "type": "array",
+                            "items": {
+                                "$ref": "#/$defs/CaseId"
+                            },
+                            "prefixItems": [
+                                {
+                                    "$ref": "#/$defs/CaseId"
+                                }
+                            ],
+                            "minItems": 1
+                        },
+                        "note": {
+                            "type": "string"
+                        },
+                        "proven_by": {
+                            "type": "array",
+                            "items": {
+                                "$ref": "#/$defs/CaseId"
+                            }
+                        },
+                        "state": {
+                            "const": "partial"
+                        },
+                        "tracking": {
+                            "type": "string"
+                        }
+                    },
+                    "required": [
+                        "failing",
+                        "proven_by",
+                        "state"
+                    ]
+                }
+            ]
+        }
+    },
+    "type": "object",
+    "description": "`reports/<runtime>.json`: a runtime's claims, with the cases proving each.",
+    "additionalProperties": false,
+    "properties": {
+        "$schema": {
+            "type": "string"
+        },
+        "runtime": {
+            "type": "string",
+            "description": "Language runtime"
+        },
+        "support": {
+            "type": "object",
+            "description": "Supported features",
+            "additionalProperties": {
+                "$ref": "#/$defs/ProvenClaim"
+            }
+        }
+    },
+    "required": [
+        "runtime",
+        "support"
+    ]
+}

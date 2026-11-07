@@ -1,4 +1,5 @@
 {
+  "$schema": "../specs/gen/bench.schema.json",
   "framings": ["datagram@1", "datagram@2", "jsonrpc@1"],
   "payload_sizes": [16, 256, 4096, 65536],
   "frame": {

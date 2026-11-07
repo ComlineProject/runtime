@@ -5,7 +5,7 @@ languages. Vendor this directory with the vectors; it uses the vectors' own
 value and type encoding (see [the corpus README](../README.md)).
 
 | File | Benchmarks |
-|---|---|
+| --- | --- |
 | [`formats.json`](formats.json) | encode and decode, per format, per shape |
 | [`framings.json`](framings.json) | framing encode and decode, per framing, per payload size |
 | [`handshake.json`](handshake.json) | the handshake frame: encode, decode, check |
@@ -15,10 +15,24 @@ value and type encoding (see [the corpus README](../README.md)).
 
 - `formats`: the formats each shape is measured in.
 - `shapes`: each has an `id`, a `description`, a `type` (as a `decode` case
-  states it) and a `value` of that type (as an `encode` case states it).
+  states it) and a `value` of that type (as an `encode` case states it, or
+  generated).
+
+A generated value is an array, written by the rule that makes it, so a large
+shape stays readable. Expand it when loading the definitions:
+
+```json
+{"generate": {"count": 3, "item": {"u16": {"start": 0, "step": 40000, "modulo": 65536}}}}
+```
+
+is `{"array": [{"u16": 0}, {"u16": 40000}, {"u16": 14464}]}`. Item `i` is `item`
+with each sequence replaced by `start + step * i`, then taken Euclidean modulo
+`modulo` if it has one. Only integers narrower than 64 bits, which a value
+holds as JSON numbers, can be sequences, and a number that doesn't fit its
+type is an error.
 
 | `id` | What it stresses |
-|---|---|
+| --- | --- |
 | `small-scalar` | five fixed-width scalars: per-message overhead |
 | `string-heavy` | strings, with non-ASCII text, a quote and a newline to escape |
 | `nested` | structs three deep, options present and absent |
@@ -59,7 +73,7 @@ waiting on a reply; then receive the `reply` to it (an `ok`, with the hex
 Results name each benchmark by an id built from the definitions:
 
 | Benchmark | Id |
-|---|---|
+| --- | --- |
 | format | `format/<encode\|decode>/<shape>/<format>`, e.g. `format/decode/nested/packed@1` |
 | framing | `framing/<encode\|decode>/<framing>/<size>`, e.g. `framing/encode/jsonrpc@1/4096` |
 | handshake | `handshake/<encode\|decode\|check>` |

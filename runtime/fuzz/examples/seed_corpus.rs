@@ -26,7 +26,7 @@ use std::collections::BTreeMap;
 use std::path::PathBuf;
 
 use comline_runtime::contract::FORMAT_PACKED;
-use comline_runtime_conformance::{reference_cases, Op, Type, Value};
+use comline_runtime_conformance::{reference_cases, Input};
 use comline_runtime_fuzz::ffi::drive::{self, Cap, Config, Op as FfiOp, Ours};
 use comline_runtime_fuzz::ffi::{read as read_ffi, write as write_ffi};
 use comline_runtime_fuzz::{type_of, write_format, write_type};
@@ -117,21 +117,19 @@ fn main() {
                 "handshake" => {
                     // A frame names its own config; a refused one has none,
                     // and goes to a connection's first frame as it is.
-                    let input = &case.input;
                     let mut config = Config {
                         handshake: comline_runtime_ffi::COMLINE_HANDSHAKE_COMLINE,
                         ..drive::exchange_config("datagram@2", 1)
                     };
-                    if let (Some(framing), Some(wire_format), Some(ir_hash), Some(capabilities)) = (
-                        input["framing"].as_str(),
-                        input["wire_format"].as_str(),
-                        input["ir_hash"].as_str().and_then(|n| n.parse().ok()),
-                        input["capabilities"].as_u64(),
-                    ) {
-                        config.framing = framing.into();
-                        config.wire_format = wire_format.into();
-                        config.ir_hash = ir_hash;
-                        config.capabilities = capabilities as u32;
+                    let declared = match &case.input {
+                        Input::Handshake(Some(i)) | Input::HandshakeCheck(i) => Some(i),
+                        _ => None,
+                    };
+                    if let Some(i) = declared {
+                        config.framing = i.framing.as_str().into();
+                        config.wire_format = i.wire_format.as_str().into();
+                        config.ir_hash = i.ir_hash;
+                        config.capabilities = i.capabilities;
                     }
                     let ops = [
                         FfiOp::Start(Cap::Plenty),
@@ -160,20 +158,18 @@ fn main() {
         for case in vectors.cases {
             let name = case.id.replace('/', "_");
             let bytes = case.bytes.0;
-            let typed = match case.op {
-                Op::Encode => {
-                    let value: Value =
-                        serde_json::from_value(case.input["value"].clone()).expect("a value");
-                    Some(type_of(&value))
-                }
-                Op::Decode => Some(
-                    serde_json::from_value::<Type>(case.input["type"].clone()).expect("a type"),
-                ),
+            let (format, ty) = match &case.input {
+                Input::Encode(i) => (Some(&i.format), Some(type_of(&i.value))),
+                Input::Decode(i) => (Some(&i.format), Some(i.ty.clone())),
+                _ => (None, None),
+            };
+            // `stream_split` reads its limit first.
+            let limit = match &case.input {
+                Input::StreamPrefix(i) => Some(i.max),
+                Input::StreamSplit(i) => Some(i.max()),
                 _ => None,
             };
-            if matches!(case.op, Op::StreamPrefix | Op::StreamSplit) {
-                // `stream_split` reads its limit first.
-                let max = case.input["max"].as_u64().expect("a limit");
+            if let Some(max) = limit {
                 let mut input = u32::try_from(max)
                     .unwrap_or(u32::MAX)
                     .to_le_bytes()
@@ -182,11 +178,10 @@ fn main() {
                 add("stream_split", name, input);
                 continue;
             }
-            let Some(ty) = typed else {
+            let (Some(format), Some(ty)) = (format, ty) else {
                 add("framing_decode", name, bytes);
                 continue;
             };
-            let format = case.input["format"].as_str().expect("a format").to_owned();
 
             let mut input = Vec::new();
             write_format(&format, &mut input);

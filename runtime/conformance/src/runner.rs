@@ -37,15 +37,15 @@ use std::path::Path;
 use serde::Deserialize;
 use serde_json::{json, Value as Json};
 
-use crate::{answer, fact_shown, json_equal, Answer, Case, Compare, Expect, Hex, Op, Outcome};
-use crate::{Profile, Vectors};
+use crate::{answer, fact_shown, json_equal, to_json, Answer, Case, Compare, Expect, Hex, Op};
+use crate::{Outcome, Profile, Vectors};
 
 /// The version of the public spec: the case format (`vectors/*.json`,
 /// `profiles/*.json`) and the ops protocol. `0.x` while Comline is in its
 /// early days: a minor bump may change anything, and says so in the
 /// changelog. The ops protocol also carries its own number (`protocol` in
 /// the `version` reply, [`OPS_PROTOCOL`]).
-pub const SPEC_VERSION: &str = "0.4";
+pub const SPEC_VERSION: &str = "0.5";
 
 /// The ops protocol's number, as a `version` reply states it. Ops and reply
 /// fields are only ever added under it.
@@ -66,8 +66,15 @@ pub struct Corpus {
 /// (`runtime/conformance`) is laid out.
 pub fn load_corpus(dir: &Path) -> Result<Corpus, String> {
     let mut corpus = Corpus::default();
+    let mut seen = std::collections::BTreeSet::new();
     for path in json_files(&dir.join("vectors"))? {
-        corpus.vectors.push(load_vectors(&path)?);
+        let vectors = load_vectors(&path)?;
+        for case in &vectors.cases {
+            if !seen.insert(case.id.clone()) {
+                return Err(format!("{}: a second case `{}`", path.display(), case.id));
+            }
+        }
+        corpus.vectors.push(vectors);
     }
     for path in json_files(&dir.join("profiles"))? {
         let profile = load_profile(&path)?;
@@ -90,9 +97,29 @@ fn json_files(dir: &Path) -> Result<Vec<std::path::PathBuf>, String> {
     Ok(paths)
 }
 
-/// One vectors file: `{"feature": ..., "cases": [...]}`.
+/// One vectors file: `{"feature": ..., "cases": [...]}`. Case ids are
+/// `<feature>/<name>`, each one once: outcomes are held by id.
 pub fn load_vectors(path: &Path) -> Result<Vectors, String> {
-    read_json(path)
+    let vectors: Vectors = read_json(path)?;
+    let mut seen = std::collections::BTreeSet::new();
+    for case in &vectors.cases {
+        let in_feature = case
+            .id
+            .split_once('/')
+            .is_some_and(|(feature, _)| feature == vectors.feature);
+        if !in_feature {
+            return Err(format!(
+                "{}: case `{}` isn't `{}/<name>`",
+                path.display(),
+                case.id,
+                vectors.feature
+            ));
+        }
+        if !seen.insert(&case.id) {
+            return Err(format!("{}: a second case `{}`", path.display(), case.id));
+        }
+    }
+    Ok(vectors)
 }
 
 /// One profile file: `{"name": ..., "kind": ..., "facts": {...}}`.
@@ -131,8 +158,9 @@ impl Corpus {
     pub fn cases_for(&self, profile: &Profile) -> Vec<&Case> {
         let mut features: Vec<&str> = profile
             .facts
-            .values()
-            .flat_map(|f| &f.proven_by)
+            .stated()
+            .into_iter()
+            .flat_map(|(_, proven_by)| proven_by)
             .filter_map(|id| id.split_once('/').map(|(feature, _)| feature))
             .collect();
         features.sort();
@@ -167,11 +195,12 @@ pub fn prove<'a>(
 ) -> Vec<FactProof> {
     profile
         .facts
-        .iter()
-        .map(|(fact, stated)| {
+        .stated()
+        .into_iter()
+        .map(|(fact, proven_by)| {
             let result = (|| {
                 let mut proving = Vec::new();
-                for id in &stated.proven_by {
+                for id in proven_by {
                     let c = case(id).ok_or_else(|| format!("names unknown case `{id}`"))?;
                     match outcomes.get(id) {
                         Some(Outcome::Pass) => proving.push(c),
@@ -182,11 +211,11 @@ pub fn prove<'a>(
                         None => return Err(format!("case `{id}` wasn't run")),
                     }
                 }
-                fact_shown(fact, &stated.value, &proving)
+                fact_shown(fact, &proving)
             })();
             FactProof {
-                fact: fact.clone(),
-                value: stated.value.clone(),
+                fact: fact.name().into(),
+                value: fact.value().into(),
                 result,
             }
         })
@@ -256,26 +285,26 @@ pub fn parse_reply(reply: &Json) -> Result<(Json, Answer), String> {
 ///   op but `name_hash` and `encode` asks to decode `bytes`.
 pub fn questions(case: &Case) -> Vec<Question> {
     let ask = |bytes: Option<&[u8]>| Question {
-        op: case.op,
-        input: case.input.clone(),
+        op: case.op(),
+        input: to_json(&case.input),
         bytes: bytes.map(<[u8]>::to_vec),
     };
     let mut asked = Vec::new();
     if case.expect == Expect::Reject {
-        if matches!(case.op, Op::StreamPrefix | Op::Encode) {
+        if matches!(case.op(), Op::StreamPrefix | Op::Encode) {
             asked.push(ask(None));
         }
         // An `encode` rejection is a value over its type's bounds, which no
         // bytes stand for.
-        if case.op != Op::Encode {
+        if case.op() != Op::Encode {
             asked.push(ask(Some(&case.bytes.0)));
         }
         return asked;
     }
-    if !case.op.decode_only() {
+    if !case.op().decode_only() {
         asked.push(ask(None));
     }
-    if !matches!(case.op, Op::NameHash | Op::Encode) {
+    if !matches!(case.op(), Op::NameHash | Op::Encode) {
         asked.push(ask(Some(&case.bytes.0)));
     }
     asked
@@ -328,9 +357,9 @@ pub fn judge(case: &Case, answers: &[Answer]) -> Outcome {
             (Some(_), Answer::Accept(got)) if case.expect == Expect::Reject => {
                 Err(format!("accepted bytes it must reject, as {got}"))
             }
-            (Some(_), Answer::Accept(got)) if *got == case.input => Ok(()),
+            (Some(_), Answer::Accept(got)) if case.input.given_back_by(got) => Ok(()),
             (Some(_), Answer::Accept(got)) => {
-                Err(format!("decodes to {got}, expected {}", case.input))
+                Err(format!("decodes to {got}, expected {}", to_json(&case.input)))
             }
             (Some(_), Answer::Bytes(_)) => Err("answered a decode with bytes".into()),
         };
@@ -533,8 +562,7 @@ mod tests {
     fn a_wrong_answer_fails_with_a_diff() {
         let case = Case {
             id: "x/y".into(),
-            op: Op::NameHash,
-            input: json!({ "name": "x" }),
+            input: crate::Input::NameHash(crate::NameHashIn { name: "x".into() }),
             bytes: Hex(vec![1, 2]),
             expect: Expect::Exact,
             compare: Compare::Bytes,
@@ -548,6 +576,48 @@ mod tests {
             judge(&case, &[Answer::NotImplemented("x".into())]),
             Outcome::NotImplemented(_)
         ));
+    }
+
+    #[test]
+    fn a_vectors_file_holds_each_of_its_ids_once() {
+        let dir = std::env::temp_dir().join(format!("comline-corpus-{}", std::process::id()));
+        std::fs::create_dir_all(dir.join("vectors")).unwrap();
+        let path = dir.join("vectors/a.json");
+        let file = |ids: &[&str]| {
+            let cases: Vec<Json> = ids
+                .iter()
+                .map(|id| json!({ "id": id, "op": "name_hash", "input": { "name": "x" }, "bytes": "00" }))
+                .collect();
+            std::fs::write(&path, json!({ "feature": "a", "cases": cases }).to_string()).unwrap();
+        };
+        file(&["a/x", "a/y"]);
+        assert_eq!(load_corpus(&dir).unwrap().cases().count(), 2);
+        file(&["a/x", "a/x"]);
+        assert!(load_corpus(&dir).unwrap_err().contains("a second case `a/x`"));
+        file(&["b/x"]);
+        assert!(load_corpus(&dir).unwrap_err().contains("isn't `a/<name>`"));
+        std::fs::remove_dir_all(&dir).unwrap();
+    }
+
+    #[test]
+    fn an_answer_is_judged_by_what_it_holds() {
+        let input = crate::Input::parse(Op::Decode, &json!({
+            "format": "json@1", "type": "f64", "value": { "f64": 1.0 },
+        }))
+        .unwrap();
+        let case = Case {
+            id: "x/y".into(),
+            input,
+            bytes: Hex(vec![b'1']),
+            expect: Expect::Exact,
+            compare: Compare::Bytes,
+        };
+        let answer = |f64: Json| json!({ "format": "json@1", "type": "f64", "value": { "f64": f64 } });
+        assert_eq!(judge(&case, &[Answer::Accept(answer(json!(1)))]), Outcome::Pass);
+        assert!(matches!(judge(&case, &[Answer::Accept(answer(json!(2)))]), Outcome::Fail(_)));
+        let mut more = answer(json!(1));
+        more["more"] = json!(1);
+        assert!(matches!(judge(&case, &[Answer::Accept(more)]), Outcome::Fail(_)));
     }
 
     #[test]

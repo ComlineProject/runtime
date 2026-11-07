@@ -13,11 +13,23 @@
 
 use std::collections::BTreeMap;
 
+mod case;
 mod comline2;
 mod intern;
+mod profile;
 pub mod runner;
 mod seed;
 
+pub use case::{
+    Case, Compare, DecodeIn, EncodeIn, Expect, Framed, HandshakeIn, Hex, Input, NameHashIn, Op,
+    Reply, RequestIn, ResponseIn, StreamPrefixIn, StreamSplit, StreamSplitIn,
+};
+pub use comline2::{NegotiateIn, NegotiateResult, Step};
+pub use profile::{
+    fact_shown, Calls, EnumVariants, Errors, Fact, Facts, FormatFacts, FramingFacts,
+    HandshakeFacts, IntegerWidth, MissingOptional, Profile, ProfileKind, Stated, StructFields,
+    UnknownField, UnknownVariant,
+};
 pub use seed::{check, TypeSeed};
 
 use serde::de::Error as _;
@@ -137,7 +149,9 @@ impl Serialize for Wire<'_> {
     }
 }
 
-mod decimal {
+/// A 64- or 128-bit integer as a decimal string, so a JSON reader that holds
+/// numbers as doubles keeps it exact.
+pub mod decimal {
     use super::*;
 
     pub fn serialize<T: ToString, S: Serializer>(v: &T, s: S) -> Result<S::Ok, S::Error> {
@@ -152,244 +166,6 @@ mod decimal {
     {
         String::deserialize(d)?.parse().map_err(D::Error::custom)
     }
-}
-
-/// Bytes as lowercase hex, in vectors.
-#[derive(Debug, Clone, PartialEq, Eq, Default)]
-pub struct Hex(pub Vec<u8>);
-
-impl Serialize for Hex {
-    fn serialize<S: Serializer>(&self, s: S) -> Result<S::Ok, S::Error> {
-        s.serialize_str(
-            &self
-                .0
-                .iter()
-                .map(|b| format!("{b:02x}"))
-                .collect::<String>(),
-        )
-    }
-}
-
-impl<'de> Deserialize<'de> for Hex {
-    fn deserialize<D: Deserializer<'de>>(d: D) -> Result<Self, D::Error> {
-        let s = String::deserialize(d)?;
-        if s.len() % 2 != 0 {
-            return Err(D::Error::custom("odd-length hex"));
-        }
-        (0..s.len())
-            .step_by(2)
-            .map(|i| u8::from_str_radix(&s[i..i + 2], 16).map_err(D::Error::custom))
-            .collect::<Result<_, _>>()
-            .map(Hex)
-    }
-}
-
-/// One vector: an operation's input and the exact bytes it must produce and
-/// decode from, or (`expect: "reject"`) bytes the operation must refuse.
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
-pub struct Case {
-    pub id: String,
-    pub op: Op,
-    /// The operation's input; for a rejection, only what selects the decoder
-    /// (a framing's name).
-    #[serde(default, skip_serializing_if = "serde_json::Value::is_null")]
-    pub input: serde_json::Value,
-    pub bytes: Hex,
-    #[serde(default, skip_serializing_if = "Expect::is_exact")]
-    pub expect: Expect,
-    #[serde(default, skip_serializing_if = "Compare::is_bytes")]
-    pub compare: Compare,
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "snake_case")]
-pub enum Op {
-    /// `{name}` → the hash, 8 bytes little-endian. Encode only.
-    NameHash,
-    /// `{ir_hash, wire_format, framing, capabilities}`, names unhashed.
-    Handshake,
-    /// `{ir_hash, wire_format, framing, capabilities}`, one end's own
-    /// declaration (`comline@1`'s), and `bytes`, the frame its peer sent.
-    /// Decoding checks the peer's frame against the input: it's accepted,
-    /// and gives the input back, when the schema fingerprint, format and
-    /// framing agree (capability bits may differ), and refused otherwise.
-    /// Decode only. A handshake profile's facts are about this.
-    HandshakeCheck,
-    /// A [`Reply`].
-    Envelope,
-    /// `{framing, call_id, method, request_id, format, params}`. Decoding
-    /// yields the call (the id for datagram framing, the method for
-    /// JSON-RPC), the request id, and `params` encoded in `format`. A framing
-    /// that carries the protocol (`datagram@2`) has a `protocol` number too.
-    Request,
-    /// `{framing, request_id}` and a [`Reply`], plus `protocol` for a
-    /// framing that carries it.
-    Response,
-    /// `{format, value}` → the encoded value. Encode only.
-    Encode,
-    /// `{format, type, value}`: decoding `bytes` as `type` gives `value`.
-    /// Decode only: the bytes were written by a different type (a field
-    /// more, a variant reordered), which is what a profile fact is about.
-    /// A rejection's input is `{format, type}`.
-    Decode,
-    /// `{len, max}` → the 4-byte length prefix of a `len`-byte frame on a
-    /// byte stream, under the limit `max`. Decoding reads the prefix back.
-    /// A rejection's bytes are a prefix over `max`; its input is
-    /// `{len, max}` too, and encoding it must fail as well.
-    StreamPrefix,
-    /// `{max, frames, rest, needed}` → a byte stream: each of `frames`
-    /// (hex) behind its length prefix, then `rest`, the start of a frame
-    /// not yet whole. Decoding splits the stream frame by frame under the
-    /// limit `max`; `needed` is how many bytes the incomplete frame in
-    /// `rest` takes in all, prefix included, or 0 while its prefix is
-    /// incomplete. A rejection's bytes declare a frame over `max`; its
-    /// input is `{max}`.
-    StreamSplit,
-    /// A `comline@2` message, `{"type": "hello" | "answer" | "verdict",
-    /// "message": {...}}`, as `comline_runtime::comline2::Message`
-    /// serialises it. Encode and decode.
-    Comline2Message,
-    /// One `comline@2` negotiation step, `{step, side, params, local,
-    /// pending, reply, result}`, and `bytes`, the message the peer sent.
-    /// Decoding runs the step and gives the input back when its `reply` (the
-    /// message this end sends, or `null`) and `result` (`{"accepted":
-    /// {...}}` or `{"refused": {reason, side, protocol}}`) are what the
-    /// runtime concludes. Decode only. `comline@2`'s profile facts are
-    /// about this.
-    Comline2Negotiate,
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
-#[serde(rename_all = "snake_case")]
-pub enum Expect {
-    /// Encoding the input gives `bytes`, and decoding `bytes` gives the input.
-    #[default]
-    Exact,
-    /// Decoding `bytes` fails.
-    Reject,
-}
-
-impl Op {
-    /// Whether a case of this op only asks to decode its bytes, never to
-    /// encode its input.
-    pub fn decode_only(self) -> bool {
-        matches!(self, Op::Decode | Op::HandshakeCheck | Op::Comline2Negotiate)
-    }
-}
-
-impl Expect {
-    fn is_exact(&self) -> bool {
-        *self == Expect::Exact
-    }
-}
-
-/// How a runtime's output must match a case's bytes.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
-#[serde(rename_all = "snake_case")]
-pub enum Compare {
-    /// Byte for byte.
-    #[default]
-    Bytes,
-    /// As JSON values (RFC 8259), for bytes that are JSON text: whitespace
-    /// and object member order don't matter, and numbers compare as exact
-    /// decimals, so `1` equals `1.0` but `9007199254740992` doesn't equal
-    /// `9007199254740993`. The same holds for JSON carried inside the frame:
-    /// JSON-RPC params, results and error data. `comline-runtime`, the
-    /// reference, reproduces the bytes exactly, except for a `found-*` case
-    /// that spells a string another way.
-    Json,
-}
-
-impl Compare {
-    fn is_bytes(&self) -> bool {
-        *self == Compare::Bytes
-    }
-}
-
-/// A response's outcome, as `envelope` and `response` inputs carry it.
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
-#[serde(tag = "kind", rename_all = "snake_case")]
-pub enum Reply {
-    Ok { payload: Hex },
-    Err { id: u16, body: Hex },
-    Fault,
-}
-
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
-struct NameHashIn {
-    name: String,
-}
-
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
-struct HandshakeIn {
-    #[serde(with = "decimal")]
-    ir_hash: u64,
-    wire_format: String,
-    framing: String,
-    capabilities: u32,
-}
-
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
-struct RequestIn {
-    framing: String,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    protocol: Option<u16>,
-    call_id: u16,
-    method: String,
-    #[serde(with = "decimal")]
-    request_id: u64,
-    /// A one-way call, on a connection: JSON-RPC sends it as a notification,
-    /// with no `id` (and decoding one gives `request_id` 0).
-    #[serde(default, skip_serializing_if = "is_false")]
-    one_way: bool,
-    format: String,
-    params: Value,
-}
-
-fn is_false(b: &bool) -> bool {
-    !*b
-}
-
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
-struct ResponseIn {
-    framing: String,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    protocol: Option<u16>,
-    #[serde(with = "decimal")]
-    request_id: u64,
-    #[serde(flatten)]
-    reply: Reply,
-}
-
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
-struct StreamPrefixIn {
-    len: u64,
-    max: u64,
-}
-
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
-struct StreamSplitIn {
-    max: u64,
-    frames: Vec<Hex>,
-    rest: Hex,
-    needed: u64,
-}
-
-/// A stream limit as the runtime takes it: a `max` past `usize` holds every
-/// frame `usize` can.
-fn stream_max(max: u64) -> usize {
-    usize::try_from(max).unwrap_or(usize::MAX)
-}
-
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
-struct EncodeIn {
-    format: String,
-    /// The type the value is encoded as, when its bounds matter: encoding
-    /// a value over them must fail (a rejection), and one within them gives
-    /// the bytes. Without it, the value's own shape is its type.
-    #[serde(rename = "type", default, skip_serializing_if = "Option::is_none")]
-    ty: Option<Type>,
-    value: Value,
 }
 
 /// A type a `decode` case reads into, described so any runtime can build a
@@ -454,208 +230,8 @@ pub enum Type {
     },
 }
 
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
-struct DecodeIn {
-    format: String,
-    #[serde(rename = "type")]
-    ty: Type,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    value: Option<Value>,
-}
-
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
-struct FramingIn {
-    framing: String,
-}
-
-/// An encoding's profile (`profiles/<name>.json`): facts about how it
-/// encodes, which the version comparison turns into bumps. Each fact names
-/// the vector cases that prove it.
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct Profile {
-    pub name: String,
-    pub kind: ProfileKind,
-    pub facts: BTreeMap<String, Fact>,
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "snake_case")]
-pub enum ProfileKind {
-    Format,
-    Framing,
-    /// A handshake: what it establishes between the two ends. A fact it
-    /// leaves out, or states `false`, isn't established, and the schema has
-    /// to give it up (`@unverified`).
-    Handshake,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct Fact {
-    /// The fact's value. A handshake's facts are JSON booleans, read as
-    /// `"true"` / `"false"`; every other fact is a string.
-    #[serde(with = "fact_value")]
-    pub value: String,
-    /// The cases that prove it. A handshake fact stated `false` claims
-    /// nothing, so it names none.
-    #[serde(default)]
-    pub proven_by: Vec<String>,
-}
-
-/// A fact's value: a string, or a JSON boolean (a handshake's facts), held
-/// as `"true"` / `"false"` and written back as a boolean.
-mod fact_value {
-    use serde::{Deserialize, Deserializer, Serializer};
-
-    #[derive(Deserialize)]
-    #[serde(untagged)]
-    enum Written {
-        Bool(bool),
-        Str(String),
-    }
-
-    pub fn deserialize<'de, D: Deserializer<'de>>(d: D) -> Result<String, D::Error> {
-        Ok(match Written::deserialize(d)? {
-            Written::Bool(b) => b.to_string(),
-            Written::Str(s) => s,
-        })
-    }
-
-    pub fn serialize<S: Serializer>(value: &str, s: S) -> Result<S::Ok, S::Error> {
-        match value {
-            "true" => s.serialize_bool(true),
-            "false" => s.serialize_bool(false),
-            other => s.serialize_str(other),
-        }
-    }
-}
-
-impl ProfileKind {
-    /// Every fact a profile of this kind states, with the values it may
-    /// take. The set is fixed: a new fact is a change to the comparison too.
-    pub fn facts(self) -> &'static [(&'static str, &'static [&'static str])] {
-        match self {
-            ProfileKind::Format => &[
-                ("struct_fields", &["by_position", "by_name"]),
-                ("unknown_field", &["rejected", "ignored"]),
-                ("missing_optional", &["rejected", "absent"]),
-                ("enum_variants", &["by_name", "by_index"]),
-                ("unknown_variant", &["rejected", "tolerated"]),
-                ("integer_width", &["by_value", "exact"]),
-            ],
-            ProfileKind::Framing => &[
-                ("calls", &["by_index", "by_name", "by_id"]),
-                ("errors", &["by_ordinal", "by_name"]),
-            ],
-            ProfileKind::Handshake => &[
-                ("schema_agreement", &["true", "false"]),
-                ("encoding_agreement", &["true", "false"]),
-            ],
-        }
-    }
-
-    /// Whether a profile of this kind must state every fact. A handshake's
-    /// may leave one out, which reads as `false`: not established.
-    pub fn states_every_fact(self) -> bool {
-        !matches!(self, ProfileKind::Handshake)
-    }
-}
-
-/// Whether `cases` (a fact's `proven_by`, in order) show `value` for
-/// `fact`, beyond passing: a rejection where the fact says rejected, the
-/// decoded value where it says by name or by position.
-pub fn fact_shown(fact: &str, value: &str, cases: &[&Case]) -> Result<(), String> {
-    if matches!(fact, "schema_agreement" | "encoding_agreement") {
-        return handshake_fact_shown(fact, value, cases);
-    }
-    let decoded = |case: &Case| -> Option<Value> {
-        serde_json::from_value::<DecodeIn>(case.input.clone())
-            .ok()?
-            .value
-    };
-    let rejected = |case: &Case| case.expect == Expect::Reject;
-    let first = cases.first().ok_or("no proving case")?;
-    let point = |x: i32, y: i32| Value::Struct {
-        name: "Point".into(),
-        fields: vec![("x".into(), Value::I32(x)), ("y".into(), Value::I32(y))],
-    };
-    let shown = match (fact, value) {
-        ("struct_fields", "by_name") => decoded(first) == Some(point(1, -2)),
-        ("struct_fields", "by_position") => decoded(first) == Some(point(-2, 1)),
-        ("enum_variants", "by_name") => {
-            matches!(decoded(first), Some(Value::UnitVariant { ref variant, .. }) if variant == "Green")
-        }
-        ("enum_variants", "by_index") => {
-            matches!(decoded(first), Some(Value::UnitVariant { ref variant, .. }) if variant == "Red")
-        }
-        ("unknown_field" | "missing_optional" | "unknown_variant", "rejected") => rejected(first),
-        ("unknown_field", "ignored")
-        | ("missing_optional", "absent")
-        | ("unknown_variant", "tolerated") => !rejected(first),
-        ("integer_width", "by_value") => {
-            cases.len() == 2 && !rejected(cases[0]) && rejected(cases[1])
-        }
-        ("integer_width", "exact") => cases.len() == 2 && cases.iter().all(|c| rejected(c)),
-        // Shown by the cases passing: the framing carries the call and the
-        // error that way, and decoding reads them back.
-        ("calls" | "errors", _) => true,
-        _ => return Err(format!("no check for `{fact}: {value}`")),
-    };
-    if shown {
-        Ok(())
-    } else {
-        Err(format!("its cases don't show `{fact}: {value}`"))
-    }
-}
-
-/// A handshake fact: `false` claims nothing. `true` is shown by
-/// `handshake_check` cases: one where the peer agrees, accepted, and, for
-/// each thing the fact covers, one where the peer's frame differs from the
-/// input in only that (the schema fingerprint; the format; the framing),
-/// refused.
-fn handshake_fact_shown(fact: &str, value: &str, cases: &[&Case]) -> Result<(), String> {
-    if value == "false" {
-        return Ok(());
-    }
-    if cases.iter().any(|c| c.op == Op::Comline2Negotiate) {
-        return if comline2::fact_shown(fact, cases) {
-            Ok(())
-        } else {
-            Err(format!("its cases don't show `{fact}: {value}`"))
-        };
-    }
-    // (ir_hash, format, framing) differ, of the peer's frame from the input.
-    let differs = |case: &Case| -> Option<(bool, bool, bool)> {
-        if case.op != Op::HandshakeCheck {
-            return None;
-        }
-        let i: HandshakeIn = serde_json::from_value(case.input.clone()).ok()?;
-        let ours = HandshakeFrame::new(i.ir_hash, &i.wire_format, &i.framing, i.capabilities);
-        let peer = HandshakeFrame::decode(&case.bytes.0)?;
-        Some((
-            ours.ir_hash != peer.ir_hash,
-            ours.wire_format != peer.wire_format,
-            ours.framing != peer.framing,
-        ))
-    };
-    let shows = |want: (bool, bool, bool), expect: Expect| {
-        cases
-            .iter()
-            .any(|c| c.expect == expect && differs(c) == Some(want))
-    };
-    let agrees = shows((false, false, false), Expect::Exact);
-    let refused = match fact {
-        "schema_agreement" => shows((true, false, false), Expect::Reject),
-        _ => {
-            shows((false, true, false), Expect::Reject)
-                && shows((false, false, true), Expect::Reject)
-        }
-    };
-    if agrees && refused {
-        Ok(())
-    } else {
-        Err(format!("its cases don't show `{fact}: {value}`"))
-    }
-}
+/// Where a generated vectors file finds its schema.
+const VECTORS_SCHEMA: &str = "../specs/gen/vectors.schema.json";
 
 /// A feature of the wire contract, from the corpus's `features.json`.
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -667,12 +243,16 @@ pub struct FeatureInfo {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Features {
+    #[serde(rename = "$schema", default, skip_serializing_if = "Option::is_none")]
+    pub schema: Option<String>,
     pub features: Vec<FeatureInfo>,
 }
 
 /// One `vectors/<feature>.json`.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Vectors {
+    #[serde(rename = "$schema", default, skip_serializing_if = "Option::is_none")]
+    pub schema: Option<String>,
     pub feature: String,
     pub cases: Vec<Case>,
 }
@@ -701,6 +281,8 @@ pub struct Claim {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Support {
+    #[serde(rename = "$schema", default, skip_serializing_if = "Option::is_none")]
+    pub schema: Option<String>,
     pub runtime: String,
     pub support: BTreeMap<String, Claim>,
 }
@@ -715,6 +297,8 @@ pub struct ProvenClaim {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Report {
+    #[serde(rename = "$schema", default, skip_serializing_if = "Option::is_none")]
+    pub schema: Option<String>,
     pub runtime: String,
     pub support: BTreeMap<String, ProvenClaim>,
 }
@@ -825,10 +409,7 @@ fn reply_of(envelope: Envelope) -> Reply {
 /// per trait the framing frames requests through. Each must equal what
 /// [`encode`] writes. The method name is borrowed, not interned, as a
 /// binding's is.
-fn encode_request_bodies(
-    input: &serde_json::Value,
-) -> Result<Vec<(&'static str, Vec<u8>)>, Outcome> {
-    let i: RequestIn = parse(input)?;
+fn encode_request_bodies(i: &RequestIn) -> Result<Vec<(&'static str, Vec<u8>)>, Outcome> {
     let mut params = Vec::new();
     match i.format.as_str() {
         FORMAT_JSON => Json.encode(&Wire(&i.params), &mut params),
@@ -892,21 +473,18 @@ fn encode_request_bodies(
 }
 
 /// Encodes `input` for `op` with `comline-runtime`.
-fn encode(op: Op, input: &serde_json::Value) -> Result<Vec<u8>, Outcome> {
+fn encode(input: &Input) -> Result<Vec<u8>, Outcome> {
     let mut out = Vec::new();
-    match op {
-        Op::NameHash => {
-            let i: NameHashIn = parse(input)?;
+    match input {
+        Input::NameHash(i) => {
             out.extend_from_slice(&name_hash(&i.name).to_le_bytes());
         }
-        Op::Handshake => {
-            let i: HandshakeIn = parse(input)?;
+        Input::Handshake(Some(i)) => {
             HandshakeFrame::new(i.ir_hash, &i.wire_format, &i.framing, i.capabilities)
                 .encode(&mut out);
         }
-        Op::Envelope => encode_reply(&parse(input)?, &mut out),
-        Op::Request => {
-            let i: RequestIn = parse(input)?;
+        Input::Envelope(Some(reply)) => encode_reply(reply, &mut out),
+        Input::Request(Framed::Full(i)) => {
             if let Some(dg) = datagram_of(&i.framing) {
                 let protocol = i
                     .protocol
@@ -980,8 +558,7 @@ fn encode(op: Op, input: &serde_json::Value) -> Result<Vec<u8>, Outcome> {
             };
             encoded.map_err(|e| Outcome::Fail(format!("encoding failed: {e:?}")))?;
         }
-        Op::Response => {
-            let i: ResponseIn = parse(input)?;
+        Input::Response(Framed::Full(i)) => {
             if let Some(dg) = datagram_of(&i.framing) {
                 let protocol = i
                     .protocol
@@ -1004,8 +581,7 @@ fn encode(op: Op, input: &serde_json::Value) -> Result<Vec<u8>, Outcome> {
                 Reply::Fault => f.encode_response_fault(i.request_id, &mut out),
             });
         }
-        Op::Encode => {
-            let i: EncodeIn = parse(input)?;
+        Input::Encode(i) => {
             if let Some(ty) = &i.ty {
                 seed::check(&i.value, ty).map_err(Outcome::Fail)?;
                 // An encoder refuses a value over its bounds before writing
@@ -1016,15 +592,17 @@ fn encode(op: Op, input: &serde_json::Value) -> Result<Vec<u8>, Outcome> {
             return encode_with(&i.format, &i.value)
                 .ok_or_else(|| Outcome::NotImplemented(format!("format `{}`", i.format)));
         }
-        Op::Decode => return Err(Outcome::Fail("`decode` cases are decode only".into())),
-        Op::Comline2Message | Op::Comline2Negotiate => return comline2::encode(op, input),
-        Op::HandshakeCheck => {
+        Input::Decode(_) => return Err(Outcome::Fail("`decode` cases are decode only".into())),
+        Input::Comline2Message(Some(message)) => return Ok(message.to_bytes()),
+        Input::Comline2Negotiate(_) => {
+            return Err(Outcome::Fail("`comline2_negotiate` cases are decode only".into()))
+        }
+        Input::HandshakeCheck(_) => {
             return Err(Outcome::Fail(
                 "`handshake_check` cases are decode only".into(),
             ))
         }
-        Op::StreamPrefix => {
-            let i: StreamPrefixIn = parse(input)?;
+        Input::StreamPrefix(i) => {
             let len = usize::try_from(i.len)
                 .map_err(|_| Outcome::Fail(format!("refused: a {}-byte frame", i.len)))?;
             let mut prefix = [0u8; PREFIX_LEN];
@@ -1032,8 +610,7 @@ fn encode(op: Op, input: &serde_json::Value) -> Result<Vec<u8>, Outcome> {
                 .map_err(|e| Outcome::Fail(format!("refused: {e}")))?;
             out.extend_from_slice(&prefix);
         }
-        Op::StreamSplit => {
-            let i: StreamSplitIn = parse(input)?;
+        Input::StreamSplit(StreamSplit::Frames(i)) => {
             for frame in &i.frames {
                 let mut prefix = [0u8; PREFIX_LEN];
                 stream::put_prefix(
@@ -1047,27 +624,33 @@ fn encode(op: Op, input: &serde_json::Value) -> Result<Vec<u8>, Outcome> {
             }
             out.extend_from_slice(&i.rest.0);
         }
+        // A rejection's input selects a decoder; there's nothing to encode.
+        Input::Handshake(None)
+        | Input::Envelope(None)
+        | Input::Request(Framed::Selector { .. })
+        | Input::Response(Framed::Selector { .. })
+        | Input::StreamSplit(StreamSplit::Limit { .. })
+        | Input::Comline2Message(None) => {
+            return Err(Outcome::Fail(format!(
+                "bad input: {} is only enough to decode",
+                to_json(input)
+            )))
+        }
     }
     Ok(out)
 }
 
 /// Decodes `bytes` for `op` with `comline-runtime`, as the input that would
 /// encode to them; `Ok(None)` when the runtime refuses the bytes.
-fn decode(
-    op: Op,
-    input: &serde_json::Value,
-    bytes: &[u8],
-) -> Result<Option<serde_json::Value>, Outcome> {
+fn decode(input: &Input, bytes: &[u8]) -> Result<Option<serde_json::Value>, Outcome> {
     let json = |v: serde_json::Value| -> Result<Option<serde_json::Value>, Outcome> { Ok(Some(v)) };
-    match op {
-        Op::NameHash | Op::Encode => Ok(None),
-        Op::Comline2Message | Op::Comline2Negotiate => comline2::decode(op, input, bytes),
-        Op::StreamPrefix => {
-            #[derive(Deserialize)]
-            struct Max {
-                max: u64,
-            }
-            let i: Max = parse(input)?;
+    match input {
+        Input::NameHash(_) | Input::Encode(_) => Ok(None),
+        Input::Comline2Message(_) => Ok(comline_runtime::comline2::Message::decode(bytes)
+            .ok()
+            .map(|m| to_json(&m))),
+        Input::Comline2Negotiate(i) => Ok(Some(to_json(&comline2::negotiate(i.clone(), bytes)?))),
+        Input::StreamPrefix(i) => {
             let Ok(prefix) = <[u8; PREFIX_LEN]>::try_from(bytes) else {
                 return Ok(None);
             };
@@ -1078,23 +661,19 @@ fn decode(
                 })
             }))
         }
-        Op::StreamSplit => {
-            #[derive(Deserialize)]
-            struct Max {
-                max: u64,
-            }
-            let i: Max = parse(input)?;
+        Input::StreamSplit(i) => {
+            let max = i.max();
             let mut frames = Vec::new();
             let mut at = 0;
             loop {
-                match stream::split_frame(&bytes[at..], stream_max(i.max)) {
+                match stream::split_frame(&bytes[at..], stream_max(max)) {
                     Split::Frame { start, len } => {
                         frames.push(Hex(bytes[at + start..at + start + len].to_vec()));
                         at += start + len;
                     }
                     Split::NeedMore { needed } => {
                         return json(to_json(&StreamSplitIn {
-                            max: i.max,
+                            max,
                             frames,
                             rest: Hex(bytes[at..].to_vec()),
                             needed: needed as u64,
@@ -1104,22 +683,18 @@ fn decode(
                 }
             }
         }
-        Op::Decode => {
-            let i: DecodeIn = parse(input)?;
-            Ok(decode_typed(&i.format, &i.ty, bytes)?.map(|value| {
-                to_json(&DecodeIn {
-                    format: i.format,
-                    ty: i.ty,
-                    value: Some(value),
-                })
-            }))
-        }
-        Op::Handshake => {
+        Input::Decode(i) => Ok(decode_typed(&i.format, &i.ty, bytes)?.map(|value| {
+            to_json(&DecodeIn {
+                format: i.format.clone(),
+                ty: i.ty.clone(),
+                value: Some(value),
+            })
+        })),
+        Input::Handshake(i) => {
             let Some(h) = HandshakeFrame::decode(bytes) else {
                 return Ok(None);
             };
             // The frame carries hashes; compare them against the input's names.
-            let i: Option<HandshakeIn> = serde_json::from_value(input.clone()).ok();
             let named = |hash: u64, name: Option<&String>| match name {
                 Some(n) if name_hash(n) == hash => n.clone(),
                 _ => format!("{hash:#018x}"),
@@ -1131,20 +706,30 @@ fn decode(
                 "capabilities": h.capabilities,
             }))
         }
-        Op::HandshakeCheck => {
-            let i: HandshakeIn = parse(input)?;
+        Input::HandshakeCheck(i) => {
             let ours = HandshakeFrame::new(i.ir_hash, &i.wire_format, &i.framing, i.capabilities);
             match ours.check_bytes(bytes) {
-                Ok(_) => json(input.clone()),
+                Ok(_) => json(to_json(i)),
                 Err(_) => Ok(None),
             }
         }
-        Op::Envelope => match Envelope::decode(bytes) {
+        Input::Envelope(_) => match Envelope::decode(bytes) {
             Some(e) => json(to_json(&reply_of(e))),
             None => Ok(None),
         },
-        Op::Request if is_datagram2(input) => {
-            let dg = datagram_of(input["framing"].as_str().unwrap_or_default()).unwrap();
+        Input::Request(Framed::Selector { framing }) => {
+            if let Some(dg) = datagram_of(framing) {
+                let frame = with_datagram!(dg, |f| f.decode(bytes));
+                return Ok(matches!(frame, Some(Frame::Request { protocol: Some(_), .. }))
+                    .then(|| serde_json::json!({ "accepted": true })));
+            }
+            let framing = framing_of(framing)
+                .ok_or_else(|| Outcome::NotImplemented(format!("framing `{framing}`")))?;
+            Ok(with_framing!(framing, |f| f.decode_request(bytes).is_some())
+                .then(|| serde_json::json!({ "accepted": true })))
+        }
+        Input::Request(Framed::Full(i)) if datagram_of(&i.framing).is_some() => {
+            let dg = datagram_of(&i.framing).unwrap();
             let Some(Frame::Request {
                 protocol: Some(protocol),
                 request,
@@ -1152,9 +737,6 @@ fn decode(
             }) = with_datagram!(dg, |f| f.decode(bytes))
             else {
                 return Ok(None);
-            };
-            let Ok(i) = serde_json::from_value::<RequestIn>(input.clone()) else {
-                return Ok(Some(serde_json::json!({ "accepted": true })));
             };
             let params = encode_with(&i.format, &i.params)
                 .ok_or_else(|| Outcome::NotImplemented(format!("format `{}`", i.format)))?;
@@ -1176,31 +758,7 @@ fn decode(
                 "params": params,
             }))
         }
-        Op::Response if is_datagram2(input) => match with_datagram!(
-            datagram_of(input["framing"].as_str().unwrap_or_default()).unwrap(),
-            |f| f.decode(bytes)
-        ) {
-            Some(Frame::Reply {
-                protocol,
-                request_id,
-                envelope,
-            }) => json(to_json(&ResponseIn {
-                framing: input["framing"].as_str().unwrap_or_default().into(),
-                protocol,
-                request_id,
-                reply: reply_of(envelope),
-            })),
-            _ => Ok(None),
-        },
-        Op::Request => {
-            let i: RequestIn = match serde_json::from_value(input.clone()) {
-                Ok(i) => i,
-                Err(_) => {
-                    return decode_reject_only(input, |f| {
-                        with_framing!(f, |f| f.decode_request(bytes).is_some())
-                    })
-                }
-            };
+        Input::Request(Framed::Full(i)) => {
             let framing = framing_of(&i.framing)
                 .ok_or_else(|| Outcome::NotImplemented(format!("framing `{}`", i.framing)))?;
             // A notification is a connection's frame: read it as one, which
@@ -1244,13 +802,31 @@ fn decode(
             }
             json(decoded)
         }
-        Op::Response => {
-            let f: FramingIn = parse(input)?;
-            let framing = framing_of(&f.framing)
-                .ok_or_else(|| Outcome::NotImplemented(format!("framing `{}`", f.framing)))?;
+        Input::Response(i) => {
+            let framing_name = match i {
+                Framed::Full(i) => &i.framing,
+                Framed::Selector { framing } => framing,
+            };
+            if let Some(dg) = datagram_of(framing_name) {
+                return match with_datagram!(dg, |f| f.decode(bytes)) {
+                    Some(Frame::Reply {
+                        protocol,
+                        request_id,
+                        envelope,
+                    }) => json(to_json(&ResponseIn {
+                        framing: framing_name.clone(),
+                        protocol,
+                        request_id,
+                        reply: reply_of(envelope),
+                    })),
+                    _ => Ok(None),
+                };
+            }
+            let framing = framing_of(framing_name)
+                .ok_or_else(|| Outcome::NotImplemented(format!("framing `{framing_name}`")))?;
             match with_framing!(framing, |x| x.decode_response(bytes)) {
                 Some((request_id, envelope)) => json(to_json(&ResponseIn {
-                    framing: f.framing,
+                    framing: framing_name.clone(),
                     protocol: None,
                     request_id,
                     reply: reply_of(envelope),
@@ -1261,34 +837,13 @@ fn decode(
     }
 }
 
-/// Whether the input names a connection datagram framing (`datagram@2` or
-/// `@3`), which carries the protocol number.
-fn is_datagram2(input: &serde_json::Value) -> bool {
-    datagram_of(input["framing"].as_str().unwrap_or_default()).is_some()
+/// A stream limit as the runtime takes it: a `max` past `usize` holds every
+/// frame `usize` can.
+fn stream_max(max: u64) -> usize {
+    usize::try_from(max).unwrap_or(usize::MAX)
 }
 
-
-
-/// For a rejection case, whose input names only the framing: whether the
-/// framing accepted the bytes.
-fn decode_reject_only<F>(
-    input: &serde_json::Value,
-    accepts: F,
-) -> Result<Option<serde_json::Value>, Outcome>
-where
-    F: FnOnce(AnyFraming) -> bool,
-{
-    let f: FramingIn = parse(input)?;
-    let framing = framing_of(&f.framing)
-        .ok_or_else(|| Outcome::NotImplemented(format!("framing `{}`", f.framing)))?;
-    Ok(accepts(framing).then(|| serde_json::json!({ "accepted": true })))
-}
-
-fn parse<T: for<'de> Deserialize<'de>>(input: &serde_json::Value) -> Result<T, Outcome> {
-    serde_json::from_value(input.clone()).map_err(|e| Outcome::Fail(format!("bad input: {e}")))
-}
-
-fn to_json<T: Serialize>(v: &T) -> serde_json::Value {
+pub(crate) fn to_json<T: Serialize>(v: &T) -> serde_json::Value {
     serde_json::to_value(v).expect("vector types serialize")
 }
 
@@ -1312,10 +867,14 @@ pub enum Answer {
 /// `bytes`, what `input` encodes to for `op`; with `bytes`, whether they
 /// decode, and to what.
 pub fn answer(op: Op, input: &serde_json::Value, bytes: Option<&[u8]>) -> Answer {
+    let input = match Input::parse(op, input) {
+        Ok(input) => input,
+        Err(why) => return Answer::Bad(why),
+    };
     let answered = match bytes {
-        None => encode(op, input).map(Answer::Bytes),
+        None => encode(&input).map(Answer::Bytes),
         Some(bytes) => {
-            decode(op, input, bytes).map(|decoded| decoded.map_or(Answer::Reject, Answer::Accept))
+            decode(&input, bytes).map(|decoded| decoded.map_or(Answer::Reject, Answer::Accept))
         }
     };
     answered.unwrap_or_else(|outcome| match outcome {
@@ -1336,18 +895,18 @@ pub fn run(case: &Case) -> Outcome {
 fn run_inner(case: &Case) -> Result<(), Outcome> {
     let bytes = &case.bytes.0;
     if case.expect == Expect::Reject {
-        if matches!(case.op, Op::StreamPrefix | Op::Encode) {
-            if let Ok(encoded) = encode(case.op, &case.input) {
+        if matches!(case.op(), Op::StreamPrefix | Op::Encode) {
+            if let Ok(encoded) = encode(&case.input) {
                 return Err(Outcome::Fail(format!(
                     "encoded what it must refuse, as {}",
                     to_json(&Hex(encoded))
                 )));
             }
         }
-        if case.op == Op::Encode {
+        if case.op() == Op::Encode {
             return Ok(());
         }
-        return match decode(case.op, &case.input, bytes)? {
+        return match decode(&case.input, bytes)? {
             None => Ok(()),
             Some(got) => Err(Outcome::Fail(format!(
                 "accepted bytes it must reject, as {got}"
@@ -1355,11 +914,11 @@ fn run_inner(case: &Case) -> Result<(), Outcome> {
         };
     }
 
-    if !case.op.decode_only() {
+    if !case.op().decode_only() {
         let same = |encoded: &[u8]| {
             encoded == bytes || (case.compare == Compare::Json && json_equal(encoded, bytes))
         };
-        let encoded = encode(case.op, &case.input)?;
+        let encoded = encode(&case.input)?;
         if !same(&encoded) {
             return Err(Outcome::Fail(format!(
                 "encodes to {}, expected {}",
@@ -1367,8 +926,8 @@ fn run_inner(case: &Case) -> Result<(), Outcome> {
                 to_json(&case.bytes),
             )));
         }
-        if case.op == Op::Request {
-            for (path, encoded) in encode_request_bodies(&case.input)? {
+        if let Input::Request(Framed::Full(i)) = &case.input {
+            for (path, encoded) in encode_request_bodies(i)? {
                 if !same(&encoded) {
                     return Err(Outcome::Fail(format!(
                         "{path} encodes to {}, expected {}",
@@ -1378,15 +937,15 @@ fn run_inner(case: &Case) -> Result<(), Outcome> {
                 }
             }
         }
-        if matches!(case.op, Op::NameHash | Op::Encode) {
+        if matches!(case.op(), Op::NameHash | Op::Encode) {
             return Ok(());
         }
     }
-    match decode(case.op, &case.input, bytes)? {
-        Some(got) if got == case.input => Ok(()),
+    match decode(&case.input, bytes)? {
+        Some(got) if case.input.given_back_by(&got) => Ok(()),
         Some(got) => Err(Outcome::Fail(format!(
             "decodes to {got}, expected {}",
-            case.input
+            to_json(&case.input)
         ))),
         None => Err(Outcome::Fail("refused bytes it must decode".into())),
     }
@@ -1542,12 +1101,13 @@ fn exact_number(number: &str) -> Option<Exact> {
 /// `vectors/` must hold. A change here is a wire-protocol change.
 pub fn reference_cases() -> Vec<Vectors> {
     let mut vectors = Vec::new();
-    let mut feature = |id: &str, cases: Vec<(String, Op, serde_json::Value)>| {
+    let mut feature = |id: &str, cases: Vec<(String, Input)>| {
         vectors.push(Vectors {
+            schema: Some(VECTORS_SCHEMA.into()),
             feature: id.into(),
             cases: cases
                 .into_iter()
-                .map(|(id, op, input)| exact(id, op, input))
+                .map(|(id, input)| exact(id, input))
                 .collect(),
         });
     };
@@ -1569,8 +1129,9 @@ pub fn reference_cases() -> Vec<Vectors> {
             let id = if name.is_empty() { "empty" } else { name };
             (
                 format!("name-hash/{id}"),
-                Op::NameHash,
-                serde_json::json!({ "name": name }),
+                Input::NameHash(NameHashIn {
+                    name: name.to_string(),
+                }),
             )
         })
         .collect(),
@@ -1620,22 +1181,19 @@ pub fn reference_cases() -> Vec<Vectors> {
     feature(
         "envelope",
         vec![
-            ("envelope/ok".into(), Op::Envelope, to_json(&ok(b"payload"))),
-            ("envelope/ok-empty".into(), Op::Envelope, to_json(&ok(b""))),
+            ("envelope/ok".into(), Input::Envelope(Some(ok(b"payload")))),
+            ("envelope/ok-empty".into(), Input::Envelope(Some(ok(b"")))),
             (
                 "envelope/err".into(),
-                Op::Envelope,
-                to_json(&err(0x0102, b"fields")),
+                Input::Envelope(Some(err(0x0102, b"fields"))),
             ),
             (
                 "envelope/err-empty-body".into(),
-                Op::Envelope,
-                to_json(&err(0, b"")),
+                Input::Envelope(Some(err(0, b""))),
             ),
             (
                 "envelope/fault".into(),
-                Op::Envelope,
-                to_json(&Reply::Fault),
+                Input::Envelope(Some(Reply::Fault)),
             ),
         ],
     );
@@ -1659,7 +1217,7 @@ pub fn reference_cases() -> Vec<Vectors> {
                 5,
                 &said,
             ));
-            let (id, op, mut input) = request(
+            let (id, mut input) = request(
                 p("notification"),
                 framing,
                 0,
@@ -1667,8 +1225,10 @@ pub fn reference_cases() -> Vec<Vectors> {
                 0,
                 &said,
             );
-            input["one_way"] = true.into();
-            connection.push((id, op, input));
+            if let Input::Request(Framed::Full(i)) = &mut input {
+                i.one_way = true;
+            }
+            connection.push((id, input));
             // Found by comline-typescript's differential tests (#41): a
             // name a JSON string can hold only escaped is written escaped.
             connection.push(request(
@@ -1711,9 +1271,13 @@ pub fn reference_cases() -> Vec<Vectors> {
     }
 
     let p = |id: &str| format!("framing-datagram2/{id}");
-    let on = |(id, op, mut input): (String, Op, serde_json::Value), protocol: u16| {
-        input["protocol"] = protocol.into();
-        (id, op, input)
+    let on = |(id, mut input): (String, Input), protocol: u16| {
+        match &mut input {
+            Input::Request(Framed::Full(i)) => i.protocol = Some(protocol),
+            Input::Response(Framed::Full(i)) => i.protocol = Some(protocol),
+            _ => unreachable!("only requests and responses carry a protocol"),
+        }
+        (id, input)
     };
     feature(
         "framing-datagram2",
@@ -1772,10 +1336,7 @@ pub fn reference_cases() -> Vec<Vectors> {
 
     // datagram@3: calls by wire number, both numbers varints.
     let p = |id: &str| format!("framing-datagram3/{id}");
-    let d3 = |(id, op, mut input): (String, Op, serde_json::Value), protocol: u16| {
-        input["protocol"] = protocol.into();
-        (id, op, input)
-    };
+    let d3 = on;
     feature(
         "framing-datagram3",
         vec![
@@ -1847,25 +1408,26 @@ pub fn reference_cases() -> Vec<Vectors> {
         }
     }
     vectors.push(Vectors {
+        schema: Some(VECTORS_SCHEMA.into()),
         feature: "handshake-comline2".into(),
         cases: comline2::cases(),
     });
     vectors
 }
 
-fn exact(id: String, op: Op, input: serde_json::Value) -> Case {
-    let bytes = match encode(op, &input) {
+fn exact(id: String, input: Input) -> Case {
+    let bytes = match encode(&input) {
         Ok(bytes) => bytes,
         Err(outcome) => panic!("reference case `{id}` doesn't encode: {outcome:?}"),
     };
-    let json_text = match op {
-        Op::Encode => input["format"] == FORMAT_JSON,
-        Op::Request | Op::Response => input["framing"] == FRAMING_JSONRPC,
+    let json_text = match &input {
+        Input::Encode(i) => i.format == FORMAT_JSON,
+        Input::Request(Framed::Full(i)) => i.framing == FRAMING_JSONRPC,
+        Input::Response(Framed::Full(i)) => i.framing == FRAMING_JSONRPC,
         _ => false,
     };
     Case {
         id,
-        op,
         input,
         bytes: Hex(bytes),
         expect: Expect::Exact,
@@ -1877,10 +1439,9 @@ fn exact(id: String, op: Op, input: serde_json::Value) -> Case {
     }
 }
 
-fn reject(id: &str, op: Op, input: serde_json::Value, bytes: &[u8]) -> Case {
+fn reject(id: &str, input: Input, bytes: &[u8]) -> Case {
     Case {
         id: id.into(),
-        op,
         input,
         bytes: Hex(bytes.to_vec()),
         expect: Expect::Reject,
@@ -1907,14 +1468,14 @@ fn handshake(
     wire_format: &str,
     framing: &str,
     capabilities: u32,
-) -> (String, Op, serde_json::Value) {
+) -> (String, Input) {
     let input = HandshakeIn {
         ir_hash,
         wire_format: wire_format.into(),
         framing: framing.into(),
         capabilities,
     };
-    (id.into(), Op::Handshake, to_json(&input))
+    (id.into(), Input::Handshake(Some(input)))
 }
 
 /// One end's `comline@1` declaration against the frame its peer sent:
@@ -1933,17 +1494,15 @@ fn handshake_check_cases() -> Vec<Case> {
         HandshakeFrame::new(ir_hash, format, framing, capabilities).encode(&mut bytes);
         bytes
     };
-    let input = to_json(&ours);
     let check = |id: &str, bytes: Vec<u8>| {
         let case = Case {
             id: format!("handshake/{id}"),
-            op: Op::HandshakeCheck,
-            input: input.clone(),
+            input: Input::HandshakeCheck(ours.clone()),
             bytes: Hex(bytes),
             expect: Expect::Exact,
             compare: Compare::Bytes,
         };
-        match decode(Op::HandshakeCheck, &case.input, &case.bytes.0) {
+        match decode(&case.input, &case.bytes.0) {
             Ok(Some(_)) => case,
             Ok(None) => Case {
                 expect: Expect::Reject,
@@ -1976,7 +1535,7 @@ fn request(
     method: &str,
     request_id: u64,
     params: &Value,
-) -> (String, Op, serde_json::Value) {
+) -> (String, Input) {
     let input = RequestIn {
         framing: framing.into(),
         protocol: None,
@@ -1987,7 +1546,7 @@ fn request(
         format: FORMAT_JSON.into(),
         params: params.clone(),
     };
-    (id, Op::Request, to_json(&input))
+    (id, Input::Request(Framed::Full(input)))
 }
 
 fn response(
@@ -1995,19 +1554,19 @@ fn response(
     framing: &str,
     request_id: u64,
     reply: Reply,
-) -> (String, Op, serde_json::Value) {
+) -> (String, Input) {
     let input = ResponseIn {
         framing: framing.into(),
         protocol: None,
         request_id,
         reply,
     };
-    (id, Op::Response, to_json(&input))
+    (id, Input::Response(Framed::Full(input)))
 }
 
 /// Sample values for a wire format: each scalar at its edges, then the
 /// shapes generated types take.
-fn format_cases(feature_id: &str, format: &str) -> Vec<(String, Op, serde_json::Value)> {
+fn format_cases(feature_id: &str, format: &str) -> Vec<(String, Input)> {
     let point = |x: i32, y: i32| Value::Struct {
         name: "Point".into(),
         fields: vec![("x".into(), Value::I32(x)), ("y".into(), Value::I32(y))],
@@ -2104,14 +1663,14 @@ fn format_cases(feature_id: &str, format: &str) -> Vec<(String, Op, serde_json::
                 ty: None,
                 value,
             };
-            (format!("{feature_id}/{id}"), Op::Encode, to_json(&input))
+            (format!("{feature_id}/{id}"), Input::Encode(input))
         })
         .collect()
 }
 
 /// Shapes only `packed@1` vectors carry: widths the other formats don't
 /// keep apart (`f32`), a fixed-size array, and the proposal's example.
-fn packed_cases() -> Vec<(String, Op, serde_json::Value)> {
+fn packed_cases() -> Vec<(String, Input)> {
     let class = |index: u32, variant: &str| Value::UnitVariant {
         enum_name: "Class".into(),
         index,
@@ -2156,7 +1715,7 @@ fn packed_cases() -> Vec<(String, Op, serde_json::Value)> {
                 ty: None,
                 value,
             };
-            (format!("format-packed/{id}"), Op::Encode, to_json(&input))
+            (format!("format-packed/{id}"), Input::Encode(input))
         })
         .collect()
 }
@@ -2206,8 +1765,7 @@ fn decode_case(id: String, format: &str, written: &Value, ty: Type) -> Case {
     match decode_typed(format, &ty, &bytes) {
         Ok(Some(value)) => Case {
             id,
-            op: Op::Decode,
-            input: to_json(&DecodeIn {
+            input: Input::Decode(DecodeIn {
                 format: format.into(),
                 ty,
                 value: Some(value),
@@ -2218,8 +1776,7 @@ fn decode_case(id: String, format: &str, written: &Value, ty: Type) -> Case {
         },
         Ok(None) => reject(
             &id,
-            Op::Decode,
-            to_json(&DecodeIn {
+            Input::Decode(DecodeIn {
                 format: format.into(),
                 ty,
                 value: None,
@@ -2239,7 +1796,7 @@ fn decode_bytes_case(id: String, format: &str, bytes: &[u8], ty: Type, rejected:
         .unwrap_or_else(|outcome| panic!("reference case `{id}` doesn't decode: {outcome:?}"));
     assert_eq!(value.is_none(), rejected, "reference case `{id}`");
     let case = |value| {
-        to_json(&DecodeIn {
+        Input::Decode(DecodeIn {
             format: format.into(),
             ty: ty.clone(),
             value,
@@ -2248,13 +1805,12 @@ fn decode_bytes_case(id: String, format: &str, bytes: &[u8], ty: Type, rejected:
     match value {
         Some(value) => Case {
             id,
-            op: Op::Decode,
             input: case(Some(value)),
             bytes: Hex(bytes.to_vec()),
             expect: Expect::Exact,
             compare: Compare::Bytes,
         },
-        None => reject(&id, Op::Decode, case(None), bytes),
+        None => reject(&id, case(None), bytes),
     }
 }
 
@@ -2417,15 +1973,15 @@ fn bound_cases(feature_id: &str, format: &str) -> Vec<Case> {
     // over them, refused before anything is written.
     for (id, value, ty) in read {
         let id = p(&format!("encode-{id}"));
-        let input = to_json(&EncodeIn {
+        let input = Input::Encode(EncodeIn {
             format: format.into(),
             ty: Some(ty),
             value,
         });
         cases.push(if id.contains("over") {
-            reject(&id, Op::Encode, input, &[])
+            reject(&id, input, &[])
         } else {
-            exact(id, Op::Encode, input)
+            exact(id, input)
         });
     }
     cases
@@ -2541,10 +2097,10 @@ fn found_cases(feature_id: &str, format: &str) -> Vec<Case> {
     // reference happened to decode.
     let exact = |id: &str, written: Value, ty: Type| {
         let case = decode_case(p(id), format, &written, ty);
-        let decoded = serde_json::from_value::<DecodeIn>(case.input.clone())
-            .ok()
-            .and_then(|i| i.value);
-        assert_eq!(decoded, Some(written), "`{}` doesn't read back", case.id);
+        let Input::Decode(DecodeIn { value, .. }) = &case.input else {
+            unreachable!("`decode_case` makes `decode` cases");
+        };
+        assert_eq!(value.as_ref(), Some(&written), "`{}` doesn't read back", case.id);
         case
     };
     match format {
@@ -2566,7 +2122,7 @@ fn found_cases(feature_id: &str, format: &str) -> Vec<Case> {
 /// however the runtime spells it.
 fn found_jsonrpc_cases() -> Vec<Case> {
     let spelled = |id: &str, method: &str, bytes: &[u8]| {
-        let (id, op, input) = request(
+        let (id, input) = request(
             format!("framing-jsonrpc/found-{id}"),
             FRAMING_JSONRPC,
             0,
@@ -2576,14 +2132,13 @@ fn found_jsonrpc_cases() -> Vec<Case> {
         );
         let case = Case {
             id,
-            op,
             input,
             bytes: Hex(bytes.to_vec()),
             expect: Expect::Exact,
             compare: Compare::Json,
         };
         assert_ne!(
-            encode(op, &case.input).ok().as_deref(),
+            encode(&case.input).ok().as_deref(),
             Some(bytes),
             "`{}` is the reference's own spelling",
             case.id
@@ -2608,27 +2163,25 @@ fn found_jsonrpc_cases() -> Vec<Case> {
 /// Stream framing (`contract::stream`): length prefixes, and streams split
 /// into frames, at the default limit and at a small one, on both sides of
 /// each.
-fn stream_cases() -> Vec<(String, Op, serde_json::Value)> {
+fn stream_cases() -> Vec<(String, Input)> {
     let default = DEFAULT_MAX_FRAME as u64;
     let ceiling = u64::from(u32::MAX);
     let prefix = |id: &str, len: u64, max: u64| {
         (
             format!("stream/{id}"),
-            Op::StreamPrefix,
-            serde_json::json!({ "len": len, "max": max }),
+            Input::StreamPrefix(StreamPrefixIn { len, max }),
         )
     };
     let split = |id: &str, max: u64, frames: &[&[u8]], rest: &[u8], needed: u64| {
         let frames: Vec<Hex> = frames.iter().map(|f| Hex(f.to_vec())).collect();
         (
             format!("stream/{id}"),
-            Op::StreamSplit,
-            to_json(&StreamSplitIn {
+            Input::StreamSplit(StreamSplit::Frames(StreamSplitIn {
                 max,
                 frames,
                 rest: Hex(rest.to_vec()),
                 needed,
-            }),
+            })),
         )
     };
     let at_default_max = (DEFAULT_MAX_FRAME as u32).to_le_bytes();
@@ -2661,10 +2214,18 @@ fn stream_cases() -> Vec<(String, Op, serde_json::Value)> {
 
 /// Bytes a runtime must refuse, per feature.
 fn rejections(feature: &str) -> Vec<Case> {
-    let none = serde_json::Value::Null;
     let mut handshake = Vec::new();
     HandshakeFrame::new(1, FORMAT_JSON, FRAMING_DATAGRAM, 0).encode(&mut handshake);
-    let framing = |name: &str| serde_json::json!({ "framing": name });
+    let request_for = |name: &str| {
+        Input::Request(Framed::Selector {
+            framing: name.into(),
+        })
+    };
+    let response_for = |name: &str| {
+        Input::Response(Framed::Selector {
+            framing: name.into(),
+        })
+    };
     match feature {
         "handshake" => {
             let mut bad_magic = handshake.clone();
@@ -2672,23 +2233,20 @@ fn rejections(feature: &str) -> Vec<Case> {
             let mut bad_version = handshake.clone();
             bad_version[2] = 2;
             vec![
-                reject("handshake/reject-empty", Op::Handshake, none.clone(), &[]),
+                reject("handshake/reject-empty", Input::Handshake(None), &[]),
                 reject(
                     "handshake/reject-truncated",
-                    Op::Handshake,
-                    none.clone(),
+                    Input::Handshake(None),
                     &handshake[..30],
                 ),
                 reject(
                     "handshake/reject-bad-magic",
-                    Op::Handshake,
-                    none.clone(),
+                    Input::Handshake(None),
                     &bad_magic,
                 ),
                 reject(
                     "handshake/reject-bad-version",
-                    Op::Handshake,
-                    none,
+                    Input::Handshake(None),
                     &bad_version,
                 ),
             ]
@@ -2696,80 +2254,69 @@ fn rejections(feature: &str) -> Vec<Case> {
         "stream" => {
             let default = DEFAULT_MAX_FRAME as u64;
             let over_default = (DEFAULT_MAX_FRAME as u32 + 1).to_le_bytes();
-            let prefix = |len: u64, max: u64| serde_json::json!({ "len": len, "max": max });
-            let max = |max: u64| serde_json::json!({ "max": max });
+            let prefix = |len: u64, max: u64| Input::StreamPrefix(StreamPrefixIn { len, max });
+            let max = |max: u64| Input::StreamSplit(StreamSplit::Limit { max });
             vec![
                 reject(
                     "stream/reject-prefix-over-default-max",
-                    Op::StreamPrefix,
                     prefix(default + 1, default),
                     &over_default,
                 ),
                 reject(
                     "stream/reject-prefix-over-small-max",
-                    Op::StreamPrefix,
                     prefix(3, 2),
                     &[3, 0, 0, 0],
                 ),
                 reject(
                     "stream/reject-prefix-u32-max-over-default-max",
-                    Op::StreamPrefix,
                     prefix(u64::from(u32::MAX), default),
                     &[0xff; 4],
                 ),
                 reject(
                     "stream/reject-split-over-default-max",
-                    Op::StreamSplit,
                     max(default),
                     &over_default,
                 ),
                 reject(
                     "stream/reject-split-u32-max",
-                    Op::StreamSplit,
                     max(default),
                     &[0xff; 4],
                 ),
                 reject(
                     "stream/reject-split-over-small-max",
-                    Op::StreamSplit,
                     max(2),
                     &[3, 0, 0, 0, b'a', b'b', b'c'],
                 ),
                 reject(
                     "stream/reject-split-frame-then-over-max",
-                    Op::StreamSplit,
                     max(2),
                     &[1, 0, 0, 0, b'a', 3, 0, 0, 0],
                 ),
             ]
         }
         "envelope" => vec![
-            reject("envelope/reject-empty", Op::Envelope, none.clone(), &[]),
+            reject("envelope/reject-empty", Input::Envelope(None), &[]),
             reject(
                 "envelope/reject-unknown-tag",
-                Op::Envelope,
-                none.clone(),
+                Input::Envelope(None),
                 &[3],
             ),
-            reject("envelope/reject-truncated-err", Op::Envelope, none, &[1, 0]),
+            reject("envelope/reject-truncated-err", Input::Envelope(None), &[1, 0]),
         ],
         "framing-datagram" => vec![
             reject(
                 "framing-datagram/reject-short-request",
-                Op::Request,
-                framing(FRAMING_DATAGRAM),
+                request_for(FRAMING_DATAGRAM),
                 &[3, 0, 42, 0, 0, 0, 0, 0, 0],
             ),
             reject(
                 "framing-datagram/reject-short-response",
-                Op::Response,
-                framing(FRAMING_DATAGRAM),
+                response_for(FRAMING_DATAGRAM),
                 &[7, 0, 0, 0, 0, 0, 0],
             ),
             reject(
                 "framing-datagram/reject-response-without-envelope",
-                Op::Response,
-                framing(FRAMING_DATAGRAM),
+                response_for(FRAMING_DATAGRAM),
                 &[7, 0, 0, 0, 0, 0, 0, 0],
             ),
         ],
@@ -2780,7 +2327,8 @@ fn rejections(feature: &str) -> Vec<Case> {
                 .unwrap();
             let mut reply = Vec::new();
             Datagram3Framing.encode_reply(0, 7, &Envelope::Fault, &mut reply);
-            let d3 = || framing(FRAMING_DATAGRAM3);
+            let d3 = || request_for(FRAMING_DATAGRAM3);
+            let d3_reply = || response_for(FRAMING_DATAGRAM3);
             let raw = |head: &[u8]| {
                 let mut b = head.to_vec();
                 b.extend_from_slice(&request[3..]);
@@ -2788,14 +2336,14 @@ fn rejections(feature: &str) -> Vec<Case> {
             };
             let p = |id: &str| format!("framing-datagram3/{id}");
             vec![
-                reject(&p("reject-unknown-kind"), Op::Request, d3(), &raw(&[2, 0, 3])),
-                reject(&p("reject-overlong-protocol"), Op::Request, d3(), &raw(&[0, 0x80, 0x00, 3])),
-                reject(&p("reject-overlong-function"), Op::Request, d3(), &raw(&[0, 0, 0x83, 0x00])),
-                reject(&p("reject-function-past-u16"), Op::Request, d3(), &raw(&[0, 0, 0xff, 0xff, 0x04])),
-                reject(&p("reject-reply-as-request"), Op::Request, d3(), &reply),
-                reject(&p("reject-request-as-reply"), Op::Response, d3(), &request),
-                reject(&p("reject-short-request"), Op::Request, d3(), &request[..10]),
-                reject(&p("reject-reply-without-envelope"), Op::Response, d3(), &reply[..10]),
+                reject(&p("reject-unknown-kind"), d3(), &raw(&[2, 0, 3])),
+                reject(&p("reject-overlong-protocol"), d3(), &raw(&[0, 0x80, 0x00, 3])),
+                reject(&p("reject-overlong-function"), d3(), &raw(&[0, 0, 0x83, 0x00])),
+                reject(&p("reject-function-past-u16"), d3(), &raw(&[0, 0, 0xff, 0xff, 0x04])),
+                reject(&p("reject-reply-as-request"), d3(), &reply),
+                reject(&p("reject-request-as-reply"), d3_reply(), &request),
+                reject(&p("reject-short-request"), d3(), &request[..10]),
+                reject(&p("reject-reply-without-envelope"), d3_reply(), &reply[..10]),
             ]
         }
         "framing-datagram2" => {
@@ -2809,42 +2357,37 @@ fn rejections(feature: &str) -> Vec<Case> {
             overlong.extend_from_slice(&request[2..]);
             let mut unknown_kind = request.clone();
             unknown_kind[0] = 2;
-            let d2 = || framing(FRAMING_DATAGRAM2);
+            let d2 = || request_for(FRAMING_DATAGRAM2);
+            let d2_reply = || response_for(FRAMING_DATAGRAM2);
             vec![
                 reject(
                     "framing-datagram2/reject-unknown-kind",
-                    Op::Request,
                     d2(),
                     &unknown_kind,
                 ),
                 reject(
                     "framing-datagram2/reject-overlong-protocol",
-                    Op::Request,
                     d2(),
                     &overlong,
                 ),
                 reject(
                     "framing-datagram2/reject-reply-as-request",
-                    Op::Request,
                     d2(),
                     &reply,
                 ),
                 reject(
                     "framing-datagram2/reject-request-as-reply",
-                    Op::Response,
-                    d2(),
+                    d2_reply(),
                     &request,
                 ),
                 reject(
                     "framing-datagram2/reject-short-request",
-                    Op::Request,
                     d2(),
                     &request[..9],
                 ),
                 reject(
                     "framing-datagram2/reject-reply-without-envelope",
-                    Op::Response,
-                    d2(),
+                    d2_reply(),
                     &reply[..10],
                 ),
             ]
@@ -2860,8 +2403,7 @@ fn rejections(feature: &str) -> Vec<Case> {
             let r = |id: &str, ty: Type, bytes: &[u8]| {
                 reject(
                     &format!("{feature}/{id}"),
-                    Op::Decode,
-                    to_json(&DecodeIn {
+                    Input::Decode(DecodeIn {
                         format: format.into(),
                         ty,
                         value: None,
@@ -2902,7 +2444,7 @@ fn rejections(feature: &str) -> Vec<Case> {
         }
         "format-packed" => {
             let decode = |ty: Type| {
-                to_json(&DecodeIn {
+                Input::Decode(DecodeIn {
                     format: FORMAT_PACKED.into(),
                     ty,
                     value: None,
@@ -2911,7 +2453,6 @@ fn rejections(feature: &str) -> Vec<Case> {
             let r = |id: &str, ty: Type, bytes: &[u8]| {
                 reject(
                     &format!("format-packed/{id}"),
-                    Op::Decode,
                     decode(ty),
                     bytes,
                 )
@@ -2946,64 +2487,54 @@ fn rejections(feature: &str) -> Vec<Case> {
         "framing-jsonrpc" => vec![
             reject(
                 "framing-jsonrpc/reject-request-not-json",
-                Op::Request,
-                framing(FRAMING_JSONRPC),
+                request_for(FRAMING_JSONRPC),
                 b"{\"jsonrpc\":\"2.0\",",
             ),
             reject(
                 "framing-jsonrpc/reject-request-without-method",
-                Op::Request,
-                framing(FRAMING_JSONRPC),
+                request_for(FRAMING_JSONRPC),
                 br#"{"jsonrpc":"2.0","params":[],"id":1}"#,
             ),
             reject(
                 "framing-jsonrpc/reject-response-without-id",
-                Op::Response,
-                framing(FRAMING_JSONRPC),
+                response_for(FRAMING_JSONRPC),
                 br#"{"jsonrpc":"2.0","result":1}"#,
             ),
             // JSON-RPC 2.0's own rules (runtime#75): the version, structured
             // params, a reply to a null id, one outcome, an error's message.
             reject(
                 "framing-jsonrpc/reject-request-other-version",
-                Op::Request,
-                framing(FRAMING_JSONRPC),
+                request_for(FRAMING_JSONRPC),
                 br#"{"jsonrpc":"1.0","method":"greet","params":[],"id":1}"#,
             ),
             reject(
                 "framing-jsonrpc/reject-request-without-version",
-                Op::Request,
-                framing(FRAMING_JSONRPC),
+                request_for(FRAMING_JSONRPC),
                 br#"{"method":"greet","params":[],"id":1}"#,
             ),
             reject(
                 "framing-jsonrpc/reject-request-scalar-params",
-                Op::Request,
-                framing(FRAMING_JSONRPC),
+                request_for(FRAMING_JSONRPC),
                 br#"{"jsonrpc":"2.0","method":"greet","params":"x","id":1}"#,
             ),
             reject(
                 "framing-jsonrpc/reject-request-null-id",
-                Op::Request,
-                framing(FRAMING_JSONRPC),
+                request_for(FRAMING_JSONRPC),
                 br#"{"jsonrpc":"2.0","method":"greet","params":[],"id":null}"#,
             ),
             reject(
                 "framing-jsonrpc/reject-response-result-and-error",
-                Op::Response,
-                framing(FRAMING_JSONRPC),
+                response_for(FRAMING_JSONRPC),
                 br#"{"jsonrpc":"2.0","result":1,"error":{"code":1,"message":"x"},"id":1}"#,
             ),
             reject(
                 "framing-jsonrpc/reject-response-error-without-message",
-                Op::Response,
-                framing(FRAMING_JSONRPC),
+                response_for(FRAMING_JSONRPC),
                 br#"{"jsonrpc":"2.0","error":{"code":1},"id":1}"#,
             ),
             reject(
                 "framing-jsonrpc/reject-response-without-version",
-                Op::Response,
-                framing(FRAMING_JSONRPC),
+                response_for(FRAMING_JSONRPC),
                 br#"{"result":1,"id":1}"#,
             ),
             // Found by comline-typescript's differential tests (#42): JSON
@@ -3011,32 +2542,27 @@ fn rejections(feature: &str) -> Vec<Case> {
             // the framing ignores.
             reject(
                 "framing-jsonrpc/found-reject-request-invalid-utf8-in-jsonrpc",
-                Op::Request,
-                framing(FRAMING_JSONRPC),
+                request_for(FRAMING_JSONRPC),
                 b"{\"jsonrpc\":\"2.\xff\",\"method\":\"greet\",\"params\":[],\"id\":1}",
             ),
             reject(
                 "framing-jsonrpc/found-reject-request-invalid-utf8-in-unknown-member",
-                Op::Request,
-                framing(FRAMING_JSONRPC),
+                request_for(FRAMING_JSONRPC),
                 b"{\"jsonrpc\":\"2.0\",\"method\":\"greet\",\"params\":[],\"x\":\"\xff\",\"id\":1}",
             ),
             reject(
                 "framing-jsonrpc/found-reject-response-invalid-utf8-in-jsonrpc",
-                Op::Response,
-                framing(FRAMING_JSONRPC),
+                response_for(FRAMING_JSONRPC),
                 b"{\"jsonrpc\":\"2.\xff\",\"result\":1,\"id\":1}",
             ),
             reject(
                 "framing-jsonrpc/found-reject-response-invalid-utf8-in-unknown-member",
-                Op::Response,
-                framing(FRAMING_JSONRPC),
+                response_for(FRAMING_JSONRPC),
                 b"{\"jsonrpc\":\"2.0\",\"result\":1,\"x\":\"\xff\",\"id\":1}",
             ),
             reject(
                 "framing-jsonrpc/found-reject-response-invalid-utf8-in-error-message",
-                Op::Response,
-                framing(FRAMING_JSONRPC),
+                response_for(FRAMING_JSONRPC),
                 b"{\"jsonrpc\":\"2.0\",\"error\":{\"code\":1,\"message\":\"\xff\"},\"id\":1}",
             ),
         ],

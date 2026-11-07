@@ -12,6 +12,8 @@ reproduce, and the Rust runtime's proof that it does.
 - `vectors/<feature>.json`: that feature's cases.
 - [`benches/`](benches/README.md): the benchmarks every runtime runs, in the
   same value encoding.
+- [`specs/`](specs/readme.md): the format of each of these files, in CUE, and
+  the JSON Schemas generated from it, which each file names in `$schema`.
 
 A case is one operation and the bytes it must produce:
 
@@ -139,12 +141,12 @@ review as one.
 CONFORMANCE_BLESS=1 cargo test -p comline-runtime-conformance
 ```
 
-## The spec, version 0.4
+## The spec, version 0.5
 
 The case format above (`vectors/*.json`, `profiles/*.json`, the ops, values
 and types) and the ops protocol
 ([`comline-reference`'s README](../reference/README.md#the-protocol)) are a
-public spec, at version **0.4** (`runner::SPEC_VERSION`). Third-party
+public spec, at version **0.5** (`runner::SPEC_VERSION`). Third-party
 encodings ship vectors in this format, and `comline conformance --impl`
 drives their implementations over this protocol. While Comline is in its
 early days (0.x), a minor version may change anything, and the change is
@@ -176,6 +178,15 @@ What an implementation answers, and how its answers are judged:
 
 Changes:
 
+- **0.5:** the corpus's format is specified in [`specs/`](specs/readme.md),
+  and every file may name its schema in a top-level `$schema`, which a reader
+  ignores. The runner reads inputs and profiles by their shape, and refuses at
+  load what it used to fail per case or per fact: an `input` with a field its
+  op doesn't have or spelled another way (`"protocol": null`), a profile fact
+  or value its kind doesn't have, a case id that isn't `<feature>/<name>` or
+  appears twice, and hex that isn't lowercase. A decode's answer is compared
+  by what it holds, so `1` gives back `{"f64": 1.0}`. Benchmark shapes may be
+  `generate`d. No vector's bytes change.
 - **0.4:** `datagram@3` and `comline@2` (runtime#15). New features
   `framing-datagram3` (a `request`'s `call_id` is the function's wire
   number, and `protocol` the protocol's) and `handshake-comline2`, with the
@@ -277,7 +288,8 @@ profile states it until live cross-runtime calls can prove it (see below).
 
 ## Another runtime
 
-Vendor `features.json` and `vectors/` at a pinned commit of this repository.
+Vendor `features.json` and `vectors/` at a pinned commit of this repository,
+and `specs/gen/` too if you want their `$schema` to resolve; a reader ignores it.
 Drive your runtime through the same ops, check your claims by the rules
 above, and write a report of the same shape. comline-typescript does this in
 `runtime/test/conformance/`.

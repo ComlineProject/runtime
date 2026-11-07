@@ -11,7 +11,7 @@ use serde::{Deserialize, Serialize};
 use comline_runtime::comline2::*;
 use comline_runtime::contract::{HandshakeFrame, Reason, Side, FORMAT_PACKED, FRAMING_DATAGRAM3};
 
-use crate::{parse, to_json, Case, Compare, Expect, Hex, Op, Outcome};
+use crate::{Case, Compare, Expect, Hex, Input, Outcome};
 
 /// A negotiation step, as a `comline2_negotiate` case states it.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -47,20 +47,20 @@ pub struct NegotiateIn {
     pub local: Option<Hello>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub pending: Option<Negotiated>,
-    /// The message this end sends, if any. Left out for `finish`.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
+    /// The message this end sends, if any (`null`: none). Left out for
+    /// `finish`.
+    #[serde(default, deserialize_with = "present", skip_serializing_if = "Option::is_none")]
     pub reply: Option<Option<Message>>,
     pub result: NegotiateResult,
 }
 
-pub(crate) fn encode(op: Op, input: &serde_json::Value) -> Result<Vec<u8>, Outcome> {
-    match op {
-        Op::Comline2Message => {
-            let m: Message = parse(input)?;
-            Ok(m.to_bytes())
-        }
-        _ => Err(Outcome::Fail("`comline2_negotiate` cases are decode only".into())),
-    }
+/// A field that's there, `null` or not: only leaving it out is `None`.
+fn present<'de, D, T>(d: D) -> Result<Option<Option<T>>, D::Error>
+where
+    D: serde::Deserializer<'de>,
+    T: Deserialize<'de>,
+{
+    Option::deserialize(d).map(Some)
 }
 
 /// Runs `step` on `bytes`, and fills in the reply and result.
@@ -96,30 +96,17 @@ fn result_of(result: Result<Negotiated, Refusal>) -> NegotiateResult {
     }
 }
 
-pub(crate) fn decode(
-    op: Op,
-    input: &serde_json::Value,
-    bytes: &[u8],
-) -> Result<Option<serde_json::Value>, Outcome> {
-    match op {
-        Op::Comline2Message => Ok(Message::decode(bytes).ok().map(|m| to_json(&m))),
-        _ => {
-            let i: NegotiateIn = parse(input)?;
-            Ok(Some(to_json(&negotiate(i, bytes)?)))
-        }
-    }
-}
-
 /// Whether `cases` show a `comline@2` handshake fact: an accepted
 /// negotiation, and refusals for what the fact covers: a line that differs
-/// and another package (`schema_agreement`); encodings that differ
+/// and another package (`schema`: `schema_agreement`); encodings that differ
 /// (`encoding_agreement`).
-pub(crate) fn fact_shown(fact: &str, cases: &[&Case]) -> bool {
+pub(crate) fn agreement_shown(schema: bool, cases: &[&Case]) -> bool {
     let results: Vec<NegotiateResult> = cases
         .iter()
-        .filter(|c| c.op == Op::Comline2Negotiate)
-        .filter_map(|c| serde_json::from_value::<NegotiateIn>(c.input.clone()).ok())
-        .map(|i| i.result)
+        .filter_map(|c| match &c.input {
+            Input::Comline2Negotiate(i) => Some(i.result.clone()),
+            _ => None,
+        })
         .collect();
     // Refused: the connection, or (under `scope = protocol`) a protocol.
     let refused = |reason: Reason| {
@@ -137,9 +124,10 @@ pub(crate) fn fact_shown(fact: &str, cases: &[&Case]) -> bool {
             if n.protocols.iter().all(|p| matches!(p.state, ProtocolState::Accepted { .. })))
     });
     accepted
-        && match fact {
-            "schema_agreement" => refused(Reason::LineMismatch) && refused(Reason::PackageMismatch),
-            _ => refused(Reason::EncodingMismatch) && refused(Reason::ExchangeMismatch),
+        && if schema {
+            refused(Reason::LineMismatch) && refused(Reason::PackageMismatch)
+        } else {
+            refused(Reason::EncodingMismatch) && refused(Reason::ExchangeMismatch)
         }
 }
 
@@ -177,9 +165,8 @@ fn base(exchange: Exchange) -> Hello {
 fn message_case(id: &str, message: Message) -> Case {
     Case {
         id: format!("handshake-comline2/{id}"),
-        op: Op::Comline2Message,
-        input: to_json(&message),
         bytes: Hex(message.to_bytes()),
+        input: Input::Comline2Message(Some(message)),
         expect: Expect::Exact,
         compare: Compare::Bytes,
     }
@@ -188,8 +175,7 @@ fn message_case(id: &str, message: Message) -> Case {
 fn reject_case(id: &str, bytes: Vec<u8>) -> Case {
     Case {
         id: format!("handshake-comline2/{id}"),
-        op: Op::Comline2Message,
-        input: serde_json::Value::Null,
+        input: Input::Comline2Message(None),
         bytes: Hex(bytes),
         expect: Expect::Reject,
         compare: Compare::Bytes,
@@ -216,8 +202,7 @@ fn negotiate_case(
     let input = negotiate(input, &peer).unwrap_or_else(|o| panic!("reference case `{id}`: {o:?}"));
     Case {
         id: format!("handshake-comline2/{id}"),
-        op: Op::Comline2Negotiate,
-        input: to_json(&input),
+        input: Input::Comline2Negotiate(input),
         bytes: Hex(peer),
         expect: Expect::Exact,
         compare: Compare::Bytes,
@@ -238,8 +223,7 @@ fn finish_case(id: &str, side: Side, pending: Negotiated, verdict: Message) -> C
     let input = negotiate(input, &bytes).unwrap();
     Case {
         id: format!("handshake-comline2/{id}"),
-        op: Op::Comline2Negotiate,
-        input: to_json(&input),
+        input: Input::Comline2Negotiate(input),
         bytes: Hex(bytes),
         expect: Expect::Exact,
         compare: Compare::Bytes,
