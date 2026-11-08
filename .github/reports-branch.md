@@ -9,6 +9,11 @@ latest verification reports of `main`, which the docs
   Format: `runtime/conformance/benches/README.md` on `main`.
 - `rust.fuzz.json`: the nightly fuzz run, from `.github/workflows/fuzz.yml`.
   Format: `runtime/fuzz/README.md` on `main`.
+- `rust.size.json`, `rust.coverage.json`, `rust.compile.json`: the C ABI
+  crate's artifact sizes (cdylib, staticlib, wasm32), line/function coverage
+  per crate, and a clean release build's seconds per crate, from
+  `.github/workflows/reports.yml` on every push to `main`. Formats: the
+  Observatory's `DATA.md` (`size`, `coverage`, `compile`).
 
 Each report names the `main` commit it measured. Every publish is one commit
 here, so `git log -- rust.bench.json` is the series. The publishing script is
