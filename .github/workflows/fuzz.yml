@@ -3,9 +3,11 @@ name: Fuzz
 # The cargo-fuzz targets in runtime/fuzz, and the property tests (the
 # conformance crate's, and the C ABI's differential test) at a high case
 # count. A pull request runs each target for a minute, seeded from the
-# conformance vectors. The nightly run gives each target ten minutes from a
-# corpus cached between runs, runs proptest with 100000 cases, and opens an
-# issue on a failure instead of blocking anyone's pull request.
+# conformance vectors. The nightly run gives each target ten minutes on every
+# core of the runner (libFuzzer's fork mode, which merges what each process
+# finds into the corpus) from a corpus cached between runs, runs proptest
+# with 100000 cases, and opens an issue on a failure instead of blocking
+# anyone's pull request.
 # See runtime/fuzz/README.md.
 #
 # Every run writes `rust.fuzz.json` (runs, corpus, findings per target, and
@@ -86,8 +88,12 @@ jobs:
           set -o pipefail
           start=$(date +%s)
           trap 'echo "seconds=$(( $(date +%s) - start ))" >> "$GITHUB_OUTPUT"' EXIT
+          # The nightly forks a process per core; fork mode stops at the first
+          # crash, as a single process does.
+          fork=()
+          [ "$NIGHTLY" = true ] && fork=("-fork=$(nproc)")
           cargo fuzz run --fuzz-dir runtime/fuzz ${{ matrix.target }} -- \
-            -max_total_time=${{ env.SECONDS_PER_TARGET }} \
+            -max_total_time=${{ env.SECONDS_PER_TARGET }} "${fork[@]}" \
             -rss_limit_mb=2048 -malloc_limit_mb=512 -print_final_stats=1 \
             2>&1 | tee "$RUNNER_TEMP/fuzz.log"
 
