@@ -17,6 +17,10 @@ Each job writes a fragment, and the report job combines them:
 `target` reads libFuzzer's `-print_final_stats=1` lines and its
 `Done N runs in S second(s)` line. libFuzzer prints the stats on a crash too,
 but not `Done`, so the step's wall-clock time stands in for the seconds then.
+In fork mode (`-fork=N`, the nightly) the parent prints neither: its
+`#N: cov: ...` status lines carry the executions summed over every child, and
+`INFO: exiting: CODE time: Ss` the seconds. The child logs it echoes on a
+crash have `stat::` lines of their own, so fork lines win when there are any.
 A log with no stats (the target didn't build or start) gives a fragment with
 `error` set and the numbers `null`. `proptest` reads the test harness's
 `test NAME ... ok` lines.
@@ -31,6 +35,8 @@ import sys
 
 STAT = re.compile(r"^stat::(\w+):\s+(\d+)\s*$", re.M)
 DONE = re.compile(r"^Done (\d+) runs in (\d+) second\(s\)\s*$", re.M)
+FORK = re.compile(r"^#(\d+): cov: \d+ ft: \d+ corp: \d+ exec/s:? \d+", re.M)
+FORK_EXIT = re.compile(r"^INFO: exiting: -?\d+ time: (\d+)s\s*$", re.M)
 TEST = re.compile(r"^test (\S+) \.\.\. (ok|FAILED|ignored)\s*$", re.M)
 # What libFuzzer names the inputs it saves on a finding.
 FINDING = ("crash-", "leak-", "timeout-", "oom-", "slow-unit-")
@@ -45,9 +51,15 @@ def target(a):
     log = pathlib.Path(a.log).read_text(errors="replace") if pathlib.Path(a.log).exists() else ""
     stats = {k: int(v) for k, v in STAT.findall(log)}
     done = DONE.findall(log)
+    fork, fork_exit = FORK.findall(log), FORK_EXIT.findall(log)
+    if fork:
+        stats["number_of_executed_units"] = int(fork[-1])
+        seconds = int(fork_exit[-1]) if fork_exit else a.wall_seconds
+    else:
+        seconds = int(done[-1][1]) if done else (a.wall_seconds if stats else None)
     findings = sum(1 for p in files(a.artifacts) if p.name.startswith(FINDING))
     fragment = {
-        "seconds": int(done[-1][1]) if done else (a.wall_seconds if stats else None),
+        "seconds": seconds,
         "executions": stats.get("number_of_executed_units"),
         "corpus": len(files(a.corpus)),
         "findings": findings,

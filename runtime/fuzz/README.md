@@ -108,7 +108,9 @@ are `artifacts/`.
 - **Every pull request:** each target runs for 60 seconds, seeded from the
   vectors.
 - **Nightly:**
-  - each target runs for 10 minutes on a corpus cached between runs;
+  - each target runs for 10 minutes on a corpus cached between runs, with a
+    process on every core of the runner (libFuzzer's `-fork=N`, which merges
+    what each process finds into the corpus);
   - the property tests run with `PROPTEST_CASES=100000`: the conformance
     crate's, and the C ABI's differential test.
 
@@ -149,9 +151,11 @@ Runs elsewhere, pull requests included, do a dry run of that publish.
   head. `date` is when the report was written, in UTC.
 - `targets`: one entry per cargo-fuzz target.
   - `seconds`: how long it fuzzed, from libFuzzer's `Done N runs in S
-    second(s)`. A run that stops on a finding doesn't print that, so it's the
-    step's wall-clock time then.
-  - `executions`: `stat::number_of_executed_units` (`-print_final_stats=1`).
+    second(s)`, or `INFO: exiting: C time: Ss` in fork mode. A run that stops
+    on a finding doesn't print that, so it's the step's wall-clock time then.
+  - `executions`: `stat::number_of_executed_units` (`-print_final_stats=1`),
+    or in fork mode the count on the last `#N: cov: …` line, summed over
+    every process.
   - `corpus`: the number of inputs in its corpus after the run.
   - `findings`: the inputs libFuzzer saved (`crash-`, `leak-`, `timeout-`,
     `oom-`, `slow-unit-`). libFuzzer stops at the first, so it's 0 or 1.
