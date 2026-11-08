@@ -349,6 +349,7 @@ profile states it until live cross-runtime calls can prove it (see below).
 
 Vendor `features.json` and `vectors/` at a pinned commit of this repository,
 and `specs/gen/` too if you want their `$schema` to resolve; a reader ignores it.
+`benches/` carries its own schema, so it vendors whole on its own.
 Drive your runtime through the same ops, check your claims by the rules
 above, and write a report of the same shape. comline-typescript does this in
 `runtime/test/conformance/`.

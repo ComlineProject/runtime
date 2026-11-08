@@ -62,8 +62,11 @@ package conformance
 
 	// The measured frame: an `ok` response
 	frame!: close({
-		kind!:         "ok"
-		request_id!:   #Unsigned
+		kind!:       "ok"
+		request_id!: #Unsigned
+
+		// The protocol number, in the framings whose reply carries one
+		// (`datagram@2`, `datagram@3`); the others ignore it
 		protocol!:     uint16
 		payload_fill!: string
 	})

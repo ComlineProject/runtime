@@ -1,7 +1,9 @@
 # Cue Specs
 
 CUE definitions of every file in the corpus, and the JSON Schemas generated
-from them (`gen/`), which the files name in `$schema` for editors.
+from them (`gen/`), which the files name in `$schema` for editors. The
+benches' schema is generated into `benches/bench.schema.json` instead, so a
+runtime that vendors `benches/` alone has it.
 
 | Definition | Files | Spec |
 | --- | --- | --- |
@@ -18,8 +20,9 @@ file: a third party's needn't have one.
 
 ## Building and verifying
 
-`./check.sh` regenerates `gen/` and vets every file, and CI runs
-`./check.sh --check`, which fails instead when `gen/` is stale. It needs
+`./check.sh` regenerates `gen/` and `benches/bench.schema.json` and vets every
+file, and CI runs `./check.sh --check`, which fails instead when a generated
+schema is stale. It needs
 [`cue`](https://cuelang.org) at the version `.github/workflows/build_test.yml`
 pins.
 

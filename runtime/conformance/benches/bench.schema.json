@@ -355,6 +355,7 @@
                             "type": "string"
                         },
                         "protocol": {
+                            "description": "The protocol number, in the framings whose reply carries one\n(`datagram@2`, `datagram@3`); the others ignore it",
                             "allOf": [
                                 {
                                     "type": "number"
