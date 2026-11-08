@@ -39,9 +39,10 @@ ifeq ($(PLATFORM),windows)
 EXE := .exe
 STATICLIB := comline_runtime_ffi.lib
 DYLIB := comline_runtime_ffi.dll
-# `fopen` is deprecated by the MSVC headers; the DLL CRT, as Rust links.
+# `fopen` is deprecated by the MSVC headers. The DLL CRT, as Rust links,
+# and none of the static CRT the clang driver asks the linker for besides.
 CPPFLAGS += -D_CRT_SECURE_NO_WARNINGS
-CFLAGS += -fms-runtime-lib=dll
+CFLAGS += -fms-runtime-lib=dll -Wl,/NODEFAULTLIB:libcmt -Wl,/NODEFAULTLIB:libucrt -Wl,/NODEFAULTLIB:libvcruntime
 NATIVE_LIBS ?= -lkernel32 -ladvapi32 -lntdll -luserenv -lws2_32 -ldbghelp -lbcrypt
 # The import library; the DLL is copied next to the program, where Windows
 # looks first.
