@@ -40,7 +40,7 @@ name: Benchmarks
 #
 # Publishing: on every push to `main`, the `main` job benches the new head's
 # targets alone (nothing to gate) and commits its `rust.bench.json` to the `reports`
-# branch, which the docs fetch from; see .github/scripts/publish-report.py.
+# branch, which the docs fetch from; see the shared publish-report action (ComlineProject/observatory).
 # Only that job can write, and only from `main`: a manual run from another
 # branch builds the report and does a dry run of the publish.
 
@@ -268,9 +268,8 @@ jobs:
           path: runtime/conformance/reports/rust.bench.json
 
       - name: Publish to the reports branch
-        env:
-          DRY_RUN: ${{ github.ref != 'refs/heads/main' && '--dry-run' || '' }}
-        run: |
-          python3 .github/scripts/publish-report.py $DRY_RUN \
-            --readme .github/reports-branch.md \
-            runtime/conformance/reports/rust.bench.json
+        uses: ComlineProject/observatory/.github/actions/publish-report@v1
+        with:
+          reports: runtime/conformance/reports/rust.bench.json
+          readme: .github/reports-branch.md
+          dry-run: ${{ github.ref != 'refs/heads/main' && 'true' || 'false' }}

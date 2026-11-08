@@ -12,7 +12,7 @@ name: Fuzz
 # the property tests' verdicts; format in runtime/fuzz/README.md) as an
 # artifact and to its summary. A run on `main` (the nightly, or a manual one)
 # also commits it to the `reports` branch, which the docs fetch from; see
-# .github/scripts/publish-report.py. Only the `publish` job can write, and
+# the shared `publish-report` action (ComlineProject/observatory). Only the `publish` job can write, and
 # never on a pull request; other runs do a dry run of the publish.
 
 on:
@@ -246,10 +246,11 @@ jobs:
           path: runtime/conformance/reports/rust.fuzz.json
       - name: Publish (dry run)
         if: github.ref != 'refs/heads/main' || github.event_name == 'pull_request'
-        run: >
-          python3 .github/scripts/publish-report.py --dry-run
-          --readme .github/reports-branch.md
-          runtime/conformance/reports/rust.fuzz.json
+        uses: ComlineProject/observatory/.github/actions/publish-report@v1
+        with:
+          reports: runtime/conformance/reports/rust.fuzz.json
+          readme: .github/reports-branch.md
+          dry-run: 'true'
 
   publish:
     name: publish fuzz report
@@ -270,7 +271,7 @@ jobs:
           name: rust.fuzz.json
           path: ${{ runner.temp }}/report
       - name: Publish to the reports branch
-        run: >
-          python3 .github/scripts/publish-report.py
-          --readme .github/reports-branch.md
-          "$RUNNER_TEMP/report/rust.fuzz.json"
+        uses: ComlineProject/observatory/.github/actions/publish-report@v1
+        with:
+          reports: ${{ runner.temp }}/report/rust.fuzz.json
+          readme: .github/reports-branch.md

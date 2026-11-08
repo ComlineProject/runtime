@@ -16,5 +16,5 @@ latest verification reports of `main`, which the docs
   Observatory's `DATA.md` (`size`, `coverage`, `compile`).
 
 Each report names the `main` commit it measured. Every publish is one commit
-here, so `git log -- rust.bench.json` is the series. The publishing script is
-`.github/scripts/publish-report.py` on `main`.
+here, so `git log -- rust.bench.json` is the series. The publishing step is the shared
+`ComlineProject/observatory/.github/actions/publish-report` action.
