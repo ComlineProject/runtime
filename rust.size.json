@@ -13,8 +13,8 @@
       "gzip_bytes": 100294
     }
   },
-  "commit": "ca19ddd8ff4a6d404a40594a5e4ee3096ebc7353",
+  "commit": "ebfb792d8b3bee069b51a13b2b6a2f204f931602",
   "format": 1,
-  "run": "https://github.com/ComlineProject/runtime/actions/runs/42460851039",
+  "run": "https://github.com/ComlineProject/runtime/actions/runs/42466439980",
   "toolchain": "rustc 1.98.0 (88d9e12ae 2026-08-18)"
 }
