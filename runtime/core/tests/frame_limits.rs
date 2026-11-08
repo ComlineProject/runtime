@@ -154,11 +154,19 @@ fn tcp_refuses_an_oversized_prefix_at_once_then_closes() {
     );
     assert_eq!(tcp.send(b"y"), Err(RuntimeError::Transport));
 
-    // And the peer sees it close.
+    // And the peer sees it close: an end of stream, or, where closing a
+    // socket with unread bytes resets it (macOS, Windows), a reset.
     let mut rest = Vec::new();
-    raw.read_to_end(&mut rest)
-        .expect("the peer sees the stream end, not a timeout");
-    assert!(rest.is_empty());
+    match raw.read_to_end(&mut rest) {
+        Ok(_) => assert!(rest.is_empty()),
+        Err(e) => assert!(
+            matches!(
+                e.kind(),
+                std::io::ErrorKind::ConnectionReset | std::io::ErrorKind::ConnectionAborted
+            ),
+            "the peer sees the stream close, not a timeout: {e:?}"
+        ),
+    }
 }
 
 // ── the blocking drivers ───────────────────────────────────────────────────

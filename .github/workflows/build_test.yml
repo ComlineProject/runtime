@@ -32,6 +32,28 @@ jobs:
       - run: cargo test --verbose
       - run: cargo test --verbose -p comline-runtime --features tokio
 
+  # The workspace on the other platforms, on stable only. Separate from the
+  # job above so its check names (required on main) stay as they are.
+  build_and_test_platforms:
+    name: Rust project - stable (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os:
+          - windows-latest
+          - macos-latest
+          - ubuntu-24.04-arm
+    env:
+      RUSTUP_TOOLCHAIN: stable
+    steps:
+      - uses: actions/checkout@v6
+      - run: rustup toolchain install stable --profile minimal
+      - uses: Swatinem/rust-cache@v2
+      - run: cargo build --verbose --locked
+      - run: cargo test --verbose --locked
+      - run: cargo test --verbose --locked -p comline-runtime --features tokio
+
   # The corpus's files match their specs, and the generated schemas the specs.
   specs:
     name: conformance specs
@@ -111,6 +133,60 @@ jobs:
       - name: C harness (staticlib, cdylib, sanitizers)
         run: make -C runtime/ffi/tests/c check CC=gcc
       - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - name: Node harness (wasm32)
+        run: node --test runtime/ffi/js/test/*.test.mjs
+
+  # The `ffi` job on the other platforms (its name, required on main, stays
+  # Linux's): the header, the libraries (`.dll`/`.lib` on Windows, `.dylib`
+  # on macOS), the Rust replay, the C harness (clang on macOS and Windows;
+  # no sanitizers on Windows) and the Node harness.
+  ffi_platforms:
+    name: ffi (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: windows-latest
+            cc: clang
+          - os: macos-latest
+            cc: clang
+          - os: ubuntu-24.04-arm
+            cc: gcc
+    defaults:
+      run:
+        shell: bash
+    env:
+      CBINDGEN_VERSION: 0.29.2
+    steps:
+      - uses: actions/checkout@v6
+      - run: rustup target add wasm32-unknown-unknown
+      - uses: Swatinem/rust-cache@v2
+      - run: cargo install cbindgen --version "$CBINDGEN_VERSION" --locked
+      - name: comline.h matches the source
+        working-directory: runtime/ffi
+        run: |
+          cbindgen --config cbindgen.toml --output include/comline.h
+          git diff --exit-code -- include/comline.h
+      - name: cdylib and staticlib
+        run: |
+          cargo build --verbose -p comline-runtime-ffi --release
+          ls -l target/release/*comline_runtime_ffi*
+      - name: wasm32
+        run: cargo build --verbose -p comline-runtime-ffi --profile wasm --target wasm32-unknown-unknown
+      - name: wasm32 with test hooks
+        run: cargo build --verbose -p comline-runtime-ffi --profile wasm --target wasm32-unknown-unknown --features test-hooks --target-dir target/test-hooks
+      - run: cargo test --verbose -p comline-runtime-ffi
+      - name: export the vectors for C and Node
+        run: cargo run -p comline-runtime-ffi --example export_vectors -- target/ffi-vectors
+      - name: make (Windows)
+        if: runner.os == 'Windows'
+        run: command -v make || choco install make --no-progress -y
+      - name: C harness
+        run: make -C runtime/ffi/tests/c check CC=${{ matrix.cc }}
+      - uses: actions/setup-node@v6
         with:
           node-version: 22
       - name: Node harness (wasm32)

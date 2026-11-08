@@ -1,0 +1,4 @@
+# LF in the working tree on every platform: the generated header, the
+# conformance vectors and the specs are compared byte for byte, and a
+# Windows checkout would otherwise turn them CRLF.
+* text=auto eol=lf
