@@ -2,6 +2,18 @@ use serde::Serialize;
 
 use crate::contract::{BufMut, Envelope, MethodName, RuntimeError, WireFormat};
 
+mod connection;
+mod datagram;
+mod datagram2;
+mod datagram3;
+#[cfg(all(test, feature = "alloc"))]
+mod tests;
+
+pub use connection::{put_varint, take_varint, ConnectionFraming, Frame, ProtocolNumber};
+pub use datagram::DatagramFraming;
+pub use datagram2::Datagram2Framing;
+pub use datagram3::Datagram3Framing;
+
 /// How a call is turned into bytes on the wire and back — the axis orthogonal
 /// to [`WireFormat`] (which serialises the *parts*). The Comline datagram
 /// framing ([`DatagramFraming`]) is one; JSON-RPC
@@ -125,127 +137,4 @@ pub enum RequestCall<'f> {
     Id(u16),
     /// The method's name, as the frame spells it.
     Name(MethodName<'f>),
-}
-
-// ── the Comline datagram framing ───────────────────────────────────────────
-
-/// `no_std`, allocation-free. Request `[call_id u16 LE][request_id u64 LE]
-/// [params…]`; response `[request_id u64 LE][envelope…]` where the envelope is
-/// the tag-byte [`Envelope`] form.
-#[derive(Debug, Default, Clone, Copy)]
-pub struct DatagramFraming;
-
-impl Framing for DatagramFraming {
-    fn name(&self) -> &'static str {
-        crate::contract::FRAMING_DATAGRAM
-    }
-
-    fn encode_request<W, P>(
-        &self,
-        call: Call,
-        request_id: u64,
-        params: &P,
-        fmt: &W,
-        out: &mut dyn BufMut,
-    ) -> Result<(), RuntimeError>
-    where
-        W: WireFormat,
-        P: Serialize + ?Sized,
-    {
-        out.put_u16_le(call.id);
-        out.put_u64_le(request_id);
-        fmt.encode(params, out)
-    }
-
-    fn encode_request_body(
-        &self,
-        call_id: u16,
-        _name: &str,
-        request_id: u64,
-        params: &[u8],
-        out: &mut dyn BufMut,
-    ) {
-        out.put_u16_le(call_id);
-        out.put_u64_le(request_id);
-        out.put_slice(params);
-    }
-
-    fn decode_request<'f>(&self, frame: &'f [u8]) -> Option<Request<'f>> {
-        let (head, params) = frame.split_at_checked(10)?;
-        let id = u16::from_le_bytes([head[0], head[1]]);
-        let request_id = u64::from_le_bytes(head[2..10].try_into().ok()?);
-        Some(Request {
-            call: RequestCall::Id(id),
-            request_id,
-            params,
-        })
-    }
-
-    fn encode_response_ok(&self, request_id: u64, payload: &[u8], out: &mut dyn BufMut) {
-        out.put_u64_le(request_id);
-        Envelope::encode_ok(payload, out);
-    }
-
-    fn encode_response_err(&self, request_id: u64, id: u16, body: &[u8], out: &mut dyn BufMut) {
-        out.put_u64_le(request_id);
-        Envelope::encode_err(id, body, out);
-    }
-
-    fn encode_response_fault(&self, request_id: u64, out: &mut dyn BufMut) {
-        out.put_u64_le(request_id);
-        Envelope::encode_fault(out);
-    }
-
-    fn decode_response<'f>(&self, frame: &'f [u8]) -> Option<(u64, Envelope<'f>)> {
-        let (head, rest) = frame.split_at_checked(8)?;
-        let request_id = u64::from_le_bytes(head.try_into().ok()?);
-        Some((request_id, Envelope::decode(rest)?))
-    }
-}
-
-#[cfg(all(test, feature = "alloc"))]
-mod tests {
-    use super::*;
-    use alloc::vec::Vec;
-
-    #[test]
-    fn datagram_request_round_trips() {
-        // `encode_request`'s WireFormat leg is covered by the integration
-        // tests; here just the header + params split.
-        let mut frame = Vec::new();
-        frame.extend_from_slice(&3u16.to_le_bytes());
-        frame.extend_from_slice(&42u64.to_le_bytes());
-        frame.extend_from_slice(b"args");
-
-        let req = DatagramFraming.decode_request(&frame).unwrap();
-        assert_eq!(req.call, RequestCall::Id(3));
-        assert_eq!(req.request_id, 42);
-        assert_eq!(req.params, b"args");
-        assert_eq!(DatagramFraming.decode_request(&[0, 0, 0]), None);
-    }
-
-    #[test]
-    fn datagram_response_round_trips() {
-        let f = DatagramFraming;
-        let mut ok = Vec::new();
-        f.encode_response_ok(7, b"payload", &mut ok);
-        assert_eq!(f.decode_response(&ok), Some((7, Envelope::Ok(b"payload"))));
-
-        let mut err = Vec::new();
-        f.encode_response_err(7, 2, b"fields", &mut err);
-        assert_eq!(
-            f.decode_response(&err),
-            Some((
-                7,
-                Envelope::Err {
-                    id: 2,
-                    body: b"fields"
-                }
-            ))
-        );
-
-        let mut fault = Vec::new();
-        f.encode_response_fault(7, &mut fault);
-        assert_eq!(f.decode_response(&fault), Some((7, Envelope::Fault)));
-    }
 }
