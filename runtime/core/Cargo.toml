@@ -27,7 +27,7 @@ std = [
     "dep:rmp",
     "dep:rmp-serde",
 ]
-# `async_connection`: an async driver for connections, on any executor. Only
+# `AsyncConnection`: an async driver for connections, on any executor. Only
 # the `futures` crates; generated async code needs Rust 1.75.
 async = ["std", "dep:futures-channel", "dep:futures-util"]
 # Tokio's TCP as an async transport, and its clock for call timeouts.

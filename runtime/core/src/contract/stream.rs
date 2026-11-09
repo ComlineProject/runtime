@@ -5,7 +5,7 @@
 //! `len`: [`DEFAULT_MAX_FRAME`] unless it is configured otherwise. This module
 //! declares the layout and that default once. The blocking
 //! [`Tcp`](crate::transport::Tcp) and the tokio one
-//! (`async_connection::tokio::Tcp`) both read them from here.
+//! (`transport::tokio::Tcp`) both read them from here.
 //!
 //! `no_std`, allocation-free, and sans-IO: it parses and writes bytes, and
 //! the host reads and writes the stream.

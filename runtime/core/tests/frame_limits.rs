@@ -274,9 +274,8 @@ fn a_server_answers_an_oversized_reply_with_a_fault_and_a_client_refuses_an_over
 mod tokio_tcp {
     use super::*;
 
-    use comline_runtime::async_connection::{
-        tokio as rt_tokio, Answer, AsyncConnection, AsyncDispatch, AsyncPeer,
-    };
+    use comline_runtime::connection::{Answer, AsyncConnection, AsyncDispatch, AsyncPeer};
+    use comline_runtime::transport::tokio as rt_tokio;
     use futures_util::{SinkExt, StreamExt};
 
     struct AsyncEcho;
@@ -327,7 +326,7 @@ mod tokio_tcp {
     }
 
     fn decode_owned(
-        reply: Result<comline_runtime::async_connection::OwnedEnvelope, RuntimeError>,
+        reply: Result<comline_runtime::connection::OwnedEnvelope, RuntimeError>,
     ) -> Result<String, RuntimeError> {
         decode_text((reply?.envelope(), &MsgPack))
     }

@@ -196,7 +196,8 @@ fn a_notification_gets_no_reply() {
 #[cfg(feature = "tokio")]
 #[tokio::test]
 async fn the_async_driver_finds_protocols_by_method_and_skips_notifications() {
-    use comline_runtime::async_connection::{async_duplex, Answer, AsyncConnection, AsyncDispatch, AsyncPeer};
+    use comline_runtime::connection::{Answer, AsyncConnection, AsyncDispatch, AsyncPeer};
+    use comline_runtime::transport::async_duplex;
     use futures_util::{SinkExt, StreamExt};
 
     struct Count;
@@ -253,7 +254,8 @@ fn a_call_fails_when_the_peer_refuses_it() {
 #[cfg(feature = "tokio")]
 #[tokio::test]
 async fn an_async_connection_ends_when_the_peer_refuses() {
-    use comline_runtime::async_connection::{async_duplex, AsyncConnection};
+    use comline_runtime::connection::AsyncConnection;
+    use comline_runtime::transport::async_duplex;
     use futures_util::SinkExt;
 
     let (mut raw, conn_side) = async_duplex();

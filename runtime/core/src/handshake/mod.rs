@@ -6,11 +6,11 @@
 //! generated code hands it to [`Client::connect_with`](crate::client::Client::connect_with)
 //! / [`Server::serve_with`](crate::serve::Server::serve_with).
 //!
-//! An [`AsyncConnection`](crate::async_connection::AsyncConnection) (the
+//! An [`AsyncConnection`](crate::connection::AsyncConnection) (the
 //! `async` feature) runs an [`AsyncHandshake`] instead, over its
 //! [`AsyncTransport`], through
-//! [`AsyncConnection::connect_with`](crate::async_connection::AsyncConnection::connect_with)
-//! / [`accept_with`](crate::async_connection::AsyncConnection::accept_with).
+//! [`AsyncConnection::connect_with`](crate::connection::AsyncConnection::connect_with)
+//! / [`accept_with`](crate::connection::AsyncConnection::accept_with).
 //! [`ComlineHandshake`] and [`NoHandshake`] implement both traits and send
 //! the same bytes either way. A custom handshake implements whichever its
 //! connections need, or both.
@@ -19,7 +19,7 @@
 //! guarantees up, which the schema has to say (`@unverified`).
 
 #[cfg(feature = "async")]
-use crate::async_connection::AsyncTransport;
+use crate::transport::AsyncTransport;
 use crate::contract::RuntimeError;
 use crate::transport::Transport;
 #[cfg(feature = "async")]
@@ -97,7 +97,7 @@ pub trait Handshake {
 
 // ── async ──────────────────────────────────────────────────────────────────
 
-/// What runs on an [`AsyncConnection`](crate::async_connection::AsyncConnection)
+/// What runs on an [`AsyncConnection`](crate::connection::AsyncConnection)
 /// before the first call: the async counterpart of [`Handshake`], over an
 /// [`AsyncTransport`]. Needs nothing from an executor but polling.
 ///

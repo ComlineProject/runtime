@@ -8,10 +8,8 @@ use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
-use comline_runtime::async_connection::{
-    async_duplex, tokio as rt_tokio, Answer, AsyncConnection, AsyncDispatch, AsyncInMemory, AsyncPeer,
-    OwnedEnvelope,
-};
+use comline_runtime::connection::{Answer, AsyncConnection, AsyncDispatch, AsyncPeer, OwnedEnvelope};
+use comline_runtime::transport::{async_duplex, tokio as rt_tokio, AsyncInMemory};
 use comline_runtime::contract::{Call, Envelope, Kind, RuntimeError, WireFormat};
 use comline_runtime::format::MsgPack;
 use serde::{Deserialize, Serialize};

@@ -4,7 +4,7 @@ use alloc::vec::Vec;
 use super::AsyncHandshake;
 use super::{Facts, Handshake};
 #[cfg(feature = "async")]
-use crate::async_connection::AsyncTransport;
+use crate::transport::AsyncTransport;
 use crate::contract::{HandshakeFrame, RuntimeError, HANDSHAKE_COMLINE};
 use crate::transport::Transport;
 #[cfg(feature = "async")]
