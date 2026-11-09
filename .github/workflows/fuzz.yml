@@ -12,10 +12,11 @@ name: Fuzz
 #
 # Every run writes `rust.fuzz.json` (runs, corpus, findings per target, and
 # the property tests' verdicts; format in runtime/fuzz/README.md) as an
-# artifact and to its summary. A run on `main` (the nightly, or a manual one)
-# also commits it to the `reports` branch, which the docs fetch from; see
-# the shared `publish-report` action (ComlineProject/observatory). Only the `publish` job can write, and
-# never on a pull request; other runs do a dry run of the publish.
+# artifact and to its summary, with the Observatory's shared `report-fuzz`
+# action. A run on `main` (the nightly, or a manual one) also commits it to
+# the `reports` branch, which the docs and the Observatory read, with its
+# `publish-report` action. Only the `publish` job can write, and never on a
+# pull request; other runs do a dry run of the publish.
 
 on:
   pull_request:
@@ -100,15 +101,16 @@ jobs:
       # Before minimizing, which adds its own files next to the finding.
       - name: Record the run
         if: always() && steps.build.outcome == 'success'
-        run: >
-          python3 .github/scripts/fuzz-report.py target
-          --name ${{ matrix.target }}
-          --toolchain "${{ steps.build.outputs.toolchain }}"
-          --log "$RUNNER_TEMP/fuzz.log"
-          --corpus runtime/fuzz/corpus/${{ matrix.target }}
-          --artifacts runtime/fuzz/artifacts/${{ matrix.target }}
-          --wall-seconds "${{ steps.run.outputs.seconds || 0 }}"
-          --out "$RUNNER_TEMP/stats/${{ matrix.target }}.json"
+        uses: ComlineProject/observatory/.github/actions/report-fuzz@v1
+        with:
+          mode: target
+          name: ${{ matrix.target }}
+          toolchain: ${{ steps.build.outputs.toolchain }}
+          log: ${{ runner.temp }}/fuzz.log
+          corpus: runtime/fuzz/corpus/${{ matrix.target }}
+          artifacts: runtime/fuzz/artifacts/${{ matrix.target }}
+          wall-seconds: ${{ steps.run.outputs.seconds || 0 }}
+          fragment: ${{ runner.temp }}/stats/${{ matrix.target }}.json
       - if: always() && steps.build.outcome == 'success'
         uses: actions/upload-artifact@v4
         with:
@@ -184,10 +186,12 @@ jobs:
           exit $status
       - name: Record the run
         if: always()
-        run: >
-          python3 .github/scripts/fuzz-report.py proptest
-          --log "$RUNNER_TEMP/proptest.log" --cases 100000
-          --out "$RUNNER_TEMP/stats/proptest.json"
+        uses: ComlineProject/observatory/.github/actions/report-fuzz@v1
+        with:
+          mode: proptest
+          log: ${{ runner.temp }}/proptest.log
+          cases: 100000
+          fragment: ${{ runner.temp }}/stats/proptest.json
       - if: always()
         uses: actions/upload-artifact@v4
         with:
@@ -235,17 +239,15 @@ jobs:
           pattern: fuzz-stats-*
           path: ${{ runner.temp }}/stats
       - name: Report
-        env:
-          COMMIT: ${{ github.event.pull_request.head.sha || github.sha }}
-          RUN: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
-        run: |
-          python3 .github/scripts/fuzz-report.py combine \
-            --commit "$COMMIT" --run "$RUN" \
-            --fragments "$RUNNER_TEMP/stats" \
-            --expect decode_no_panic packed_canonical framing_decode seed_vs_derive stream_split ffi_feed ffi_vs_core ffi_comline2 \
-            --report runtime/conformance/reports/rust.fuzz.json \
-            --markdown "$RUNNER_TEMP/fuzz.md"
-          cat "$RUNNER_TEMP/fuzz.md" >> "$GITHUB_STEP_SUMMARY"
+        uses: ComlineProject/observatory/.github/actions/report-fuzz@v1
+        with:
+          mode: combine
+          subject: rust
+          fragments: ${{ runner.temp }}/stats
+          expect: decode_no_panic packed_canonical framing_decode seed_vs_derive stream_split ffi_feed ffi_vs_core ffi_comline2
+          output: runtime/conformance/reports/rust.fuzz.json
+          markdown: ${{ runner.temp }}/fuzz.md
+      - run: cat "$RUNNER_TEMP/fuzz.md" >> "$GITHUB_STEP_SUMMARY"
       - uses: actions/upload-artifact@v4
         with:
           name: rust.fuzz.json
