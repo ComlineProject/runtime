@@ -1,20 +1,20 @@
 {
   "artifacts": {
     "ffi/cdylib/x86_64-linux-release": {
-      "bytes": 699360,
-      "gzip_bytes": 299247
+      "bytes": 699600,
+      "gzip_bytes": 299431
     },
     "ffi/staticlib/x86_64-linux-release": {
-      "bytes": 23809520,
-      "gzip_bytes": 6312542
+      "bytes": 23818354,
+      "gzip_bytes": 6314587
     },
     "ffi/wasm32": {
-      "bytes": 275934,
-      "gzip_bytes": 100343
+      "bytes": 275982,
+      "gzip_bytes": 100350
     }
   },
-  "commit": "9a68839e185486fa201fbb89580971311eabba3f",
+  "commit": "59aa9aaf30265d8041f5a02a2711f9a9daa384e4",
   "format": 1,
-  "run": "https://github.com/ComlineProject/runtime/actions/runs/42578776068",
+  "run": "https://github.com/ComlineProject/runtime/actions/runs/42579475093",
   "toolchain": "rustc 1.98.0 (88d9e12ae 2026-08-18)"
 }
