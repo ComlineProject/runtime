@@ -21,8 +21,7 @@ crate-type = ["cdylib", "staticlib", "rlib"]
 test-hooks = []
 
 [dependencies]
-# No `std`, so `package_abi` (`abi_stable`, `libloading`) never enters the
-# build and wasm32 works. The FFI crate itself uses `std` for
+# Without the runtime's `std` layer. The FFI crate itself uses `std` for
 # `catch_unwind`.
 comline-runtime = { path = "../core", default-features = false, features = ["alloc", "jsonrpc"] }
 

@@ -9,7 +9,7 @@ features.
 | Feature | Adds |
 |---|---|
 | `alloc` | owned generated types, the frame transport, `Client`, `Server`, `Connection` |
-| `std` (default) | the MessagePack and JSON formats, the in-memory and TCP transports, the dylib ABI |
+| `std` (default) | the MessagePack and JSON formats, the in-memory and TCP transports |
 | `async` | `AsyncConnection`: the async driver for connections, on any executor (only the `futures` crates) |
 | `tokio` | tokio's TCP as an async transport, and its clock for call timeouts |
 
