@@ -4,7 +4,7 @@
 
 use std::thread;
 
-use comline_runtime::comline2::*;
+use comline_runtime::handshake::comline2::*;
 use comline_runtime::contract::{
     Reason, RuntimeError, Side, FORMAT_PACKED, FRAMING_DATAGRAM3,
 };

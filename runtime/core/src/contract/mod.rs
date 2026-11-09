@@ -30,6 +30,8 @@ pub use framing::{
     DatagramFraming, Frame, Framing, ProtocolNumber, Request, RequestCall,
 };
 pub use handshake::HandshakeFrame;
+#[cfg(feature = "alloc")]
+pub(crate) use handshake::MAGIC as HANDSHAKE_MAGIC;
 pub use method_name::{Chars as MethodNameChars, MethodName};
 pub use names::{
     name_hash, FORMAT_JSON, FORMAT_MSGPACK, FORMAT_PACKED, FRAMING_DATAGRAM, FRAMING_DATAGRAM2,

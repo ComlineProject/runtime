@@ -86,7 +86,7 @@ mod cases;
 use std::fmt::Write as _;
 use std::path::Path;
 
-use comline_runtime::comline2::Message;
+use comline_runtime::handshake::comline2::Message;
 use comline_runtime::contract::{
     ConnectionFraming, Datagram2Framing, Datagram3Framing, Envelope, HandshakeFrame,
 };

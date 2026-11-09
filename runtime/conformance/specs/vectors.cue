@@ -103,7 +103,7 @@ package conformance
 	needed!: uint
 })
 
-// comline@2, as `comline_runtime::comline2` serialises it.
+// comline@2, as `comline_runtime::handshake::comline2` serialises it.
 
 #Hash128: =~"^[0-9a-f]{32}$"
 

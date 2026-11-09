@@ -11,7 +11,7 @@
 
 #![allow(dead_code)]
 
-use comline_runtime::comline2::{
+use comline_runtime::handshake::comline2::{
     Exchange, Hash128, Hello, Message, Negotiated, PackageVersion, Params, Protocol, ProtocolState,
     Release,
 };

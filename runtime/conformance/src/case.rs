@@ -13,7 +13,7 @@ use serde::de::Error as _;
 use serde::{Deserialize, Deserializer, Serialize, Serializer};
 use serde_json::Value as Json;
 
-use comline_runtime::comline2::Message;
+use comline_runtime::handshake::comline2::Message;
 
 use crate::comline2::NegotiateIn;
 use crate::{decimal, Type, Value};
@@ -173,7 +173,7 @@ pub enum Op {
     /// input is `{max}`.
     StreamSplit,
     /// A `comline@2` message, `{"type": "hello" | "answer" | "verdict",
-    /// "message": {...}}`, as `comline_runtime::comline2::Message`
+    /// "message": {...}}`, as `comline_runtime::handshake::comline2::Message`
     /// serialises it. Encode and decode.
     Comline2Message,
     /// One `comline@2` negotiation step, `{step, side, params, local,

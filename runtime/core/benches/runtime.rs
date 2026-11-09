@@ -23,7 +23,7 @@ use iai_callgrind::{library_benchmark, library_benchmark_group, main};
 use serde::de::DeserializeOwned;
 use serde::Serialize;
 
-use comline_runtime::comline2::{Comline2, Message, Params};
+use comline_runtime::handshake::comline2::{Comline2, Message, Params};
 use comline_runtime::connection::{Event, State};
 use comline_runtime::contract::{
     Call, ConnectionFraming, Datagram2Framing, Datagram3Framing, DatagramFraming, Envelope, Frame, Framing,

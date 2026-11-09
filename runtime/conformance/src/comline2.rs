@@ -8,7 +8,7 @@
 
 use serde::{Deserialize, Serialize};
 
-use comline_runtime::comline2::*;
+use comline_runtime::handshake::comline2::*;
 use comline_runtime::contract::{HandshakeFrame, Reason, Side, FORMAT_PACKED, FRAMING_DATAGRAM3};
 
 use crate::{Case, Compare, Expect, Hex, Input, Outcome};

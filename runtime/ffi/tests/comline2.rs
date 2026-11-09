@@ -11,7 +11,7 @@ mod common;
 
 use std::ptr;
 
-use comline_runtime::comline2::{
+use comline_runtime::handshake::comline2::{
     Exchange, Hash128, Hello, Message, PackageVersion, Protocol, Release,
 };
 use comline_runtime_ffi::*;

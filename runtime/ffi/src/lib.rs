@@ -70,7 +70,7 @@ use core::ptr;
 use core::slice;
 use std::panic::{self, AssertUnwindSafe};
 
-use comline_runtime::comline2::{
+use comline_runtime::handshake::comline2::{
     Comline2, Exchange, Message, Negotiated, NewerConsumer, Params, ProtocolState, Refusal,
     SameVersionDiffers, Scope, Step,
 };
@@ -631,7 +631,7 @@ enum Awaiting {
 }
 
 /// `comline@2` on a connection: [`Comline2`]'s sans-IO steps, in the order
-/// [`comline_runtime::comline2::Comline2Handshake`] runs them over a transport.
+/// [`comline_runtime::handshake::comline2::Comline2Handshake`] runs them over a transport.
 struct Handshake2 {
     local: Comline2,
     side: Side,
