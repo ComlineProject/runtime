@@ -31,8 +31,22 @@ env:
   CARGO_FUZZ_VERSION: 0.13.2
 
 jobs:
+  # The targets, from runtime/fuzz/Cargo.toml's [[bin]]s: the one list, which
+  # the matrix and the report's `expect` read. Fails when the README's targets
+  # table differs.
+  targets:
+    name: fuzz targets
+    runs-on: ubuntu-latest
+    outputs:
+      list: ${{ steps.targets.outputs.list }}
+    steps:
+      - uses: actions/checkout@v4
+      - id: targets
+        run: echo "list=$(.github/scripts/fuzz-targets.py)" >> "$GITHUB_OUTPUT"
+
   fuzz:
     name: fuzz (${{ matrix.target }})
+    needs: targets
     runs-on: ubuntu-latest
     permissions:
       contents: read
@@ -40,15 +54,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        target:
-          - decode_no_panic
-          - packed_canonical
-          - framing_decode
-          - seed_vs_derive
-          - stream_split
-          - ffi_feed
-          - ffi_vs_core
-          - ffi_comline2
+        target: ${{ fromJSON(needs.targets.outputs.list) }}
     env:
       NIGHTLY: ${{ github.event_name != 'pull_request' }}
       SECONDS_PER_TARGET: ${{ github.event_name == 'pull_request' && 60 || 600 }}
@@ -224,7 +230,7 @@ jobs:
 
   report:
     name: fuzz report
-    needs: [fuzz, properties]
+    needs: [targets, fuzz, properties]
     if: ${{ !cancelled() }}
     runs-on: ubuntu-latest
     permissions:
@@ -244,7 +250,7 @@ jobs:
           mode: combine
           subject: rust
           fragments: ${{ runner.temp }}/stats
-          expect: decode_no_panic packed_canonical framing_decode seed_vs_derive stream_split ffi_feed ffi_vs_core ffi_comline2
+          expect: ${{ join(fromJSON(needs.targets.outputs.list), ' ') }}
           output: runtime/conformance/reports/rust.fuzz.json
           markdown: ${{ runner.temp }}/fuzz.md
       - run: cat "$RUNNER_TEMP/fuzz.md" >> "$GITHUB_STEP_SUMMARY"
