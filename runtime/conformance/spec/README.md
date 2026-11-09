@@ -2,7 +2,7 @@
 
 What every Comline implementation is held to: the wire contract as byte-exact
 conformance vectors, the facts each official encoding states and how they're
-proven, and the formats of these files. A runtime, a third-party encoding or a
+proven, the formats of these files, and the catalog of names they share. A runtime, a third-party encoding or a
 tool implements against this repository, and pins it like any other
 dependency. Comline's own runtimes do the same.
 
@@ -10,14 +10,21 @@ Version: **0.10** ([`VERSION`](VERSION)). While Comline is in its early days
 (0.x), a minor version may change anything, and the change is named in the
 pull request that makes it and in [the changes](#changes) below.
 
-The shared vocabulary of names (encodings, guarantees, facts, features and
-the sets they form) will join this repository too: see
-[the proposal](https://github.com/ComlineProject/docs/pull/162) and
-[core#219](https://github.com/ComlineProject/core/issues/219).
+## The catalog
+
+[`catalog/`](catalog/readme.md) defines once every name that more than one
+program has to agree on: the guarantees, the facts and the values each may
+take, the official encodings with their aliases, and the wire features, with
+the sets they form. The profiles' facts and `features.json` come from it, and
+[`catalog/gen/catalog.json`](catalog/gen/catalog.json) holds it as JSON for
+readers without CUE. See [the proposal](https://github.com/ComlineProject/docs/pull/162)
+and [core#219](https://github.com/ComlineProject/core/issues/219) for what
+will read it.
 
 ## The corpus
 
-- [`features.json`](features.json): the wire features, with stable ids:
+- [`features.json`](features.json), generated from the catalog: the wire
+  features, with stable ids:
   `name-hash`, `handshake`, `envelope`, `framing-datagram`, `framing-datagram2`,
   `framing-datagram3`, `handshake-comline2`, `framing-jsonrpc`, `stream`, `format-json`, `format-msgpack` and
   `format-packed`.
@@ -310,7 +317,8 @@ define. Rust's are in [`runtime/conformance`](https://github.com/ComlineProject/
 about how it encodes, which the version comparison turns into bumps. A format
 states `struct_fields`, `unknown_field`, `missing_optional`, `enum_variants`,
 `unknown_variant`, `integer_width` and `output`; a framing states `calls`,
-`errors` and `payload`.
+`directions`, `errors` and `payload`. The catalog gives each fact's values and
+what they mean ([`catalog/facts.cue`](catalog/facts.cue)).
 
 `payload` says what a framing needs of a payload, and `output` what a format
 writes. A framing takes a format when its `payload` is `opaque` (it carries the
@@ -353,7 +361,8 @@ profile states it until live cross-runtime calls can prove it (see below).
 
 Vendor `features.json`, `vectors/` and `profiles/` at a pinned commit of this
 repository, and `specs/gen/` too if you want their `$schema` to resolve; a
-reader ignores it. `benches/` carries its own schema, so it vendors whole on
+reader ignores it. `catalog/gen/catalog.json` holds the names and their
+meanings. `benches/` carries its own schema, so it vendors whole on
 its own. Keep the pinned revision in your repository and check in CI that your
 copy still matches it. comline-typescript does this in
 `runtime/test/conformance/`.

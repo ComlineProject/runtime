@@ -15,14 +15,19 @@ runtime that vendors `benches/` alone has it.
 | `#Vectors` | `vectors/*.json` | [`vectors.cue`](vectors.cue) |
 
 Values and types (`#Value`, `#Type`) are in [`types.cue`](types.cue), and what
-the others share in [`common.cue`](common.cue). `$schema` is optional in every
+the others share in [`common.cue`](common.cue). Which facts a profile states,
+and their values, come from [the catalog](../catalog/readme.md), which the
+specs import: the CUE module (`cue.mod/`) is the repository's root, so run
+`cue` anywhere inside it. `$schema` is optional in every
 file: a third party's needn't have one.
 
 ## Building and verifying
 
-`./check.sh` regenerates `gen/` and `benches/bench.schema.json` and vets every
-file, and CI runs `./check.sh --check`, which fails instead when a generated
-schema is stale. It needs
+`./check.sh` regenerates `gen/` and `benches/bench.schema.json` from the
+specs, and `../features.json` and `../catalog/gen/catalog.json` from the
+catalog, and vets every file. It also checks that `profiles/` and `vectors/`
+hold exactly what the catalog names. CI runs `./check.sh --check`, which fails
+instead when a generated file is stale. It needs
 [`cue`](https://cuelang.org) at the version `.github/workflows/check.yml`
 pins.
 
