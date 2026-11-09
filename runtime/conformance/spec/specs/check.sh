@@ -1,9 +1,9 @@
 #!/bin/sh
 # Generates gen/*.schema.json (and benches/bench.schema.json, which ships with
 # the benches so a vendored copy of them is whole) from the specs, and
-# features.json and catalog/gen/catalog.json from the catalog, and vets every
-# corpus file against them. `--check` fails instead of writing when a
-# generated file is stale.
+# features.json, catalog/gen/catalog.json and rust/src/catalog.rs from the
+# catalog, and vets every corpus file against them. `--check` fails instead of
+# writing when a generated file is stale.
 set -eu
 cd "$(dirname "$0")"
 
@@ -57,6 +57,20 @@ export_json() { # <expression> <path>
 cue vet -c ../catalog || failed=1
 export_json features_json ../features.json
 export_json catalog ../catalog/gen/catalog.json
+
+# The catalog as Rust data, for the comline-catalog crate (rust/), with the
+# spec's version from VERSION. Tabs become spaces, as Rust is written.
+rust_catalog() {
+    cue export ../catalog -t "version=$(cat ../VERSION)" -e rust_catalog --out text | expand -t 4
+}
+if $check; then
+    if ! rust_catalog | cmp -s - ../rust/src/catalog.rs; then
+        echo "../rust/src/catalog.rs is out of date: run specs/check.sh" >&2
+        failed=1
+    fi
+else
+    rust_catalog > ../rust/src/catalog.rs
+fi
 
 # profiles/ and vectors/ hold exactly what the catalog names.
 same_names() { # <what> <catalog set> <files' names>

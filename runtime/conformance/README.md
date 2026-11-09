@@ -19,6 +19,12 @@ runtime/conformance/vendor-spec.sh --check  # CI: spec/ still matches spec/REV
 
 `runner::SPEC_VERSION` is the vendored `spec/VERSION`.
 
+The specification's catalog of names comes with it, as the `comline-catalog`
+crate in `spec/rust`. This crate depends on it by path, so it's always the
+revision `spec/REV` pins: the profiles' fact names and values are held to it
+(`facts_are_the_catalogs`), and `comline-runtime`'s wire-name constants are
+too, from a dev-dependency (`runtime/core/tests/catalog.rs`).
+
 What stays here is the Rust runtime's own: [`support/rust.json`](support/rust.json)
 and [`reports/rust.json`](reports/rust.json). [`check.sh`](check.sh) vets them
 against the vendored specs.

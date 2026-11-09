@@ -11,6 +11,10 @@ publish = false
 
 [dependencies]
 comline-runtime = { path = "../core" }
+# The specification's catalog, from the vendored copy (spec/rust), so it is
+# always the revision spec/REV pins: the fact names and values the profiles
+# use.
+comline-catalog = { path = "spec/rust" }
 serde = { version = "1.0.190", features = ["derive"] }
 serde_json = "1.0.108"
 

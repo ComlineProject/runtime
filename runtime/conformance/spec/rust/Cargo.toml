@@ -1,0 +1,13 @@
+[package]
+name = "comline-catalog"
+version = "0.10.0"
+edition = "2021"
+rust-version = "1.82"
+license = "MPL-2.0"
+description = "The Comline specification's catalog of shared names, as Rust constants"
+repository = "https://github.com/ComlineProject/specification"
+publish = false
+
+# No dependencies, and no_std: core's IR-only build, the runtime and the
+# language server can all use it.
+[dependencies]
