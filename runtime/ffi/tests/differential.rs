@@ -20,7 +20,7 @@
 //! fuzz workflow runs 100000. Under Miri a few run, to check the boundary
 //! for undefined behaviour on random paths.
 
-#[path = "common/drive.rs"]
+#[path = "common/drive/mod.rs"]
 mod drive;
 
 use std::alloc::{GlobalAlloc, Layout, System};
