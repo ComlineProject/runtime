@@ -44,9 +44,10 @@ generate Vectors gen/vectors.schema.json
 vet Bench $(ls ../benches/*.json | grep -v '/bench\.schema\.json$')
 vet Features ../features.json
 vet Profile ../profiles/*.json
-vet Report ../reports/rust.json
-vet Support ../support/*.json
 vet Vectors ../vectors/*.json
+
+# `reports/` and `support/` live in each runtime's repository, which vets them
+# against its vendored copy of these specs.
 
 # The generated schemas say the same as the specs.
 through() { # <schema path> <file>...
@@ -65,8 +66,6 @@ through() { # <schema path> <file>...
 through ../benches/bench.schema.json ../benches/connection.json ../benches/framings.json ../benches/handshake.json
 through gen/features.schema.json ../features.json
 through gen/profile.schema.json ../profiles/*.json
-through gen/report.schema.json ../reports/rust.json
-through gen/support.schema.json ../support/*.json
 through gen/vectors.schema.json ../vectors/envelope.json ../vectors/framing-*.json ../vectors/handshake*.json \
     ../vectors/name-hash.json ../vectors/stream.json
 

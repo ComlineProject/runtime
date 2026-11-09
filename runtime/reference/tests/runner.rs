@@ -28,7 +28,7 @@ fn the_reference_process_passes_every_case() {
     assert_eq!(version["protocol"], 1);
 
     let corpus =
-        load_corpus(&Path::new(env!("CARGO_MANIFEST_DIR")).join("../conformance")).unwrap();
+        load_corpus(&Path::new(env!("CARGO_MANIFEST_DIR")).join("../conformance/spec")).unwrap();
     let cases: Vec<&Case> = corpus.cases().collect();
     let outcomes = run_all(&cases, &mut reference).unwrap();
     let failed: Vec<_> = outcomes

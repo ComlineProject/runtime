@@ -97,13 +97,13 @@ impl Facts {
 /// The profile of an official encoding, as shipped in `profiles/`.
 fn official(name: &str) -> Option<Profile> {
     let text = match name {
-        FORMAT_JSON => include_str!("../profiles/json@1.json"),
-        FORMAT_MSGPACK => include_str!("../profiles/msgpack@1.json"),
-        FORMAT_PACKED => include_str!("../profiles/packed@1.json"),
-        FRAMING_DATAGRAM => include_str!("../profiles/datagram@1.json"),
-        FRAMING_DATAGRAM2 => include_str!("../profiles/datagram@2.json"),
-        FRAMING_DATAGRAM3 => include_str!("../profiles/datagram@3.json"),
-        FRAMING_JSONRPC => include_str!("../profiles/jsonrpc@1.json"),
+        FORMAT_JSON => include_str!("../spec/profiles/json@1.json"),
+        FORMAT_MSGPACK => include_str!("../spec/profiles/msgpack@1.json"),
+        FORMAT_PACKED => include_str!("../spec/profiles/packed@1.json"),
+        FRAMING_DATAGRAM => include_str!("../spec/profiles/datagram@1.json"),
+        FRAMING_DATAGRAM2 => include_str!("../spec/profiles/datagram@2.json"),
+        FRAMING_DATAGRAM3 => include_str!("../spec/profiles/datagram@3.json"),
+        FRAMING_JSONRPC => include_str!("../spec/profiles/jsonrpc@1.json"),
         _ => return None,
     };
     Some(serde_json::from_str(text).expect("an official profile parses"))

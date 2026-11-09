@@ -27,6 +27,11 @@ fn root() -> PathBuf {
     Path::new(env!("CARGO_MANIFEST_DIR")).to_path_buf()
 }
 
+/// The vendored specification (`vendor-spec.sh`).
+fn spec() -> PathBuf {
+    root().join("spec")
+}
+
 fn bless() -> bool {
     std::env::var_os("CONFORMANCE_BLESS").is_some()
 }
@@ -51,7 +56,7 @@ fn check_file(path: &Path, wanted: &str, problems: &mut Vec<String>) {
 }
 
 fn features() -> Features {
-    read(&root().join("features.json"))
+    read(&spec().join("features.json"))
 }
 
 #[test]
@@ -69,7 +74,7 @@ fn vectors_are_current() {
         if !features.features.iter().any(|f| f.id == vectors.feature) {
             problems.push(format!("vectors for unknown feature `{}`", vectors.feature));
         }
-        let path = root()
+        let path = spec()
             .join("vectors")
             .join(format!("{}.json", vectors.feature));
         check_file(&path, &render(vectors), &mut problems);
@@ -105,7 +110,7 @@ fn rust_support_is_proven() {
         };
         // Blessing rewrites the vectors alongside, so prove against what
         // they're being rewritten to.
-        let path = root().join("vectors").join(format!("{}.json", feature.id));
+        let path = spec().join("vectors").join(format!("{}.json", feature.id));
         let vectors: Vectors = if bless() {
             match reference_cases()
                 .into_iter()
@@ -185,7 +190,7 @@ fn rust_support_is_proven() {
     }
 
     let report = Report {
-        schema: Some("../specs/gen/report.schema.json".into()),
+        schema: Some("../spec/specs/gen/report.schema.json".into()),
         runtime: support.runtime.clone(),
         support: proven,
     };
@@ -225,7 +230,7 @@ fn profiles_are_proven() {
         HANDSHAKE_COMLINE2,
     ];
     for name in names {
-        let path = root().join("profiles").join(format!("{name}.json"));
+        let path = spec().join("profiles").join(format!("{name}.json"));
         if !path.exists() {
             problems.push(format!("`{name}` has no profile"));
             continue;
@@ -264,9 +269,9 @@ fn profiles_are_proven() {
 /// is what the corpus says.
 #[test]
 fn vectors_write_back_as_read() {
-    let corpus = comline_runtime_conformance::runner::load_corpus(&root()).unwrap();
+    let corpus = comline_runtime_conformance::runner::load_corpus(&spec()).unwrap();
     for vectors in &corpus.vectors {
-        let path = root()
+        let path = spec()
             .join("vectors")
             .join(format!("{}.json", vectors.feature));
         assert_eq!(
@@ -284,7 +289,7 @@ fn vectors_write_back_as_read() {
 fn the_runner_passes_the_reference() {
     use comline_runtime_conformance::runner::{load_corpus, run_all, InProcess};
 
-    let corpus = load_corpus(&root()).unwrap();
+    let corpus = load_corpus(&spec()).unwrap();
     let cases: Vec<&Case> = corpus.cases().collect();
     assert!(!cases.is_empty());
     let outcomes = run_all(&cases, &mut InProcess).unwrap();
@@ -306,7 +311,7 @@ fn the_runner_passes_the_reference() {
 /// facts: JSON-RPC takes `json@1` only, and a datagram anything.
 #[test]
 fn official_pairs_follow_their_facts() {
-    let fact = |name: &str| -> Facts { read::<Profile>(&root().join("profiles").join(format!("{name}.json"))).facts };
+    let fact = |name: &str| -> Facts { read::<Profile>(&spec().join("profiles").join(format!("{name}.json"))).facts };
     let payload = |name: &str| match fact(name) {
         Facts::Framing(f) => f.payload.value,
         _ => panic!("`{name}` isn't a framing"),

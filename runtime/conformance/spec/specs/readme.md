@@ -10,8 +10,8 @@ runtime that vendors `benches/` alone has it.
 | `#Bench` | `benches/*.json` | [`bench.cue`](bench.cue) |
 | `#Features` | `features.json` | [`features.cue`](features.cue) |
 | `#Profile` | `profiles/*.json` | [`profile.cue`](profile.cue) |
-| `#Report` | `reports/<runtime>.json` | [`report.cue`](report.cue) |
-| `#Support` | `support/*.json` | [`support.cue`](support.cue) |
+| `#Report` | `reports/<runtime>.json`, in each runtime's repository | [`report.cue`](report.cue) |
+| `#Support` | `support/<runtime>.json`, in each runtime's repository | [`support.cue`](support.cue) |
 | `#Vectors` | `vectors/*.json` | [`vectors.cue`](vectors.cue) |
 
 Values and types (`#Value`, `#Type`) are in [`types.cue`](types.cue), and what
@@ -23,7 +23,7 @@ file: a third party's needn't have one.
 `./check.sh` regenerates `gen/` and `benches/bench.schema.json` and vets every
 file, and CI runs `./check.sh --check`, which fails instead when a generated
 schema is stale. It needs
-[`cue`](https://cuelang.org) at the version `.github/workflows/build_test.yml`
+[`cue`](https://cuelang.org) at the version `.github/workflows/check.yml`
 pins.
 
 By hand, from this directory, for one schema and one file (`json:` because `@`

@@ -12,7 +12,7 @@ each with `cargo bench -p <package> --bench <bench> -- --save-summary=json`
 `summary.json` under `<home>/<package>/<bench>/`, where `<home>` is
 iai-callgrind's output directory (`target/iai` unless moved). Each benchmark
 is named by an id unique across targets: the runtime's (`runtime`) by its id
-from `runtime/conformance/benches/README.md`, and every other target's
+from `runtime/conformance/spec/benches/README.md`, and every other target's
 qualified by the target's name (`ffi/...`).
 
     bench-report.py --targets

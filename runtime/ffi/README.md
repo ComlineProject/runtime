@@ -16,7 +16,7 @@ and dispatch stay in each host.
 
 ## Proving the boundary
 
-The conformance vectors (`runtime/conformance/vectors`) are replayed through
+The conformance vectors (`runtime/conformance/spec/vectors`) are replayed through
 the ABI from three hosts, on the same cases with the same checks. Each
 prints its count per file and fails on any mismatch or a case count that
 differs from the vectors'.
