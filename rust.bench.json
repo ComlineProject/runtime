@@ -1,6 +1,6 @@
 {
   "runtime": "rust",
-  "commit": "5733d9c8ba240a5e3dc0990b9c23f357edfef9b8",
+  "commit": "800f1431d45e32575f015c6e9542690a5c0a8cda",
   "toolchain": "rustc 1.98.0 (88d9e12ae 2026-08-18)",
   "metric": "instructions",
   "benches": {
