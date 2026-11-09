@@ -63,10 +63,25 @@ jobs:
       CUE_VERSION: v0.17.1
     steps:
       - uses: actions/checkout@v4
+      # The release download fails now and then (GitHub answering 504), so
+      # cue is cached per version, and fetched with retries only on a miss.
+      - name: Cache cue
+        id: cue-cache
+        uses: actions/cache@v4
+        with:
+          path: ~/.local/cue
+          key: cue-${{ env.CUE_VERSION }}-linux-amd64
       - name: Install cue
+        if: steps.cue-cache.outputs.cache-hit != 'true'
+        # To a file, not piped into tar: a retry would append to a half-read
+        # stream.
         run: |
-          curl -fsSL "https://github.com/cue-lang/cue/releases/download/$CUE_VERSION/cue_${CUE_VERSION}_linux_amd64.tar.gz" \
-            | sudo tar -xz -C /usr/local/bin cue
+          mkdir -p ~/.local/cue
+          curl -fsSL --retry 5 --retry-all-errors --retry-delay 5 -o cue.tar.gz \
+            "https://github.com/cue-lang/cue/releases/download/$CUE_VERSION/cue_${CUE_VERSION}_linux_amd64.tar.gz"
+          tar -xzf cue.tar.gz -C ~/.local/cue cue
+          rm cue.tar.gz
+      - run: echo "$HOME/.local/cue" >> "$GITHUB_PATH"
       - run: runtime/conformance/specs/check.sh --check
 
   # `comline-runtime` without `std`: the `alloc` tier, and `alloc` plus the
