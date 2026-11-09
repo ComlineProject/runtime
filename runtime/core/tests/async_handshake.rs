@@ -7,9 +7,8 @@
 
 use std::thread;
 
-use comline_runtime::async_connection::{
-    async_duplex, Answer, AsyncConnection, AsyncDispatch, AsyncPeer, AsyncTransport,
-};
+use comline_runtime::connection::{Answer, AsyncConnection, AsyncDispatch, AsyncPeer};
+use comline_runtime::transport::{async_duplex, AsyncTransport};
 use comline_runtime::contract::{
     Call, ConnectionFraming, Datagram2Framing, Envelope, Kind, RuntimeError, WireFormat, HANDSHAKE_COMLINE,
     HANDSHAKE_NONE,

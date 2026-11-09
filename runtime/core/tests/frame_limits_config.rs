@@ -214,10 +214,10 @@ fn a_connection_checks_against_its_transports_configured_limit() {
 mod tokio_tcp {
     use super::*;
 
-    use comline_runtime::async_connection::{
-        async_duplex, tokio as rt_tokio, Answer, AsyncConnection, AsyncDispatch, AsyncPeer,
-        AsyncTransport, OwnedEnvelope,
+    use comline_runtime::connection::{
+        Answer, AsyncConnection, AsyncDispatch, AsyncPeer, OwnedEnvelope,
     };
+    use comline_runtime::transport::{async_duplex, tokio as rt_tokio, AsyncTransport};
     use futures_util::{SinkExt, StreamExt};
 
     struct AsyncEcho;

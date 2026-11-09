@@ -1,7 +1,7 @@
 use alloc::vec::Vec;
 
 #[cfg(feature = "async")]
-use crate::async_connection::AsyncTransport;
+use crate::transport::AsyncTransport;
 use crate::contract::{RuntimeError, Side, HANDSHAKE_COMLINE2};
 #[cfg(feature = "async")]
 use crate::handshake::AsyncHandshake;

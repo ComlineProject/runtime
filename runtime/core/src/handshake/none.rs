@@ -2,7 +2,7 @@
 use super::AsyncHandshake;
 use super::{Facts, Handshake};
 #[cfg(feature = "async")]
-use crate::async_connection::AsyncTransport;
+use crate::transport::AsyncTransport;
 use crate::contract::{RuntimeError, HANDSHAKE_NONE};
 use crate::transport::Transport;
 

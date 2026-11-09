@@ -32,9 +32,6 @@ pub mod framing;
 pub mod client;
 #[cfg(feature = "alloc")]
 pub mod connection;
-// The async driver for connections, on any executor.
-#[cfg(feature = "async")]
-pub mod async_connection;
 #[cfg(feature = "alloc")]
 pub mod handshake;
 #[cfg(feature = "alloc")]
