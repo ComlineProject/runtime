@@ -6,6 +6,7 @@
 //! encodes, which the version comparison turns into bumps. Each fact names
 //! the vector cases that prove it.
 
+use comline_catalog::fact;
 use serde::{Deserialize, Serialize};
 
 use comline_runtime::contract::{
@@ -168,14 +169,21 @@ pub struct Stated<T> {
     pub proven_by: Vec<String>,
 }
 
+/// Each fact's values, typed. The proving logic matches on them, so they're
+/// written out; `FACT` is the fact's catalog id, and a test holds `ALL` to
+/// the catalog's values for it, in order.
 macro_rules! fact_values {
-    ($($name:ident { $($variant:ident = $text:literal),+ $(,)? })+) => {$(
+    ($($name:ident = $fact:path { $($variant:ident = $text:literal),+ $(,)? })+) => {$(
         #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
         pub enum $name {
             $(#[serde(rename = $text)] $variant),+
         }
 
         impl $name {
+            /// The fact these are values of.
+            pub const FACT: &'static str = $fact;
+            pub const ALL: &'static [Self] = &[$(Self::$variant),+];
+
             pub fn as_str(self) -> &'static str {
                 match self {
                     $(Self::$variant => $text),+
@@ -186,17 +194,17 @@ macro_rules! fact_values {
 }
 
 fact_values! {
-    StructFields { ByPosition = "by_position", ByName = "by_name" }
-    UnknownField { Rejected = "rejected", Ignored = "ignored" }
-    MissingOptional { Rejected = "rejected", Absent = "absent" }
-    EnumVariants { ByName = "by_name", ByIndex = "by_index" }
-    UnknownVariant { Rejected = "rejected", Tolerated = "tolerated" }
-    IntegerWidth { ByValue = "by_value", Exact = "exact" }
-    Calls { ByIndex = "by_index", ByName = "by_name", ById = "by_id" }
-    Directions { Both = "both", One = "one" }
-    Errors { ByOrdinal = "by_ordinal", ByName = "by_name" }
-    Output { Bytes = "bytes", Json = "json" }
-    Payload { Opaque = "opaque", Json = "json" }
+    StructFields = fact::STRUCT_FIELDS { ByPosition = "by_position", ByName = "by_name" }
+    UnknownField = fact::UNKNOWN_FIELD { Rejected = "rejected", Ignored = "ignored" }
+    MissingOptional = fact::MISSING_OPTIONAL { Rejected = "rejected", Absent = "absent" }
+    EnumVariants = fact::ENUM_VARIANTS { ByName = "by_name", ByIndex = "by_index" }
+    UnknownVariant = fact::UNKNOWN_VARIANT { Rejected = "rejected", Tolerated = "tolerated" }
+    IntegerWidth = fact::INTEGER_WIDTH { ByValue = "by_value", Exact = "exact" }
+    Calls = fact::CALLS { ByIndex = "by_index", ByName = "by_name", ById = "by_id" }
+    Directions = fact::DIRECTIONS { Both = "both", One = "one" }
+    Errors = fact::ERRORS { ByOrdinal = "by_ordinal", ByName = "by_name" }
+    Output = fact::OUTPUT { Bytes = "bytes", Json = "json" }
+    Payload = fact::PAYLOAD { Opaque = "opaque", Json = "json" }
 }
 
 impl Payload {
@@ -247,21 +255,22 @@ pub enum Fact {
 }
 
 impl Fact {
+    /// Its catalog id.
     pub fn name(self) -> &'static str {
         match self {
-            Fact::StructFields(_) => "struct_fields",
-            Fact::UnknownField(_) => "unknown_field",
-            Fact::MissingOptional(_) => "missing_optional",
-            Fact::EnumVariants(_) => "enum_variants",
-            Fact::UnknownVariant(_) => "unknown_variant",
-            Fact::IntegerWidth(_) => "integer_width",
-            Fact::Calls(_) => "calls",
-            Fact::Directions(_) => "directions",
-            Fact::Errors(_) => "errors",
-            Fact::Output(_) => "output",
-            Fact::Payload(_) => "payload",
-            Fact::SchemaAgreement(_) => "schema_agreement",
-            Fact::EncodingAgreement(_) => "encoding_agreement",
+            Fact::StructFields(_) => StructFields::FACT,
+            Fact::UnknownField(_) => UnknownField::FACT,
+            Fact::MissingOptional(_) => MissingOptional::FACT,
+            Fact::EnumVariants(_) => EnumVariants::FACT,
+            Fact::UnknownVariant(_) => UnknownVariant::FACT,
+            Fact::IntegerWidth(_) => IntegerWidth::FACT,
+            Fact::Calls(_) => Calls::FACT,
+            Fact::Directions(_) => Directions::FACT,
+            Fact::Errors(_) => Errors::FACT,
+            Fact::Output(_) => Output::FACT,
+            Fact::Payload(_) => Payload::FACT,
+            Fact::SchemaAgreement(_) => fact::SCHEMA_AGREEMENT,
+            Fact::EncodingAgreement(_) => fact::ENCODING_AGREEMENT,
         }
     }
 
@@ -511,6 +520,58 @@ mod tests {
 
     fn profile(kind: &str, facts: serde_json::Value) -> Result<Profile, serde_json::Error> {
         serde_json::from_value(json!({ "name": "x@1", "kind": kind, "facts": facts }))
+    }
+
+    /// Every typed fact is one of the catalog's, with exactly the catalog's
+    /// values in its order, and each kind's facts are the catalog's for that
+    /// kind: the profiles' facts are the specification's.
+    #[test]
+    fn facts_are_the_catalogs() {
+        fn values<T: Copy>(all: &[T], as_str: fn(T) -> &'static str) -> Vec<&'static str> {
+            all.iter().map(|v| as_str(*v)).collect()
+        }
+        let typed = [
+            (StructFields::FACT, values(StructFields::ALL, StructFields::as_str)),
+            (UnknownField::FACT, values(UnknownField::ALL, UnknownField::as_str)),
+            (MissingOptional::FACT, values(MissingOptional::ALL, MissingOptional::as_str)),
+            (EnumVariants::FACT, values(EnumVariants::ALL, EnumVariants::as_str)),
+            (UnknownVariant::FACT, values(UnknownVariant::ALL, UnknownVariant::as_str)),
+            (IntegerWidth::FACT, values(IntegerWidth::ALL, IntegerWidth::as_str)),
+            (Calls::FACT, values(Calls::ALL, Calls::as_str)),
+            (Directions::FACT, values(Directions::ALL, Directions::as_str)),
+            (Errors::FACT, values(Errors::ALL, Errors::as_str)),
+            (Output::FACT, values(Output::ALL, Output::as_str)),
+            (Payload::FACT, values(Payload::ALL, Payload::as_str)),
+            (fact::SCHEMA_AGREEMENT, vec!["true", "false"]),
+            (fact::ENCODING_AGREEMENT, vec!["true", "false"]),
+        ];
+        for (id, ours) in &typed {
+            let catalog = comline_catalog::fact(id).unwrap_or_else(|| panic!("`{id}` isn't in the catalog"));
+            let theirs: Vec<&str> = catalog.values.iter().map(|v| v.id).collect();
+            assert_eq!(ours, &theirs, "`{id}`'s values");
+        }
+        let mut ours: Vec<&str> = typed.iter().map(|(id, _)| *id).collect();
+        let mut theirs: Vec<&str> = comline_catalog::FACTS.iter().map(|f| f.id).collect();
+        ours.sort_unstable();
+        theirs.sort_unstable();
+        assert_eq!(ours, theirs, "the typed facts are the catalog's");
+
+        // Each official profile states its kind's facts, by these names.
+        for name in comline_catalog::sets::PROFILED {
+            let path = format!("{}/spec/profiles/{name}.json", env!("CARGO_MANIFEST_DIR"));
+            let text = std::fs::read_to_string(&path).unwrap_or_else(|e| panic!("{path}: {e}"));
+            let profile: Profile = serde_json::from_str(&text).unwrap_or_else(|e| panic!("{path}: {e}"));
+            let kind = match profile.kind() {
+                ProfileKind::Format => comline_catalog::Kind::Format,
+                ProfileKind::Framing => comline_catalog::Kind::Framing,
+                ProfileKind::Handshake => comline_catalog::Kind::Handshake,
+            };
+            let mut stated: Vec<&str> = profile.facts.stated().iter().map(|(f, _)| f.name()).collect();
+            let mut expected: Vec<&str> = comline_catalog::facts_of(kind).map(|f| f.id).collect();
+            stated.sort_unstable();
+            expected.sort_unstable();
+            assert_eq!(stated, expected, "{name}");
+        }
     }
 
     #[test]

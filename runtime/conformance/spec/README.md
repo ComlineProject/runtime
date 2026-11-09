@@ -17,7 +17,8 @@ program has to agree on: the guarantees, the facts and the values each may
 take, the official encodings with their aliases, and the wire features, with
 the sets they form. The profiles' facts and `features.json` come from it, and
 [`catalog/gen/catalog.json`](catalog/gen/catalog.json) holds it as JSON for
-readers without CUE. See [the proposal](https://github.com/ComlineProject/docs/pull/162)
+readers without CUE, and the `comline-catalog` crate ([`rust/`](rust)) as
+Rust constants. See [the proposal](https://github.com/ComlineProject/docs/pull/162)
 and [core#219](https://github.com/ComlineProject/core/issues/219) for what
 will read it.
 

@@ -116,6 +116,10 @@ dependencies = [
 ]
 
 [[package]]
+name = "comline-catalog"
+version = "0.10.0"
+
+[[package]]
 name = "comline-reference"
 version = "0.1.0"
 dependencies = [
@@ -131,6 +135,7 @@ version = "0.1.0"
 dependencies = [
  "bytemuck",
  "bytes",
+ "comline-catalog",
  "futures-channel",
  "futures-util",
  "iai-callgrind",
@@ -147,6 +152,7 @@ dependencies = [
 name = "comline-runtime-conformance"
 version = "0.1.0"
 dependencies = [
+ "comline-catalog",
  "comline-runtime",
  "proptest",
  "serde",
