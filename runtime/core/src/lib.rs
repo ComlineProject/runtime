@@ -42,7 +42,3 @@ pub mod transport;
 // What a generated `validate()` reports, and the `Validate` trait it implements.
 #[cfg(feature = "alloc")]
 pub mod validation;
-
-// The Comline-package dynamic-library ABI.
-#[cfg(feature = "std")]
-pub mod package_abi;
