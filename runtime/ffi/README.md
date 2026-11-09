@@ -5,7 +5,9 @@ the envelopes, the connection framings (`datagram@2`, `datagram@3`,
 `jsonrpc@1`), connection state and frame limits, for every language that isn't Rust. Codecs, transports, async
 and dispatch stay in each host.
 
-- `src/lib.rs`: the ABI, and the rules every function keeps.
+- `src/`: the ABI. `lib.rs` has the rules every function keeps, and one
+  module per section of the header (`status`, `structs`, `connection`, …,
+  `free`), declared in the header's order.
 - `include/comline.h`: generated from `src/` by cbindgen 0.29.2
   (`cbindgen.toml`) and checked in. CI fails when it drifts:
   `cbindgen --config cbindgen.toml --output include/comline.h`.
@@ -139,7 +141,7 @@ such as a `TypeError` for a bad argument, are thrown and poison nothing.
 
 **One crossing per call.** The glue keeps where the `in` and `out` regions
 are and how big, and reserves again only when a call needs more. That
-rests on the module's promise (`mod wasm` in `src/lib.rs`): a region moves,
+rests on the module's promise (`src/wasm.rs`): a region moves,
 grows or is freed only inside its own reserve call, and only when asked
 for more than it holds. Memory may still grow in any call, which detaches
 the glue's views but moves nothing, so the glue takes them again when
