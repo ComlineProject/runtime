@@ -48,7 +48,7 @@
 //!   + a `u16`, 4 raw + a `u64`.
 //! - **Theirs:** a byte `% 4`: 0–2 received + a byte, 3 raw + a `u64`.
 
-#[path = "../../ffi/tests/common/drive.rs"]
+#[path = "../../ffi/tests/common/drive/mod.rs"]
 pub mod drive;
 
 use std::alloc::{GlobalAlloc, Layout, System};
