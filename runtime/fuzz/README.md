@@ -127,8 +127,9 @@ Runs elsewhere, pull requests included, do a dry run of that publish.
 
 ## The report
 
-`rust.fuzz.json`, written by
-[`.github/scripts/fuzz-report.py`](../../.github/scripts/fuzz-report.py):
+`rust.fuzz.json`, written by the Observatory's shared
+[`report-fuzz`](https://github.com/ComlineProject/observatory/tree/main/.github/actions/report-fuzz)
+action (its `fuzz` kind):
 
 ```json
 {
