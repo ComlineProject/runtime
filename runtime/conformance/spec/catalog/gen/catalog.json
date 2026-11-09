@@ -1,0 +1,458 @@
+{
+    "guarantees": {
+        "schema_agreement": {
+            "status": "stable",
+            "title": "schema agreement",
+            "description": "Both ends were built from compatible schemas, which the handshake checks.",
+            "comes_from": "handshake"
+        },
+        "encoding_agreement": {
+            "status": "stable",
+            "title": "encoding agreement",
+            "description": "Both ends use the same format and framing, which the handshake checks.",
+            "comes_from": "handshake"
+        },
+        "encoding_conformance": {
+            "status": "stable",
+            "title": "encoding conformance",
+            "description": "An implementation encodes what its name promises, proven by conformance vectors.",
+            "comes_from": "encoding"
+        },
+        "version_honesty": {
+            "status": "stable",
+            "title": "version honesty",
+            "description": "A version bump says what the change breaks, as the version comparison works it out.",
+            "comes_from": "policy"
+        },
+        "bounded_size": {
+            "status": "stable",
+            "title": "bounded size",
+            "description": "Every value has a maximum size, so a decoder refuses an oversized one before allocating it.",
+            "comes_from": "type"
+        }
+    },
+    "facts": {
+        "struct_fields": {
+            "applies_to": "format",
+            "status": "stable",
+            "title": "struct fields",
+            "description": "How a struct's fields are written.",
+            "values": {
+                "by_position": "back to back, in declaration order",
+                "by_name": "each keyed by its name"
+            }
+        },
+        "unknown_field": {
+            "applies_to": "format",
+            "status": "stable",
+            "title": "unknown field",
+            "description": "What a reader does with a field its type doesn't have.",
+            "values": {
+                "rejected": "refuses the value",
+                "ignored": "skips the field"
+            }
+        },
+        "missing_optional": {
+            "applies_to": "format",
+            "status": "stable",
+            "title": "missing optional",
+            "description": "What a reader does when an optional field isn't there.",
+            "values": {
+                "rejected": "refuses the value",
+                "absent": "reads it as absent"
+            }
+        },
+        "enum_variants": {
+            "applies_to": "format",
+            "status": "stable",
+            "title": "enum variants",
+            "description": "How an enum's variant is written.",
+            "values": {
+                "by_name": "by its name",
+                "by_index": "by its position in the declaration"
+            }
+        },
+        "unknown_variant": {
+            "applies_to": "format",
+            "status": "stable",
+            "title": "unknown variant",
+            "description": "What a reader does with a variant its type doesn't have.",
+            "values": {
+                "rejected": "refuses the value",
+                "tolerated": "reads it without failing"
+            }
+        },
+        "integer_width": {
+            "applies_to": "format",
+            "status": "stable",
+            "title": "integer width",
+            "description": "Whether an integer reads into another width.",
+            "values": {
+                "by_value": "any width the value fits",
+                "exact": "only the width it was written as"
+            }
+        },
+        "output": {
+            "applies_to": "format",
+            "status": "stable",
+            "title": "output",
+            "description": "The grammar a format writes in, which a framing's `payload` must take.",
+            "since": "0.7",
+            "values": {
+                "bytes": "bytes in no grammar a framing reads",
+                "json": "JSON text"
+            }
+        },
+        "calls": {
+            "applies_to": "framing",
+            "status": "stable",
+            "title": "calls",
+            "description": "How a request names the function it calls.",
+            "values": {
+                "by_index": "by the function's position",
+                "by_name": "by the function's name",
+                "by_id": "by the protocol's and function's wire numbers"
+            }
+        },
+        "directions": {
+            "applies_to": "framing",
+            "status": "stable",
+            "title": "directions",
+            "description": "Whether a frame says if it's a request or a response.",
+            "since": "0.10",
+            "values": {
+                "both": "it does, so calls can go both ways on one transport",
+                "one": "it doesn't"
+            }
+        },
+        "errors": {
+            "applies_to": "framing",
+            "status": "stable",
+            "title": "errors",
+            "description": "How an error response names its error.",
+            "values": {
+                "by_ordinal": "by its position in the declaration",
+                "by_name": "by its name"
+            }
+        },
+        "payload": {
+            "applies_to": "framing",
+            "status": "stable",
+            "title": "payload",
+            "description": "What a framing needs of a payload, which a format's `output` must fit.",
+            "since": "0.7",
+            "values": {
+                "opaque": "any bytes, carried as they are",
+                "json": "JSON text, written into the frame"
+            }
+        },
+        "schema_agreement": {
+            "applies_to": "handshake",
+            "status": "stable",
+            "title": "schema agreement",
+            "description": "Whether the handshake checks both ends were built from compatible schemas.",
+            "since": "0.2",
+            "establishes": "schema_agreement",
+            "values": {
+                "true": "it does, and refuses a peer that wasn't",
+                "false": "it doesn't"
+            }
+        },
+        "encoding_agreement": {
+            "applies_to": "handshake",
+            "status": "stable",
+            "title": "encoding agreement",
+            "description": "Whether the handshake checks both ends use the same format and framing.",
+            "since": "0.2",
+            "establishes": "encoding_agreement",
+            "values": {
+                "true": "it does, and refuses a peer that doesn't",
+                "false": "it doesn't"
+            }
+        }
+    },
+    "encodings": {
+        "packed@1": {
+            "kind": "format",
+            "status": "stable",
+            "title": "packed",
+            "description": "Fixed-width fields back to back, varint lengths, no tags.",
+            "aliases": [],
+            "profile": true,
+            "feature": "format-packed",
+            "tags": [
+                "official"
+            ]
+        },
+        "json@1": {
+            "kind": "format",
+            "status": "stable",
+            "title": "JSON",
+            "description": "Values as UTF-8 JSON: a struct as an object.",
+            "aliases": [],
+            "profile": true,
+            "feature": "format-json",
+            "tags": [
+                "official"
+            ]
+        },
+        "msgpack@1": {
+            "kind": "format",
+            "status": "stable",
+            "title": "MessagePack",
+            "description": "Values as MessagePack: a struct as an array.",
+            "aliases": [],
+            "profile": true,
+            "feature": "format-msgpack",
+            "tags": [
+                "official"
+            ]
+        },
+        "jsonrpc@1": {
+            "kind": "framing",
+            "status": "stable",
+            "title": "JSON-RPC",
+            "description": "JSON-RPC 2.0 requests and responses.",
+            "aliases": [
+                "jsonrpc",
+                "json-rpc",
+                "jsonrpc-2.0"
+            ],
+            "frozen_as": "jsonrpc",
+            "profile": true,
+            "feature": "framing-jsonrpc",
+            "tags": [
+                "official"
+            ]
+        },
+        "datagram@1": {
+            "kind": "framing",
+            "status": "stable",
+            "title": "datagram",
+            "description": "Comline's own binary framing of requests and responses.",
+            "aliases": [
+                "datagram",
+                "comline.datagram"
+            ],
+            "frozen_as": "datagram",
+            "profile": true,
+            "feature": "framing-datagram",
+            "tags": [
+                "official"
+            ]
+        },
+        "datagram@2": {
+            "kind": "framing",
+            "status": "stable",
+            "title": "datagram@2",
+            "description": "The datagram framing with a request/reply kind and a protocol number, for calls both ways and several protocols on one connection.",
+            "aliases": [],
+            "profile": true,
+            "feature": "framing-datagram2",
+            "tags": [
+                "official"
+            ]
+        },
+        "datagram@3": {
+            "kind": "framing",
+            "status": "stable",
+            "title": "datagram@3",
+            "description": "The datagram framing that addresses a call by its protocol's and function's wire numbers.",
+            "aliases": [],
+            "profile": true,
+            "feature": "framing-datagram3",
+            "since": "0.4",
+            "tags": [
+                "official"
+            ]
+        },
+        "comline@1": {
+            "kind": "handshake",
+            "status": "stable",
+            "title": "comline@1",
+            "description": "The fixed frame each end sends first: magic, version, IR hash, wire format, framing and capabilities.",
+            "aliases": [],
+            "profile": true,
+            "feature": "handshake",
+            "tags": [
+                "official"
+            ]
+        },
+        "comline@2": {
+            "kind": "handshake",
+            "status": "stable",
+            "title": "comline@2",
+            "description": "The compatibility-checking handshake: lines, shape hashes and wire numbers instead of an exact IR match.",
+            "aliases": [],
+            "profile": true,
+            "feature": "handshake-comline2",
+            "since": "0.4",
+            "tags": [
+                "official"
+            ]
+        },
+        "none": {
+            "kind": "handshake",
+            "status": "stable",
+            "title": "no handshake",
+            "description": "No frame and nothing checked. Unversioned, since there is nothing to evolve; it establishes neither agreement.",
+            "aliases": [],
+            "profile": false,
+            "tags": [
+                "official"
+            ]
+        }
+    },
+    "features": {
+        "name-hash": {
+            "status": "stable",
+            "title": "name hash",
+            "description": "FNV-1a 64 of a wire format or framing name, as the handshake carries it"
+        },
+        "handshake": {
+            "status": "stable",
+            "title": "handshake",
+            "description": "the fixed 31-byte frame each side sends first: magic, version, IR hash, wire format, framing, capabilities"
+        },
+        "envelope": {
+            "status": "stable",
+            "title": "envelope",
+            "description": "a response's outcome: ok with a payload, an error ordinal with its body, or a provider fault"
+        },
+        "framing-datagram": {
+            "status": "stable",
+            "title": "datagram framing",
+            "description": "Comline's own binary framing of requests and responses"
+        },
+        "framing-datagram2": {
+            "status": "stable",
+            "title": "datagram@2 framing",
+            "description": "the datagram framing with a request/reply kind and a protocol number, for calls in both directions and several protocols on one connection"
+        },
+        "framing-datagram3": {
+            "status": "stable",
+            "title": "datagram@3 framing",
+            "description": "the datagram framing that addresses a call by its protocol's and function's wire numbers, both varints (calls = by_id); replies as datagram@2",
+            "since": "0.4"
+        },
+        "handshake-comline2": {
+            "status": "stable",
+            "title": "comline@2 handshake",
+            "description": "the compatibility-checking handshake: its hello, answer and verdict messages, and its negotiation steps under every parameter, with every refusal reason",
+            "since": "0.4"
+        },
+        "stream": {
+            "status": "stable",
+            "title": "stream framing",
+            "description": "frames on a byte stream (TCP, a pipe): each behind a u32 little-endian length prefix, refused over the limit, by default 16 MiB (16777216 bytes) in every runtime"
+        },
+        "framing-jsonrpc": {
+            "status": "stable",
+            "title": "JSON-RPC framing",
+            "description": "JSON-RPC 2.0 requests and responses, a fault as -32603"
+        },
+        "format-json": {
+            "status": "stable",
+            "title": "JSON wire format",
+            "description": "values as UTF-8 JSON: a struct as an object"
+        },
+        "format-msgpack": {
+            "status": "stable",
+            "title": "MessagePack wire format",
+            "description": "values as MessagePack: a struct as an array"
+        },
+        "format-packed": {
+            "status": "stable",
+            "title": "packed wire format",
+            "description": "values as packed@1: fixed-width fields back to back, varint lengths, no tags"
+        }
+    },
+    "sets": {
+        "guarantees": [
+            "schema_agreement",
+            "encoding_agreement",
+            "encoding_conformance",
+            "version_honesty",
+            "bounded_size"
+        ],
+        "formats": [
+            "packed@1",
+            "json@1",
+            "msgpack@1"
+        ],
+        "framings": [
+            "jsonrpc@1",
+            "datagram@1",
+            "datagram@2",
+            "datagram@3"
+        ],
+        "handshakes": [
+            "comline@1",
+            "comline@2",
+            "none"
+        ],
+        "official": [
+            "packed@1",
+            "json@1",
+            "msgpack@1",
+            "jsonrpc@1",
+            "datagram@1",
+            "datagram@2",
+            "datagram@3",
+            "comline@1",
+            "comline@2",
+            "none"
+        ],
+        "profiled": [
+            "packed@1",
+            "json@1",
+            "msgpack@1",
+            "jsonrpc@1",
+            "datagram@1",
+            "datagram@2",
+            "datagram@3",
+            "comline@1",
+            "comline@2"
+        ],
+        "format_facts": [
+            "struct_fields",
+            "unknown_field",
+            "missing_optional",
+            "enum_variants",
+            "unknown_variant",
+            "integer_width",
+            "output"
+        ],
+        "framing_facts": [
+            "calls",
+            "directions",
+            "errors",
+            "payload"
+        ],
+        "handshake_facts": [
+            "schema_agreement",
+            "encoding_agreement"
+        ],
+        "features": [
+            "name-hash",
+            "handshake",
+            "envelope",
+            "framing-datagram",
+            "framing-datagram2",
+            "framing-datagram3",
+            "handshake-comline2",
+            "stream",
+            "framing-jsonrpc",
+            "format-json",
+            "format-msgpack",
+            "format-packed"
+        ],
+        "aliases": {
+            "jsonrpc": "jsonrpc@1",
+            "json-rpc": "jsonrpc@1",
+            "jsonrpc-2.0": "jsonrpc@1",
+            "datagram": "datagram@1",
+            "comline.datagram": "datagram@1"
+        }
+    }
+}

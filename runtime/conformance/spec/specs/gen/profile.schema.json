@@ -373,7 +373,7 @@
             "minItems": 1
         }
     },
-    "description": "`profiles/<name>.json`: facts about how an encoding encodes, each naming\nthe vector cases that prove it.",
+    "description": "`profiles/<name>.json`: facts about how an encoding encodes, each naming\nthe vector cases that prove it. Which facts each kind states, and the\nvalues each may take, are the catalog's (`catalog/facts.cue`).",
     "anyOf": [
         {
             "$ref": "#/$defs/FormatProfile"

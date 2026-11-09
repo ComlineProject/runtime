@@ -1,7 +1,10 @@
 package conformance
 
+import "github.com/comlineproject/specification/catalog"
+
 // `profiles/<name>.json`: facts about how an encoding encodes, each naming
-// the vector cases that prove it.
+// the vector cases that prove it. Which facts each kind states, and the
+// values each may take, are the catalog's (`catalog/facts.cue`).
 #Profile: #FormatProfile | #FramingProfile | #HandshakeProfile
 
 // A format states every fact.
@@ -10,13 +13,9 @@ package conformance
 	name!:    #ProfileName
 	kind!:    "format"
 	facts!: close({
-		struct_fields!:    close({value!: "by_position" | "by_name", proven_by!: #ProvenBy})
-		unknown_field!:    close({value!: "rejected" | "ignored", proven_by!: #ProvenBy})
-		missing_optional!: close({value!: "rejected" | "absent", proven_by!: #ProvenBy})
-		enum_variants!:    close({value!: "by_name" | "by_index", proven_by!: #ProvenBy})
-		unknown_variant!:  close({value!: "rejected" | "tolerated", proven_by!: #ProvenBy})
-		integer_width!:    close({value!: "by_value" | "exact", proven_by!: #ProvenBy})
-		output!:           close({value!: "bytes" | "json", proven_by!: #ProvenBy})
+		for id, fact in catalog.facts if fact.applies_to == "format" {
+			(id)!: close({value!: or([for v, _ in fact.values {v}]), proven_by!: #ProvenBy})
+		}
 	})
 })
 
@@ -26,10 +25,9 @@ package conformance
 	name!:    #ProfileName
 	kind!:    "framing"
 	facts!: close({
-		calls!:  close({value!: "by_index" | "by_name" | "by_id", proven_by!: #ProvenBy})
-		directions!: close({value!: "both" | "one", proven_by!: #ProvenBy})
-		errors!: close({value!: "by_ordinal" | "by_name", proven_by!: #ProvenBy})
-		payload!: close({value!: "opaque" | "json", proven_by!: #ProvenBy})
+		for id, fact in catalog.facts if fact.applies_to == "framing" {
+			(id)!: close({value!: or([for v, _ in fact.values {v}]), proven_by!: #ProvenBy})
+		}
 	})
 })
 
@@ -39,8 +37,9 @@ package conformance
 	name!:    #ProfileName
 	kind!:    "handshake"
 	facts!: close({
-		schema_agreement?:   #Agreement
-		encoding_agreement?: #Agreement
+		for id, fact in catalog.facts if fact.applies_to == "handshake" {
+			(id)?: #Agreement
+		}
 	})
 })
 

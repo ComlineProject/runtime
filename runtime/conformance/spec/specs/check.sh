@@ -1,8 +1,9 @@
 #!/bin/sh
 # Generates gen/*.schema.json (and benches/bench.schema.json, which ships with
-# the benches so a vendored copy of them is whole) from the specs and vets
-# every corpus file against them. `--check` fails instead of writing when the
-# generated schemas are stale.
+# the benches so a vendored copy of them is whole) from the specs, and
+# features.json and catalog/gen/catalog.json from the catalog, and vets every
+# corpus file against them. `--check` fails instead of writing when a
+# generated file is stale.
 set -eu
 cd "$(dirname "$0")"
 
@@ -39,6 +40,46 @@ generate Profile gen/profile.schema.json
 generate Report gen/report.schema.json
 generate Support gen/support.schema.json
 generate Vectors gen/vectors.schema.json
+
+# What the catalog exports: features.json, and the whole catalog as JSON for
+# readers without CUE.
+export_json() { # <expression> <path>
+    if $check; then
+        if ! cue export ../catalog -e "$1" | cmp -s - "$2"; then
+            echo "$2 is out of date: run specs/check.sh" >&2
+            failed=1
+        fi
+    else
+        cue export ../catalog -e "$1" -o "$2" -f
+    fi
+}
+
+cue vet -c ../catalog || failed=1
+export_json features_json ../features.json
+export_json catalog ../catalog/gen/catalog.json
+
+# profiles/ and vectors/ hold exactly what the catalog names.
+same_names() { # <what> <catalog set> <files' names>
+    if [ "$(printf '%s\n' "$2" | sort)" != "$(printf '%s\n' "$3" | sort)" ]; then
+        echo "$1 differ from the catalog's: expected" $2 "- found" $3 >&2
+        failed=1
+    fi
+}
+names_in() { # <directory>
+    for file in "$1"/*.json; do basename "$file" .json; done
+}
+same_names profiles "$(cue export ../catalog -e 'strings.Join(sets.profiled, "\n")' --out text)" "$(names_in ../profiles)"
+same_names vectors "$(cue export ../catalog -e 'strings.Join(sets.features, "\n")' --out text)" "$(names_in ../vectors)"
+for file in ../profiles/*.json; do
+    if ! cue vet -c -d '#OfficialProfile' ../catalog "json:" "$file"; then
+        echo "$file isn't the profile the catalog gives its encoding" >&2
+        failed=1
+    fi
+    if [ "$(cue export "json:" "$file" -e name --out text)" != "$(basename "$file" .json)" ]; then
+        echo "$file names another encoding" >&2
+        failed=1
+    fi
+done
 
 # Not the schema the benches ship with.
 vet Bench $(ls ../benches/*.json | grep -v '/bench\.schema\.json$')
