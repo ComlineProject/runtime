@@ -11,7 +11,7 @@ pub type ProtocolNumber = u16;
 /// when either end may start one. Unlike [`Framing`](crate::contract::Framing),
 /// whose frames only make sense in lockstep, every frame here says whether
 /// it's a request or a reply. A request names its protocol by number
-/// ([`Datagram2Framing`]), or only by its call's name, which the receiver
+/// ([`Datagram2Framing`](crate::contract::Datagram2Framing)), or only by its call's name, which the receiver
 /// looks up among the protocols it provides
 /// ([`JsonRpcFraming`](crate::framing::JsonRpcFraming)).
 pub trait ConnectionFraming: Default {

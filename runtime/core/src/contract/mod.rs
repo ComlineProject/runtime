@@ -14,6 +14,7 @@ mod error;
 mod framing;
 mod handshake;
 mod method_name;
+mod names;
 mod peer;
 mod refusal;
 pub mod stream;
@@ -28,12 +29,12 @@ pub use framing::{
     put_varint, take_varint, Call, ConnectionFraming, Datagram2Framing, Datagram3Framing,
     DatagramFraming, Frame, Framing, ProtocolNumber, Request, RequestCall,
 };
-pub use handshake::{
-    name_hash, HandshakeFrame, FORMAT_JSON, FORMAT_MSGPACK, FORMAT_PACKED, FRAMING_DATAGRAM,
-    FRAMING_DATAGRAM2, FRAMING_DATAGRAM3, FRAMING_JSONRPC, HANDSHAKE_COMLINE, HANDSHAKE_COMLINE2,
-    HANDSHAKE_NONE,
-};
+pub use handshake::HandshakeFrame;
 pub use method_name::{Chars as MethodNameChars, MethodName};
+pub use names::{
+    name_hash, FORMAT_JSON, FORMAT_MSGPACK, FORMAT_PACKED, FRAMING_DATAGRAM, FRAMING_DATAGRAM2,
+    FRAMING_DATAGRAM3, FRAMING_JSONRPC, HANDSHAKE_COMLINE, HANDSHAKE_COMLINE2, HANDSHAKE_NONE,
+};
 pub use peer::{ConnectionId, Peer};
 pub use refusal::{Reason, Side};
 pub use wire::WireFormat;
