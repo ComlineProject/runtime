@@ -18,16 +18,19 @@
 //! A handshake that doesn't establish schema and encoding agreement gives those
 //! guarantees up, which the schema has to say (`@unverified`).
 
-use alloc::vec::Vec;
-
-use crate::contract::{HandshakeFrame, RuntimeError, HANDSHAKE_COMLINE, HANDSHAKE_NONE};
-use crate::transport::Transport;
 #[cfg(feature = "async")]
 use crate::async_connection::AsyncTransport;
+use crate::contract::RuntimeError;
+use crate::transport::Transport;
 #[cfg(feature = "async")]
 use core::future::Future;
-#[cfg(feature = "async")]
-use futures_util::{SinkExt, StreamExt};
+
+mod comline1;
+pub mod comline2;
+mod none;
+
+pub use comline1::ComlineHandshake;
+pub use none::NoHandshake;
 
 /// What one end knows when a connection opens, handed to its [`Handshake`]:
 /// the schema fingerprint the generated code was built from, the names of the
@@ -66,19 +69,6 @@ impl<'a> Facts<'a> {
     }
 }
 
-impl HandshakeFrame {
-    /// The frame `local` declares: its schema fingerprint, the hashes of its
-    /// format and framing names, and its capability bits.
-    pub fn from_facts(local: &Facts<'_>) -> Self {
-        Self::new(
-            local.ir_hash,
-            local.wire_format,
-            local.framing,
-            local.capabilities,
-        )
-    }
-}
-
 /// What runs on a connection before the first call.
 ///
 /// The consumer side [`initiate`](Self::initiate)s, the provider side
@@ -86,8 +76,8 @@ impl HandshakeFrame {
 /// same. Either refuses the connection with `Err` (by convention
 /// [`RuntimeError::Handshake`]).
 pub trait Handshake {
-    /// The handshake's versioned name: [`HANDSHAKE_COMLINE`],
-    /// [`HANDSHAKE_NONE`], or a namespaced custom one (`com.acme.hello@1`).
+    /// The handshake's versioned name: [`HANDSHAKE_COMLINE`](crate::contract::HANDSHAKE_COMLINE),
+    /// [`HANDSHAKE_NONE`](crate::contract::HANDSHAKE_NONE), or a namespaced custom one (`com.acme.hello@1`).
     fn name(&self) -> &str;
 
     /// Run the consumer's side over `transport`.
@@ -103,85 +93,6 @@ pub trait Handshake {
         transport: &mut T,
         local: &Facts<'_>,
     ) -> Result<(), RuntimeError>;
-}
-
-/// `comline@1`: each end sends its [`HandshakeFrame`] and refuses unless the
-/// peer's names the same schema, format and framing. Establishes schema and
-/// encoding agreement.
-#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
-pub struct ComlineHandshake;
-
-impl ComlineHandshake {
-    /// Our frame, and its bytes to send. Both the blocking and the async
-    /// exchange start here, so they send the same bytes.
-    fn ours(local: &Facts<'_>) -> (HandshakeFrame, Vec<u8>) {
-        let ours = HandshakeFrame::from_facts(local);
-        let mut buf = Vec::new();
-        ours.encode(&mut buf);
-        (ours, buf)
-    }
-
-    fn exchange<T: Transport>(transport: &mut T, local: &Facts<'_>) -> Result<(), RuntimeError> {
-        let (ours, mut buf) = Self::ours(local);
-        transport.send(&buf)?;
-
-        buf.clear();
-        transport.recv(&mut buf)?;
-        ours.check_bytes(&buf).map(|_peer| ())
-    }
-
-    #[cfg(feature = "async")]
-    async fn exchange_async<T: AsyncTransport>(
-        transport: &mut T,
-        local: &Facts<'_>,
-    ) -> Result<(), RuntimeError> {
-        let (ours, buf) = Self::ours(local);
-        transport.send(buf).await?;
-
-        let theirs = transport.next().await.ok_or(RuntimeError::Transport)??;
-        ours.check_bytes(&theirs).map(|_peer| ())
-    }
-}
-
-impl Handshake for ComlineHandshake {
-    fn name(&self) -> &str {
-        HANDSHAKE_COMLINE
-    }
-
-    fn initiate<T: Transport>(
-        &mut self,
-        transport: &mut T,
-        local: &Facts<'_>,
-    ) -> Result<(), RuntimeError> {
-        Self::exchange(transport, local)
-    }
-
-    fn respond<T: Transport>(
-        &mut self,
-        transport: &mut T,
-        local: &Facts<'_>,
-    ) -> Result<(), RuntimeError> {
-        Self::exchange(transport, local)
-    }
-}
-
-/// `none`: nothing is sent or checked. Gives up schema and encoding agreement;
-/// a mismatch surfaces later as a decode or framing error, if at all.
-#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
-pub struct NoHandshake;
-
-impl Handshake for NoHandshake {
-    fn name(&self) -> &str {
-        HANDSHAKE_NONE
-    }
-
-    fn initiate<T: Transport>(&mut self, _: &mut T, _: &Facts<'_>) -> Result<(), RuntimeError> {
-        Ok(())
-    }
-
-    fn respond<T: Transport>(&mut self, _: &mut T, _: &Facts<'_>) -> Result<(), RuntimeError> {
-        Ok(())
-    }
 }
 
 // ── async ──────────────────────────────────────────────────────────────────
@@ -231,48 +142,10 @@ pub trait AsyncHandshake {
     ) -> impl Future<Output = Result<(), RuntimeError>> + Send;
 }
 
-#[cfg(feature = "async")]
-impl AsyncHandshake for ComlineHandshake {
-    fn name(&self) -> &str {
-        HANDSHAKE_COMLINE
-    }
-
-    async fn initiate<T: AsyncTransport>(
-        &mut self,
-        transport: &mut T,
-        local: &Facts<'_>,
-    ) -> Result<(), RuntimeError> {
-        Self::exchange_async(transport, local).await
-    }
-
-    async fn respond<T: AsyncTransport>(
-        &mut self,
-        transport: &mut T,
-        local: &Facts<'_>,
-    ) -> Result<(), RuntimeError> {
-        Self::exchange_async(transport, local).await
-    }
-}
-
-#[cfg(feature = "async")]
-impl AsyncHandshake for NoHandshake {
-    fn name(&self) -> &str {
-        HANDSHAKE_NONE
-    }
-
-    async fn initiate<T: AsyncTransport>(&mut self, _: &mut T, _: &Facts<'_>) -> Result<(), RuntimeError> {
-        Ok(())
-    }
-
-    async fn respond<T: AsyncTransport>(&mut self, _: &mut T, _: &Facts<'_>) -> Result<(), RuntimeError> {
-        Ok(())
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::contract::{FORMAT_PACKED, FRAMING_DATAGRAM2};
+    use crate::contract::{HandshakeFrame, FORMAT_PACKED, FRAMING_DATAGRAM2};
 
     #[test]
     fn from_facts_is_new_with_the_facts() {

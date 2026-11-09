@@ -17,7 +17,7 @@
 
 #![allow(dead_code)]
 
-use comline_runtime::comline2::{
+use comline_runtime::handshake::comline2::{
     Encoding, EncodingKind, Exchange, Hash128, Hello, PackageVersion, Protocol, Release,
 };
 use serde::{Deserialize, Serialize};

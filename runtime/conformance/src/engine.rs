@@ -393,7 +393,7 @@ pub(crate) fn decode(input: &Input, bytes: &[u8]) -> Result<Option<serde_json::V
     let json = |v: serde_json::Value| -> Result<Option<serde_json::Value>, Outcome> { Ok(Some(v)) };
     match input {
         Input::NameHash(_) | Input::Encode(_) => Ok(None),
-        Input::Comline2Message(_) => Ok(comline_runtime::comline2::Message::decode(bytes)
+        Input::Comline2Message(_) => Ok(comline_runtime::handshake::comline2::Message::decode(bytes)
             .ok()
             .map(|m| to_json(&m))),
         Input::Comline2Negotiate(i) => Ok(Some(to_json(&comline2::negotiate(i.clone(), bytes)?))),

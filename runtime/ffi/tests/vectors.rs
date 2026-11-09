@@ -177,7 +177,7 @@ fn leak(s: &str) -> &'static str {
 }
 
 fn comline2_message_case(case: &Case) -> Result<Ran, String> {
-    use comline_runtime::comline2::Message;
+    use comline_runtime::handshake::comline2::Message;
     let bytes = &case.bytes.0;
     let (mut kind, mut reason) = (0xff, 0xff);
     let status = unsafe {

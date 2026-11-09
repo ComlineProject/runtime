@@ -19,7 +19,7 @@ use comline_runtime::contract::{
     FORMAT_JSON, FORMAT_MSGPACK, FORMAT_PACKED, FRAMING_DATAGRAM, FRAMING_DATAGRAM2,
     FRAMING_DATAGRAM3, FRAMING_JSONRPC,
 };
-use comline_runtime::comline2::Hello;
+use comline_runtime::handshake::comline2::Hello;
 use comline_runtime_conformance::{
     check, decimal, decode_typed, encode_as, HandshakeIn, Hex, Reply, Type, Value, Wire,
 };

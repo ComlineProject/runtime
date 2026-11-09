@@ -26,7 +26,7 @@ pub const FORMAT_PACKED: &str = "packed@1";
 /// Name of Comline's own handshake, the fixed [`HandshakeFrame`](crate::contract::HandshakeFrame) each end sends
 /// (`handshake::ComlineHandshake`).
 pub const HANDSHAKE_COMLINE: &str = "comline@1";
-/// Name of the compatibility-checking handshake (`comline2::Comline2Handshake`,
+/// Name of the compatibility-checking handshake (`handshake::comline2::Comline2Handshake`,
 /// runtime#15): lines, shape hashes and wire numbers instead of an exact IR
 /// match.
 pub const HANDSHAKE_COMLINE2: &str = "comline@2";

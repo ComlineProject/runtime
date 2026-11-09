@@ -1,6 +1,7 @@
 use crate::contract::{name_hash, BufMut, RuntimeError};
 
-const MAGIC: [u8; 2] = *b"CO";
+/// Every Comline handshake frame starts with these, `comline@2`'s too.
+pub(crate) const MAGIC: [u8; 2] = *b"CO";
 const VERSION: u8 = 1;
 /// `[MAGIC:2][VERSION:1][ir_hash:u64 LE][wire_format:u64 LE][framing:u64 LE][capabilities:u32 LE]`
 const LEN: usize = 2 + 1 + 8 + 8 + 8 + 4;
