@@ -1,5 +1,5 @@
 {
-  "$schema": "../specs/gen/report.schema.json",
+  "$schema": "../spec/specs/gen/report.schema.json",
   "runtime": "rust",
   "support": {
     "envelope": {

@@ -2,7 +2,7 @@
 // License, v. 2.0. If a copy of the MPL was not distributed with this
 // file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
-//! The shared benchmark definitions (`runtime/conformance/benches/`), in Rust.
+//! The shared benchmark definitions (`runtime/conformance/spec/benches/`), in Rust.
 //!
 //! The format shapes are declared as generated Rust declares types, with plain
 //! `serde` derives, and each function builds the value its shape in

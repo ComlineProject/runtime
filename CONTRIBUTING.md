@@ -6,7 +6,7 @@ go to `main` from a branch.
 ## Benchmarks and the instruction-count gate
 
 The runtime's benchmarks are in [`runtime/core/benches`](runtime/core/benches),
-measuring the work [`runtime/conformance/benches`](runtime/conformance/benches/README.md)
+measuring the work [`runtime/conformance/spec/benches`](runtime/conformance/spec/benches/README.md)
 defines. The C ABI's are in [`runtime/ffi/bench`](runtime/ffi/bench): each
 call through its `extern "C"` function, and the same work on the core
 directly, so the crossing's cost is measured. They count instructions with

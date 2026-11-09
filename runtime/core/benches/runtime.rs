@@ -3,7 +3,7 @@
 // file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
 //! Instruction-count benchmarks of the runtime, by Callgrind through
-//! `iai-callgrind`: the work `runtime/conformance/benches/` defines, so every
+//! `iai-callgrind`: the work `runtime/conformance/spec/benches/` defines, so every
 //! language measures the same thing.
 //!
 //! Run them with `cargo bench -p comline-runtime`. They need Valgrind and

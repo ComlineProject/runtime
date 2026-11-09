@@ -138,7 +138,7 @@ fn expectations(case: &Case) -> Vec<Expected> {
 
 #[test]
 fn replays_every_vector() {
-    let dir = Path::new(env!("CARGO_MANIFEST_DIR")).join("../conformance/vectors");
+    let dir = Path::new(env!("CARGO_MANIFEST_DIR")).join("../conformance/spec/vectors");
     let mut files: Vec<_> = fs::read_dir(&dir)
         .unwrap()
         .map(|entry| entry.unwrap().path())

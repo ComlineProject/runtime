@@ -17,7 +17,7 @@
 //! than 1% fails, unless `runtime/core/benches/accepted-regressions.toml`
 //! accepts the cost; see `CONTRIBUTING.md` at the repository's root.
 //!
-//! The inputs are the runtime benches' (`runtime/conformance/benches/`): the
+//! The inputs are the runtime benches' (`runtime/conformance/spec/benches/`): the
 //! same payload sizes, request id, protocol, call and handshake. A
 //! connection is made, and its call put in waiting, by a setup function,
 //! which isn't measured, and handed back in the result with every buffer, so

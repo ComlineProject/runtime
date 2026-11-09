@@ -51,7 +51,7 @@ pub fn vectors(feature: &str) -> Vectors {
         ($name:literal) => {
             (
                 $name,
-                include_str!(concat!("../../../conformance/vectors/", $name, ".json")),
+                include_str!(concat!("../../../conformance/spec/vectors/", $name, ".json")),
             )
         };
     }

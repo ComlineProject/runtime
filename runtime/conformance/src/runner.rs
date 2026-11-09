@@ -15,12 +15,12 @@
 //! time limit and an output cap.
 //!
 //! The case format and the ops protocol are a public spec, versioned
-//! [`SPEC_VERSION`]; see the crate's README.md, "The spec".
+//! [`SPEC_VERSION`]; see the specification's README.
 //!
 //! ```no_run
 //! use comline_runtime_conformance::runner::{load_corpus, run_all, InProcess};
 //!
-//! let corpus = load_corpus("runtime/conformance".as_ref()).unwrap();
+//! let corpus = load_corpus("runtime/conformance/spec".as_ref()).unwrap();
 //! let profile = &corpus.profiles["packed@1"];
 //! let cases = corpus.cases_for(profile);
 //! let outcomes = run_all(&cases, &mut InProcess).unwrap();
@@ -40,11 +40,11 @@ use crate::{answer, fact_shown, hex, json_equal, to_json, Answer, Case, Compare,
 use crate::{Outcome, Profile, Vectors};
 
 /// The version of the public spec: the case format (`vectors/*.json`,
-/// `profiles/*.json`) and the ops protocol. `0.x` while Comline is in its
-/// early days: a minor bump may change anything, and says so in the
-/// changelog. The ops protocol also carries its own number (`protocol` in
+/// `profiles/*.json`) and the ops protocol, as the vendored specification's
+/// `VERSION` states it. `0.x` while Comline is in its early days: a minor
+/// bump may change anything, and says so in the changelog. The ops protocol also carries its own number (`protocol` in
 /// the `version` reply, [`OPS_PROTOCOL`]).
-pub const SPEC_VERSION: &str = "0.10";
+pub const SPEC_VERSION: &str = include_str!("../spec/VERSION").trim_ascii();
 
 /// The ops protocol's number, as a `version` reply states it. Ops and reply
 /// fields are only ever added under it.

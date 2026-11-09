@@ -178,7 +178,7 @@ struct ConnectionCall {
 const FORMATS: [&str; 3] = [FORMAT_JSON, FORMAT_MSGPACK, FORMAT_PACKED];
 
 fn benches_dir() -> PathBuf {
-    Path::new(env!("CARGO_MANIFEST_DIR")).join("benches")
+    Path::new(env!("CARGO_MANIFEST_DIR")).join("spec/benches")
 }
 
 fn read<T: for<'de> Deserialize<'de>>(name: &str) -> T {

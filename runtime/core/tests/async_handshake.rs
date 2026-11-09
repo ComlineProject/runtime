@@ -219,7 +219,7 @@ async fn async_bytes(local: Facts<'_>, respond: bool) -> Vec<u8> {
 #[tokio::test]
 async fn comline_handshake_over_async_sends_the_vector_bytes() {
     let vectors: Vectors =
-        serde_json::from_str(include_str!("../../conformance/vectors/handshake.json")).unwrap();
+        serde_json::from_str(include_str!("../../conformance/spec/vectors/handshake.json")).unwrap();
     assert!(!vectors.cases.is_empty());
     let (mut sent, mut rejected, mut checked) = (0, 0, 0);
     for case in &vectors.cases {

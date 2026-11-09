@@ -6,7 +6,7 @@ latest verification reports of `main`, which the docs
 
 - `rust.bench.json`: instruction counts of the runtime's and the C ABI's
   benches, from `.github/workflows/bench.yml` on every push to `main`.
-  Format: `runtime/conformance/benches/README.md` on `main`.
+  Format: `runtime/conformance/spec/benches/README.md` on `main`.
 - `rust.fuzz.json`: the nightly fuzz run, from `.github/workflows/fuzz.yml`.
   Format: `runtime/fuzz/README.md` on `main`.
 - `rust.size.json`, `rust.coverage.json`, `rust.compile.json`: the C ABI
