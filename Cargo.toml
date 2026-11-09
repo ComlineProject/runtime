@@ -10,12 +10,10 @@ members = [
 
     # Broken on current rustc, independent of the `no_std` rework — re-enable
     # once addressed:
-    #   "runtime-langs/lua"       — `mlua` 0.9 vs the never type (`!`)
-    #   "runtime-langs/lua-test"  — same
     #   "runtime/tests/provider_consumer" — `downcast_mut` on a bare trait object
-    #"runtime-langs/luau"
-    #"runtime-langs/python"
 ]
+# The Lua, Luau and Python bindings live in ComlineProject/comline-lua and
+# ComlineProject/comline-python.
 # cargo-fuzz targets: nightly only, built with `cargo +nightly fuzz`.
 exclude = ["runtime/fuzz"]
 # `runtime/core_no-std` removed — `comline-runtime` is now `no_std`-first with a
