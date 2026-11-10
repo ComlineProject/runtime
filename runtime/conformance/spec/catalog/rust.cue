@@ -34,6 +34,65 @@ _rust: {
 		#in: "format" | "framing" | "handshake"
 		out: {format: "Kind::Format", framing: "Kind::Framing", handshake: "Kind::Handshake"}[#in]
 	}
+	scope: {
+		#in: #Scope
+		out: {package: "Scope::Package", protocol: "Scope::Protocol", function: "Scope::Function", argument: "Scope::Argument", field: "Scope::Field", type: "Scope::Type"}[#in]
+	}
+	scopes: {
+		#in: [...#Scope]
+		out: "&[" + strings.Join([for s in #in {(scope & {#in: s}).out}], ", ") + "]"
+	}
+	header: {
+		#in: {...}
+		let h = #in
+		out: [
+			if h.kind == "none" {"Header::None"},
+			if h.kind == "varint_leb128" {"Header::VarintLeb128"},
+			if h.kind == "msgpack_str" {"Header::MsgpackStr"},
+			if h.kind == "msgpack_array" {"Header::MsgpackArray"},
+			if h.kind == "delimited" {"Header::Delimited { before: \(h.before), after: \(h.after), between: \(h.between) }"},
+		][0]
+	}
+	width: {
+		#in: {...}
+		let w = #in
+		out: "Width { min: \(w.min), max: \(w.max), upper_bound: \([if w.upper_bound != _|_ {"true"}, "false"][0]), proven_by: \((list & {#in: w.proven_by}).out) }"
+	}
+	// An encoding's size rules, as a `Sizes` constant.
+	sizes: {
+		#name: string
+		#in: {...}
+		let s = #in
+		let enum_tag = [
+			if s.enum.tag == "varint_index" {"EnumTag::VarintIndex"},
+			if s.enum.tag == "name" {"EnumTag::Name(\((header & {#in: s.enum.header}).out))"},
+		][0]
+		let key_extra = [if s.struct.key_extra != _|_ {"Some(\(s.struct.key_extra))"}, "None"][0]
+		let proofs = {
+			#of: [...string]
+			out: (list & {#in: #of}).out
+		}
+		out: strings.Join([
+			"const \(#name): Sizes = Sizes {",
+			"    feature: \((str & {#in: s.feature}).out),",
+			"    scalars: Scalars {",
+			for n in ["bool", "u8", "u16", "u32", "u64", "u128", "s8", "s16", "s32", "s64", "s128", "f32", "f64", "char", "unit"] {
+				"        \(n): \((width & {#in: s.scalars[n]}).out),"
+			},
+			"    },",
+			"    string: StringSize {",
+			"        header: \((header & {#in: s."string".header}).out),",
+			"        body: \({utf8: "Body::Utf8", json_escaped: "Body::JsonEscaped"}[s."string".body]),",
+			"        proven_by: \((proofs & {#of: s."string".proven_by}).out),",
+			"    },",
+			"    array: SeqSize { header: \((header & {#in: s.array.header}).out), proven_by: \((proofs & {#of: s.array.proven_by}).out) },",
+			"    fixed_array: SeqSize { header: \((header & {#in: s.fixed_array.header}).out), proven_by: \((proofs & {#of: s.fixed_array.proven_by}).out) },",
+			"    option: OptionSize { none: \(s.option.none), some: \(s.option.some), proven_by: \((proofs & {#of: s.option.proven_by}).out) },",
+			"    struct_: StructSize { header: \((header & {#in: s."struct".header}).out), key_extra: \(key_extra), proven_by: \((proofs & {#of: s."struct".proven_by}).out) },",
+			"    enum_: EnumSize { tag: \(enum_tag), proven_by: \((proofs & {#of: s."enum".proven_by}).out) },",
+			"};",
+		], "\n")
+	}
 	status: {
 		#in: "stable" | "experimental" | "deprecated"
 		out: {stable: "Status::Stable", experimental: "Status::Experimental", deprecated: "Status::Deprecated"}[#in]
@@ -80,7 +139,10 @@ _set: {
 rust_catalog: """
 	// Generated from the catalog's CUE by `specs/check.sh`: don't edit by hand.
 
-	use crate::{Encoding, Fact, Feature, Guarantee, Kind, Origin, Status, Value};
+	use crate::{
+	    Body, Encoding, EnumSize, EnumTag, Fact, Feature, Guarantee, Header, Kind, Origin, OptionSize, Scalars, Scope,
+	    SeqSize, Sizes, Status, StringSize, StructSize, Value, Width,
+	};
 
 	pub const SPEC_VERSION: &str = \((_rust.str & {#in: _spec_version}).out);
 
@@ -92,6 +154,7 @@ rust_catalog: """
 				title: \((_rust.str & {#in: g.title}).out),
 				description: \((_rust.str & {#in: g.description}).out),
 				comes_from: \({handshake: "Origin::Handshake", encoding: "Origin::Encoding", policy: "Origin::Policy", type: "Origin::Type"}[g.comes_from]),
+				scopes: \((_rust.scopes & {#in: g.scopes}).out),
 		\((_rust.lifecycle & {#in: g}).out)
 			},
 		"""}], "\n"))
@@ -112,6 +175,7 @@ rust_catalog: """
 		"""}], "\n"))
 	];
 
+	\(strings.Join([for id, e in encodings if e.sizes != _|_ {(_rust.sizes & {#name: "SIZES_" + (_rust.const & {#in: id}).out, #in: e.sizes}).out + "\n"}], "\n"))
 	/// Every official encoding, by its wire name.
 	pub const ENCODINGS: &[Encoding] = &[
 	\(strings.Join([for id, e in encodings {"""
@@ -124,6 +188,7 @@ rust_catalog: """
 				frozen_as: \((_rust.opt & {#in: [if e.frozen_as != _|_ {e.frozen_as}, null][0]}).out),
 				profile: \(e.profile),
 				feature: \((_rust.opt & {#in: [if e.feature != _|_ {e.feature}, null][0]}).out),
+				sizes: \([if e.sizes != _|_ {"Some(&SIZES_" + (_rust.const & {#in: id}).out + ")"}, "None"][0]),
 				tags: \((_rust.list & {#in: e.tags}).out),
 		\((_rust.lifecycle & {#in: e}).out)
 			},
@@ -165,6 +230,7 @@ rust_catalog: """
 	/// The catalog's sets.
 	pub mod sets {
 	\((_set & {#name: "GUARANTEES", #in: sets.guarantees}).out)
+	\((_set & {#name: "SCOPES", #in: sets.scopes}).out)
 	\((_set & {#name: "FORMATS", #in: sets.formats}).out)
 	\((_set & {#name: "FRAMINGS", #in: sets.framings}).out)
 	\((_set & {#name: "HANDSHAKES", #in: sets.handshakes}).out)

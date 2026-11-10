@@ -42,9 +42,14 @@
             "description": "A vector case's id: `<feature>/<name>`.",
             "pattern": "^[a-z0-9.@_-]+/[a-z0-9.@_-]+$"
         },
+        "CaseRef": {
+            "type": "string",
+            "description": "A reference to a vector case, `<feature>/<name>`.",
+            "pattern": "^[a-z0-9.@_-]+/[a-z0-9.@_-]+$"
+        },
         "FormatProfile": {
             "type": "object",
-            "description": "A format states every fact.",
+            "description": "A format states every fact. It may also state how many bytes each kind of\nvalue takes (`sizes`, `catalog/schema.cue`): an official format's are the\ncatalog's, which `specs/check.sh` holds the profile to; a custom format\nwithout them has no size, and nothing guesses one.",
             "additionalProperties": false,
             "properties": {
                 "$schema": {
@@ -203,6 +208,9 @@
                 },
                 "name": {
                     "$ref": "#/$defs/ProfileName"
+                },
+                "sizes": {
+                    "$ref": "#/$defs/Sizes"
                 }
             },
             "required": [
@@ -354,10 +362,111 @@
                 "name"
             ]
         },
+        "Header": {
+            "description": "What a count or a length costs on the wire, ahead of what it measures.\n`catalog/readme.md` defines each kind.",
+            "anyOf": [
+                {
+                    "type": "object",
+                    "additionalProperties": false,
+                    "properties": {
+                        "kind": {
+                            "const": "none"
+                        }
+                    }
+                },
+                {
+                    "type": "object",
+                    "additionalProperties": false,
+                    "properties": {
+                        "kind": {
+                            "const": "varint_leb128"
+                        }
+                    }
+                },
+                {
+                    "type": "object",
+                    "additionalProperties": false,
+                    "properties": {
+                        "kind": {
+                            "const": "msgpack_str"
+                        }
+                    }
+                },
+                {
+                    "type": "object",
+                    "additionalProperties": false,
+                    "properties": {
+                        "kind": {
+                            "const": "msgpack_array"
+                        }
+                    }
+                },
+                {
+                    "type": "object",
+                    "additionalProperties": false,
+                    "properties": {
+                        "after": {
+                            "allOf": [
+                                {
+                                    "type": "number"
+                                },
+                                {
+                                    "type": "integer",
+                                    "minimum": 0
+                                }
+                            ]
+                        },
+                        "before": {
+                            "allOf": [
+                                {
+                                    "type": "number"
+                                },
+                                {
+                                    "type": "integer",
+                                    "minimum": 0
+                                }
+                            ]
+                        },
+                        "between": {
+                            "allOf": [
+                                {
+                                    "type": "number"
+                                },
+                                {
+                                    "type": "integer",
+                                    "minimum": 0
+                                }
+                            ]
+                        },
+                        "kind": {
+                            "const": "delimited"
+                        }
+                    },
+                    "required": [
+                        "after",
+                        "before",
+                        "between"
+                    ]
+                }
+            ]
+        },
         "ProfileName": {
             "type": "string",
             "description": "A profile's name: an encoding at a version.",
             "pattern": "^[a-z0-9._-]+@[0-9]+$"
+        },
+        "Proofs": {
+            "type": "array",
+            "description": "The cases that prove a rule: at least one, each in the feature the sizes\nname (`specs/check.sh` checks that they exist and show the rule).",
+            "items": {
+                "$ref": "#/$defs/CaseRef"
+            },
+            "prefixItems": [
+                {
+                    "$ref": "#/$defs/CaseRef"
+                }
+            ],
+            "minItems": 1
         },
         "ProvenBy": {
             "type": "array",
@@ -371,6 +480,315 @@
                 }
             ],
             "minItems": 1
+        },
+        "Sizes": {
+            "type": "object",
+            "description": "How many bytes each kind of value of a format takes, as data a compiler\ncomputes a type's range from, and the vectors of `feature` prove: the rule\nof every kind of value has `proven_by` cases. A struct, an enum and an\narray are as the format's facts say (`struct_fields`, `enum_variants`).\nUnions, and enums with fields, are not here: no generator writes one.",
+            "additionalProperties": false,
+            "properties": {
+                "array": {
+                    "type": "object",
+                    "description": "`T[]` and `T[max N]`: a header on the item count, then the items.",
+                    "additionalProperties": false,
+                    "properties": {
+                        "header": {
+                            "$ref": "#/$defs/Header"
+                        },
+                        "proven_by": {
+                            "$ref": "#/$defs/Proofs"
+                        }
+                    },
+                    "required": [
+                        "header",
+                        "proven_by"
+                    ]
+                },
+                "enum": {
+                    "description": "A unit variant: by its index as a varint, or by its name behind a header\non the name's length.",
+                    "anyOf": [
+                        {
+                            "type": "object",
+                            "additionalProperties": false,
+                            "properties": {
+                                "proven_by": {
+                                    "$ref": "#/$defs/Proofs"
+                                },
+                                "tag": {
+                                    "const": "varint_index"
+                                }
+                            },
+                            "required": [
+                                "proven_by",
+                                "tag"
+                            ]
+                        },
+                        {
+                            "type": "object",
+                            "additionalProperties": false,
+                            "properties": {
+                                "header": {
+                                    "$ref": "#/$defs/Header"
+                                },
+                                "proven_by": {
+                                    "$ref": "#/$defs/Proofs"
+                                },
+                                "tag": {
+                                    "const": "name"
+                                }
+                            },
+                            "required": [
+                                "header",
+                                "proven_by",
+                                "tag"
+                            ]
+                        }
+                    ]
+                },
+                "feature": {
+                    "description": "The feature whose vectors, `vectors/<feature>.json`, prove the rules.",
+                    "enum": [
+                        "name-hash",
+                        "handshake",
+                        "envelope",
+                        "framing-datagram",
+                        "framing-datagram2",
+                        "framing-datagram3",
+                        "handshake-comline2",
+                        "stream",
+                        "framing-jsonrpc",
+                        "format-json",
+                        "format-msgpack",
+                        "format-packed",
+                        "sizes-packed",
+                        "sizes-msgpack",
+                        "sizes-json"
+                    ]
+                },
+                "fixed_array": {
+                    "type": "object",
+                    "description": "`T[N]`: a header on N, then the items.",
+                    "additionalProperties": false,
+                    "properties": {
+                        "header": {
+                            "$ref": "#/$defs/Header"
+                        },
+                        "proven_by": {
+                            "$ref": "#/$defs/Proofs"
+                        }
+                    },
+                    "required": [
+                        "header",
+                        "proven_by"
+                    ]
+                },
+                "option": {
+                    "type": "object",
+                    "description": "`none` bytes for an absent value, `some` bytes and the value for a\npresent one.",
+                    "additionalProperties": false,
+                    "properties": {
+                        "none": {
+                            "allOf": [
+                                {
+                                    "type": "number"
+                                },
+                                {
+                                    "type": "integer",
+                                    "minimum": 0
+                                }
+                            ]
+                        },
+                        "proven_by": {
+                            "$ref": "#/$defs/Proofs"
+                        },
+                        "some": {
+                            "allOf": [
+                                {
+                                    "type": "number"
+                                },
+                                {
+                                    "type": "integer",
+                                    "minimum": 0
+                                }
+                            ]
+                        }
+                    },
+                    "required": [
+                        "none",
+                        "proven_by",
+                        "some"
+                    ]
+                },
+                "scalars": {
+                    "type": "object",
+                    "additionalProperties": false,
+                    "properties": {
+                        "bool": {
+                            "$ref": "#/$defs/Width"
+                        },
+                        "char": {
+                            "$ref": "#/$defs/Width"
+                        },
+                        "f32": {
+                            "$ref": "#/$defs/Width"
+                        },
+                        "f64": {
+                            "$ref": "#/$defs/Width"
+                        },
+                        "s128": {
+                            "$ref": "#/$defs/Width"
+                        },
+                        "s16": {
+                            "$ref": "#/$defs/Width"
+                        },
+                        "s32": {
+                            "$ref": "#/$defs/Width"
+                        },
+                        "s64": {
+                            "$ref": "#/$defs/Width"
+                        },
+                        "s8": {
+                            "$ref": "#/$defs/Width"
+                        },
+                        "u128": {
+                            "$ref": "#/$defs/Width"
+                        },
+                        "u16": {
+                            "$ref": "#/$defs/Width"
+                        },
+                        "u32": {
+                            "$ref": "#/$defs/Width"
+                        },
+                        "u64": {
+                            "$ref": "#/$defs/Width"
+                        },
+                        "u8": {
+                            "$ref": "#/$defs/Width"
+                        },
+                        "unit": {
+                            "$ref": "#/$defs/Width"
+                        }
+                    },
+                    "required": [
+                        "bool",
+                        "char",
+                        "f32",
+                        "f64",
+                        "s128",
+                        "s16",
+                        "s32",
+                        "s64",
+                        "s8",
+                        "u128",
+                        "u16",
+                        "u32",
+                        "u64",
+                        "u8",
+                        "unit"
+                    ]
+                },
+                "string": {
+                    "type": "object",
+                    "description": "A string, a `char[max N]` and a `char[N]`: a header on the length in\nbytes, then the characters.",
+                    "additionalProperties": false,
+                    "properties": {
+                        "body": {
+                            "enum": [
+                                "utf8",
+                                "json_escaped"
+                            ]
+                        },
+                        "header": {
+                            "$ref": "#/$defs/Header"
+                        },
+                        "proven_by": {
+                            "$ref": "#/$defs/Proofs"
+                        }
+                    },
+                    "required": [
+                        "body",
+                        "header",
+                        "proven_by"
+                    ]
+                },
+                "struct": {
+                    "type": "object",
+                    "description": "A header on the field count, then the fields. With `key_extra`, each\nfield also takes its name's bytes and `key_extra` more.",
+                    "additionalProperties": false,
+                    "properties": {
+                        "header": {
+                            "$ref": "#/$defs/Header"
+                        },
+                        "key_extra": {
+                            "allOf": [
+                                {
+                                    "type": "number"
+                                },
+                                {
+                                    "type": "integer",
+                                    "minimum": 0
+                                }
+                            ]
+                        },
+                        "proven_by": {
+                            "$ref": "#/$defs/Proofs"
+                        }
+                    },
+                    "required": [
+                        "header",
+                        "proven_by"
+                    ]
+                }
+            },
+            "required": [
+                "array",
+                "enum",
+                "feature",
+                "fixed_array",
+                "option",
+                "scalars",
+                "string",
+                "struct"
+            ]
+        },
+        "Width": {
+            "type": "object",
+            "description": "The bytes a kind of value takes: at least `min`, at most `max`. With\n`upper_bound`, `max` is only a bound that no witness reaches: the longest\nvalue may be shorter.",
+            "additionalProperties": false,
+            "properties": {
+                "max": {
+                    "allOf": [
+                        {
+                            "type": "number"
+                        },
+                        {
+                            "type": "integer",
+                            "minimum": 0
+                        }
+                    ]
+                },
+                "min": {
+                    "allOf": [
+                        {
+                            "type": "number"
+                        },
+                        {
+                            "type": "integer",
+                            "minimum": 0
+                        }
+                    ]
+                },
+                "proven_by": {
+                    "$ref": "#/$defs/Proofs"
+                },
+                "upper_bound": {
+                    "const": true
+                }
+            },
+            "required": [
+                "max",
+                "min",
+                "proven_by"
+            ]
         }
     },
     "description": "`profiles/<name>.json`: facts about how an encoding encodes, each naming\nthe vector cases that prove it. Which facts each kind states, and the\nvalues each may take, are the catalog's (`catalog/facts.cue`).",

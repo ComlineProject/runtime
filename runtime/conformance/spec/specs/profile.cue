@@ -7,7 +7,10 @@ import "github.com/comlineproject/specification/catalog"
 // values each may take, are the catalog's (`catalog/facts.cue`).
 #Profile: #FormatProfile | #FramingProfile | #HandshakeProfile
 
-// A format states every fact.
+// A format states every fact. It may also state how many bytes each kind of
+// value takes (`sizes`, `catalog/schema.cue`): an official format's are the
+// catalog's, which `specs/check.sh` holds the profile to; a custom format
+// without them has no size, and nothing guesses one.
 #FormatProfile: close({
 	$schema?: string
 	name!:    #ProfileName
@@ -17,6 +20,7 @@ import "github.com/comlineproject/specification/catalog"
 			(id)!: close({value!: or([for v, _ in fact.values {v}]), proven_by!: #ProvenBy})
 		}
 	})
+	sizes?: catalog.#Sizes
 })
 
 // A framing states every fact.

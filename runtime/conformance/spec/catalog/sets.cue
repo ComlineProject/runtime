@@ -4,6 +4,8 @@ package catalog
 // label that names a top-level field is quoted, so it doesn't shadow it.
 sets: {
 	"guarantees": [for id, _ in guarantees {id}]
+	// Where an `@unverified` marker may sit, outermost to innermost.
+	scopes: #Scopes
 	formats: [for id, e in encodings if e.kind == "format" {id}]
 	framings: [for id, e in encodings if e.kind == "framing" {id}]
 	handshakes: [for id, e in encodings if e.kind == "handshake" {id}]

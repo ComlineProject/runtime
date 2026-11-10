@@ -1,6 +1,9 @@
 // Generated from the catalog's CUE by `specs/check.sh`: don't edit by hand.
 
-use crate::{Encoding, Fact, Feature, Guarantee, Kind, Origin, Status, Value};
+use crate::{
+    Body, Encoding, EnumSize, EnumTag, Fact, Feature, Guarantee, Header, Kind, Origin, OptionSize, Scalars, Scope,
+    SeqSize, Sizes, Status, StringSize, StructSize, Value, Width,
+};
 
 pub const SPEC_VERSION: &str = r#"0.10"#;
 
@@ -11,6 +14,7 @@ pub const GUARANTEES: &[Guarantee] = &[
         title: r#"schema agreement"#,
         description: r#"Both ends were built from compatible schemas, which the handshake checks."#,
         comes_from: Origin::Handshake,
+        scopes: &[Scope::Package, Scope::Protocol],
         status: Status::Stable,
         replaced_by: None,
         since: None,
@@ -20,6 +24,7 @@ pub const GUARANTEES: &[Guarantee] = &[
         title: r#"encoding agreement"#,
         description: r#"Both ends use the same format and framing, which the handshake checks."#,
         comes_from: Origin::Handshake,
+        scopes: &[Scope::Package, Scope::Protocol],
         status: Status::Stable,
         replaced_by: None,
         since: None,
@@ -29,6 +34,7 @@ pub const GUARANTEES: &[Guarantee] = &[
         title: r#"encoding conformance"#,
         description: r#"An implementation encodes what its name promises, proven by conformance vectors."#,
         comes_from: Origin::Encoding,
+        scopes: &[Scope::Package, Scope::Protocol],
         status: Status::Stable,
         replaced_by: None,
         since: None,
@@ -38,6 +44,7 @@ pub const GUARANTEES: &[Guarantee] = &[
         title: r#"version honesty"#,
         description: r#"A version bump says what the change breaks, as the version comparison works it out."#,
         comes_from: Origin::Policy,
+        scopes: &[Scope::Package, Scope::Protocol],
         status: Status::Stable,
         replaced_by: None,
         since: None,
@@ -47,6 +54,7 @@ pub const GUARANTEES: &[Guarantee] = &[
         title: r#"bounded size"#,
         description: r#"Every value has a maximum size, so a decoder refuses an oversized one before allocating it."#,
         comes_from: Origin::Type,
+        scopes: &[Scope::Protocol, Scope::Function, Scope::Argument, Scope::Field, Scope::Type],
         status: Status::Stable,
         replaced_by: None,
         since: None,
@@ -200,6 +208,99 @@ pub const FACTS: &[Fact] = &[
     },
 ];
 
+const SIZES_PACKED_1: Sizes = Sizes {
+    feature: r#"sizes-packed"#,
+    scalars: Scalars {
+        bool: Width { min: 1, max: 1, upper_bound: false, proven_by: &[r#"sizes-packed/bool"#] },
+        u8: Width { min: 1, max: 1, upper_bound: false, proven_by: &[r#"sizes-packed/u8"#] },
+        u16: Width { min: 2, max: 2, upper_bound: false, proven_by: &[r#"sizes-packed/u16"#] },
+        u32: Width { min: 4, max: 4, upper_bound: false, proven_by: &[r#"sizes-packed/u32"#] },
+        u64: Width { min: 8, max: 8, upper_bound: false, proven_by: &[r#"sizes-packed/u64"#] },
+        u128: Width { min: 16, max: 16, upper_bound: false, proven_by: &[r#"sizes-packed/u128"#] },
+        s8: Width { min: 1, max: 1, upper_bound: false, proven_by: &[r#"sizes-packed/i8"#] },
+        s16: Width { min: 2, max: 2, upper_bound: false, proven_by: &[r#"sizes-packed/i16"#] },
+        s32: Width { min: 4, max: 4, upper_bound: false, proven_by: &[r#"sizes-packed/i32"#] },
+        s64: Width { min: 8, max: 8, upper_bound: false, proven_by: &[r#"sizes-packed/i64"#] },
+        s128: Width { min: 16, max: 16, upper_bound: false, proven_by: &[r#"sizes-packed/i128"#] },
+        f32: Width { min: 4, max: 4, upper_bound: false, proven_by: &[r#"sizes-packed/f32"#] },
+        f64: Width { min: 8, max: 8, upper_bound: false, proven_by: &[r#"sizes-packed/f64"#] },
+        char: Width { min: 1, max: 4, upper_bound: false, proven_by: &[r#"sizes-packed/char"#] },
+        unit: Width { min: 0, max: 0, upper_bound: false, proven_by: &[r#"sizes-packed/unit"#] },
+    },
+    string: StringSize {
+        header: Header::VarintLeb128,
+        body: Body::Utf8,
+        proven_by: &[r#"sizes-packed/string-unbounded"#, r#"sizes-packed/string-max-0"#, r#"sizes-packed/string-max-1"#, r#"sizes-packed/string-max-3"#, r#"sizes-packed/string-max-7"#, r#"sizes-packed/string-max-8"#, r#"sizes-packed/string-max-31"#, r#"sizes-packed/string-max-32"#, r#"sizes-packed/string-max-63"#, r#"sizes-packed/string-max-64"#, r#"sizes-packed/string-max-4095"#, r#"sizes-packed/string-max-4096"#, r#"sizes-packed/string-fixed-3"#, r#"sizes-packed/string-fixed-8"#, r#"sizes-packed/string-fixed-32"#],
+    },
+    array: SeqSize { header: Header::VarintLeb128, proven_by: &[r#"sizes-packed/array-unbounded"#, r#"sizes-packed/array-unbounded-strings"#, r#"sizes-packed/array-max-3"#, r#"sizes-packed/array-max-127"#, r#"sizes-packed/array-max-128"#, r#"sizes-packed/array-max-2-of-strings"#, r#"sizes-packed/array-max-3-of-options"#, r#"sizes-packed/recursive-tree-2"#] },
+    fixed_array: SeqSize { header: Header::None, proven_by: &[r#"sizes-packed/fixed-4"#, r#"sizes-packed/fixed-1"#, r#"sizes-packed/fixed-2-of-strings"#, r#"sizes-packed/fixed-3-of-options"#] },
+    option: OptionSize { none: 1, some: 1, proven_by: &[r#"sizes-packed/option-u8"#, r#"sizes-packed/option-bool"#, r#"sizes-packed/option-string"#, r#"sizes-packed/option-max-3-chars"#, r#"sizes-packed/option-struct"#, r#"sizes-packed/recursive-chain-3"#] },
+    struct_: StructSize { header: Header::None, key_extra: None, proven_by: &[r#"sizes-packed/struct-point"#, r#"sizes-packed/struct-empty"#, r#"sizes-packed/struct-mixed"#, r#"sizes-packed/struct-nested"#, r#"sizes-packed/struct-15-fields"#, r#"sizes-packed/struct-16-fields"#, r#"sizes-packed/struct-long-names"#, r#"sizes-packed/recursive-chain-3"#, r#"sizes-packed/recursive-tree-2"#] },
+    enum_: EnumSize { tag: EnumTag::VarintIndex, proven_by: &[r#"sizes-packed/enum-color"#, r#"sizes-packed/enum-single"#, r#"sizes-packed/enum-129-variants"#, r#"sizes-packed/enum-long-names"#] },
+};
+
+const SIZES_JSON_1: Sizes = Sizes {
+    feature: r#"sizes-json"#,
+    scalars: Scalars {
+        bool: Width { min: 4, max: 5, upper_bound: false, proven_by: &[r#"sizes-json/bool"#] },
+        u8: Width { min: 1, max: 3, upper_bound: false, proven_by: &[r#"sizes-json/u8"#] },
+        u16: Width { min: 1, max: 5, upper_bound: false, proven_by: &[r#"sizes-json/u16"#] },
+        u32: Width { min: 1, max: 10, upper_bound: false, proven_by: &[r#"sizes-json/u32"#] },
+        u64: Width { min: 1, max: 20, upper_bound: false, proven_by: &[r#"sizes-json/u64"#] },
+        u128: Width { min: 1, max: 39, upper_bound: false, proven_by: &[r#"sizes-json/u128"#] },
+        s8: Width { min: 1, max: 4, upper_bound: false, proven_by: &[r#"sizes-json/i8"#] },
+        s16: Width { min: 1, max: 6, upper_bound: false, proven_by: &[r#"sizes-json/i16"#] },
+        s32: Width { min: 1, max: 11, upper_bound: false, proven_by: &[r#"sizes-json/i32"#] },
+        s64: Width { min: 1, max: 20, upper_bound: false, proven_by: &[r#"sizes-json/i64"#] },
+        s128: Width { min: 1, max: 40, upper_bound: false, proven_by: &[r#"sizes-json/i128"#] },
+        f32: Width { min: 3, max: 16, upper_bound: false, proven_by: &[r#"sizes-json/f32"#] },
+        f64: Width { min: 3, max: 24, upper_bound: false, proven_by: &[r#"sizes-json/f64"#] },
+        char: Width { min: 3, max: 8, upper_bound: false, proven_by: &[r#"sizes-json/char"#] },
+        unit: Width { min: 4, max: 4, upper_bound: false, proven_by: &[r#"sizes-json/unit"#] },
+    },
+    string: StringSize {
+        header: Header::Delimited { before: 1, after: 1, between: 0 },
+        body: Body::JsonEscaped,
+        proven_by: &[r#"sizes-json/string-unbounded"#, r#"sizes-json/string-max-0"#, r#"sizes-json/string-max-1"#, r#"sizes-json/string-max-3"#, r#"sizes-json/string-max-7"#, r#"sizes-json/string-max-8"#, r#"sizes-json/string-max-31"#, r#"sizes-json/string-max-32"#, r#"sizes-json/string-max-63"#, r#"sizes-json/string-max-64"#, r#"sizes-json/string-fixed-3"#, r#"sizes-json/string-fixed-8"#, r#"sizes-json/string-fixed-32"#],
+    },
+    array: SeqSize { header: Header::Delimited { before: 1, after: 1, between: 1 }, proven_by: &[r#"sizes-json/array-unbounded"#, r#"sizes-json/array-unbounded-strings"#, r#"sizes-json/array-max-0"#, r#"sizes-json/array-max-1"#, r#"sizes-json/array-max-3"#, r#"sizes-json/array-max-2-of-strings"#, r#"sizes-json/array-max-3-of-options"#, r#"sizes-json/recursive-tree-2"#] },
+    fixed_array: SeqSize { header: Header::Delimited { before: 1, after: 1, between: 1 }, proven_by: &[r#"sizes-json/fixed-4"#, r#"sizes-json/fixed-1"#, r#"sizes-json/fixed-2-of-strings"#, r#"sizes-json/fixed-3-of-options"#] },
+    option: OptionSize { none: 4, some: 0, proven_by: &[r#"sizes-json/option-u8"#, r#"sizes-json/option-bool"#, r#"sizes-json/option-string"#, r#"sizes-json/option-max-3-chars"#, r#"sizes-json/option-struct"#, r#"sizes-json/recursive-chain-3"#] },
+    struct_: StructSize { header: Header::Delimited { before: 1, after: 1, between: 1 }, key_extra: Some(3), proven_by: &[r#"sizes-json/struct-point"#, r#"sizes-json/struct-empty"#, r#"sizes-json/struct-mixed"#, r#"sizes-json/struct-nested"#, r#"sizes-json/struct-15-fields"#, r#"sizes-json/struct-16-fields"#, r#"sizes-json/struct-long-names"#, r#"sizes-json/recursive-chain-3"#, r#"sizes-json/recursive-tree-2"#] },
+    enum_: EnumSize { tag: EnumTag::Name(Header::Delimited { before: 1, after: 1, between: 0 }), proven_by: &[r#"sizes-json/enum-color"#, r#"sizes-json/enum-single"#, r#"sizes-json/enum-129-variants"#, r#"sizes-json/enum-long-names"#] },
+};
+
+const SIZES_MSGPACK_1: Sizes = Sizes {
+    feature: r#"sizes-msgpack"#,
+    scalars: Scalars {
+        bool: Width { min: 1, max: 1, upper_bound: false, proven_by: &[r#"sizes-msgpack/bool"#] },
+        u8: Width { min: 1, max: 2, upper_bound: false, proven_by: &[r#"sizes-msgpack/u8"#] },
+        u16: Width { min: 1, max: 3, upper_bound: false, proven_by: &[r#"sizes-msgpack/u16"#] },
+        u32: Width { min: 1, max: 5, upper_bound: false, proven_by: &[r#"sizes-msgpack/u32"#] },
+        u64: Width { min: 1, max: 9, upper_bound: false, proven_by: &[r#"sizes-msgpack/u64"#] },
+        u128: Width { min: 18, max: 18, upper_bound: false, proven_by: &[r#"sizes-msgpack/u128"#] },
+        s8: Width { min: 1, max: 2, upper_bound: false, proven_by: &[r#"sizes-msgpack/i8"#] },
+        s16: Width { min: 1, max: 3, upper_bound: false, proven_by: &[r#"sizes-msgpack/i16"#] },
+        s32: Width { min: 1, max: 5, upper_bound: false, proven_by: &[r#"sizes-msgpack/i32"#] },
+        s64: Width { min: 1, max: 9, upper_bound: false, proven_by: &[r#"sizes-msgpack/i64"#] },
+        s128: Width { min: 18, max: 18, upper_bound: false, proven_by: &[r#"sizes-msgpack/i128"#] },
+        f32: Width { min: 5, max: 5, upper_bound: false, proven_by: &[r#"sizes-msgpack/f32"#] },
+        f64: Width { min: 9, max: 9, upper_bound: false, proven_by: &[r#"sizes-msgpack/f64"#] },
+        char: Width { min: 2, max: 5, upper_bound: false, proven_by: &[r#"sizes-msgpack/char"#] },
+        unit: Width { min: 1, max: 1, upper_bound: false, proven_by: &[r#"sizes-msgpack/unit"#] },
+    },
+    string: StringSize {
+        header: Header::MsgpackStr,
+        body: Body::Utf8,
+        proven_by: &[r#"sizes-msgpack/string-unbounded"#, r#"sizes-msgpack/string-max-0"#, r#"sizes-msgpack/string-max-1"#, r#"sizes-msgpack/string-max-3"#, r#"sizes-msgpack/string-max-7"#, r#"sizes-msgpack/string-max-8"#, r#"sizes-msgpack/string-max-31"#, r#"sizes-msgpack/string-max-32"#, r#"sizes-msgpack/string-max-63"#, r#"sizes-msgpack/string-max-64"#, r#"sizes-msgpack/string-max-16384"#, r#"sizes-msgpack/string-fixed-3"#, r#"sizes-msgpack/string-fixed-8"#, r#"sizes-msgpack/string-fixed-32"#],
+    },
+    array: SeqSize { header: Header::MsgpackArray, proven_by: &[r#"sizes-msgpack/array-unbounded"#, r#"sizes-msgpack/array-unbounded-strings"#, r#"sizes-msgpack/array-max-3"#, r#"sizes-msgpack/array-max-15"#, r#"sizes-msgpack/array-max-16"#, r#"sizes-msgpack/array-max-2-of-strings"#, r#"sizes-msgpack/array-max-3-of-options"#, r#"sizes-msgpack/recursive-tree-2"#] },
+    fixed_array: SeqSize { header: Header::MsgpackArray, proven_by: &[r#"sizes-msgpack/fixed-4"#, r#"sizes-msgpack/fixed-15"#, r#"sizes-msgpack/fixed-16"#, r#"sizes-msgpack/fixed-1"#, r#"sizes-msgpack/fixed-2-of-strings"#, r#"sizes-msgpack/fixed-3-of-options"#] },
+    option: OptionSize { none: 1, some: 0, proven_by: &[r#"sizes-msgpack/option-u8"#, r#"sizes-msgpack/option-bool"#, r#"sizes-msgpack/option-string"#, r#"sizes-msgpack/option-max-3-chars"#, r#"sizes-msgpack/option-struct"#, r#"sizes-msgpack/recursive-chain-3"#] },
+    struct_: StructSize { header: Header::MsgpackArray, key_extra: None, proven_by: &[r#"sizes-msgpack/struct-point"#, r#"sizes-msgpack/struct-empty"#, r#"sizes-msgpack/struct-mixed"#, r#"sizes-msgpack/struct-nested"#, r#"sizes-msgpack/struct-15-fields"#, r#"sizes-msgpack/struct-16-fields"#, r#"sizes-msgpack/struct-long-names"#, r#"sizes-msgpack/recursive-chain-3"#, r#"sizes-msgpack/recursive-tree-2"#] },
+    enum_: EnumSize { tag: EnumTag::Name(Header::MsgpackStr), proven_by: &[r#"sizes-msgpack/enum-color"#, r#"sizes-msgpack/enum-single"#, r#"sizes-msgpack/enum-129-variants"#, r#"sizes-msgpack/enum-long-names"#] },
+};
+
 /// Every official encoding, by its wire name.
 pub const ENCODINGS: &[Encoding] = &[
     Encoding {
@@ -211,6 +312,7 @@ pub const ENCODINGS: &[Encoding] = &[
         frozen_as: None,
         profile: true,
         feature: Some(r#"format-packed"#),
+        sizes: Some(&SIZES_PACKED_1),
         tags: &[r#"official"#],
         status: Status::Stable,
         replaced_by: None,
@@ -225,6 +327,7 @@ pub const ENCODINGS: &[Encoding] = &[
         frozen_as: None,
         profile: true,
         feature: Some(r#"format-json"#),
+        sizes: Some(&SIZES_JSON_1),
         tags: &[r#"official"#],
         status: Status::Stable,
         replaced_by: None,
@@ -239,6 +342,7 @@ pub const ENCODINGS: &[Encoding] = &[
         frozen_as: None,
         profile: true,
         feature: Some(r#"format-msgpack"#),
+        sizes: Some(&SIZES_MSGPACK_1),
         tags: &[r#"official"#],
         status: Status::Stable,
         replaced_by: None,
@@ -253,6 +357,7 @@ pub const ENCODINGS: &[Encoding] = &[
         frozen_as: Some(r#"jsonrpc"#),
         profile: true,
         feature: Some(r#"framing-jsonrpc"#),
+        sizes: None,
         tags: &[r#"official"#],
         status: Status::Stable,
         replaced_by: None,
@@ -267,6 +372,7 @@ pub const ENCODINGS: &[Encoding] = &[
         frozen_as: Some(r#"datagram"#),
         profile: true,
         feature: Some(r#"framing-datagram"#),
+        sizes: None,
         tags: &[r#"official"#],
         status: Status::Stable,
         replaced_by: None,
@@ -281,6 +387,7 @@ pub const ENCODINGS: &[Encoding] = &[
         frozen_as: None,
         profile: true,
         feature: Some(r#"framing-datagram2"#),
+        sizes: None,
         tags: &[r#"official"#],
         status: Status::Stable,
         replaced_by: None,
@@ -295,6 +402,7 @@ pub const ENCODINGS: &[Encoding] = &[
         frozen_as: None,
         profile: true,
         feature: Some(r#"framing-datagram3"#),
+        sizes: None,
         tags: &[r#"official"#],
         status: Status::Stable,
         replaced_by: None,
@@ -309,6 +417,7 @@ pub const ENCODINGS: &[Encoding] = &[
         frozen_as: None,
         profile: true,
         feature: Some(r#"handshake"#),
+        sizes: None,
         tags: &[r#"official"#],
         status: Status::Stable,
         replaced_by: None,
@@ -323,6 +432,7 @@ pub const ENCODINGS: &[Encoding] = &[
         frozen_as: None,
         profile: true,
         feature: Some(r#"handshake-comline2"#),
+        sizes: None,
         tags: &[r#"official"#],
         status: Status::Stable,
         replaced_by: None,
@@ -337,6 +447,7 @@ pub const ENCODINGS: &[Encoding] = &[
         frozen_as: None,
         profile: false,
         feature: None,
+        sizes: None,
         tags: &[r#"official"#],
         status: Status::Stable,
         replaced_by: None,
@@ -442,6 +553,30 @@ pub const FEATURES: &[Feature] = &[
         replaced_by: None,
         since: None,
     },
+    Feature {
+        id: r#"sizes-packed"#,
+        title: r#"packed sizes"#,
+        description: r#"how many bytes each kind of value takes in packed@1, each rule proven by values written to exactly its minimum and maximum"#,
+        status: Status::Stable,
+        replaced_by: None,
+        since: None,
+    },
+    Feature {
+        id: r#"sizes-msgpack"#,
+        title: r#"MessagePack sizes"#,
+        description: r#"how many bytes each kind of value takes in msgpack@1, each rule proven by values written to exactly its minimum and maximum"#,
+        status: Status::Stable,
+        replaced_by: None,
+        since: None,
+    },
+    Feature {
+        id: r#"sizes-json"#,
+        title: r#"JSON sizes"#,
+        description: r#"how many bytes each kind of value takes in json@1, each rule proven by values written to exactly its minimum and maximum, or by a declared upper bound"#,
+        status: Status::Stable,
+        replaced_by: None,
+        since: None,
+    },
 ];
 
 /// Guarantee ids.
@@ -498,11 +633,15 @@ pub mod feature {
     pub const FORMAT_JSON: &str = r#"format-json"#;
     pub const FORMAT_MSGPACK: &str = r#"format-msgpack"#;
     pub const FORMAT_PACKED: &str = r#"format-packed"#;
+    pub const SIZES_PACKED: &str = r#"sizes-packed"#;
+    pub const SIZES_MSGPACK: &str = r#"sizes-msgpack"#;
+    pub const SIZES_JSON: &str = r#"sizes-json"#;
 }
 
 /// The catalog's sets.
 pub mod sets {
     pub const GUARANTEES: &[&str] = &[r#"schema_agreement"#, r#"encoding_agreement"#, r#"encoding_conformance"#, r#"version_honesty"#, r#"bounded_size"#];
+    pub const SCOPES: &[&str] = &[r#"package"#, r#"protocol"#, r#"function"#, r#"argument"#, r#"field"#, r#"type"#];
     pub const FORMATS: &[&str] = &[r#"packed@1"#, r#"json@1"#, r#"msgpack@1"#];
     pub const FRAMINGS: &[&str] = &[r#"jsonrpc@1"#, r#"datagram@1"#, r#"datagram@2"#, r#"datagram@3"#];
     pub const HANDSHAKES: &[&str] = &[r#"comline@1"#, r#"comline@2"#, r#"none"#];
@@ -511,7 +650,7 @@ pub mod sets {
     pub const FORMAT_FACTS: &[&str] = &[r#"struct_fields"#, r#"unknown_field"#, r#"missing_optional"#, r#"enum_variants"#, r#"unknown_variant"#, r#"integer_width"#, r#"output"#];
     pub const FRAMING_FACTS: &[&str] = &[r#"calls"#, r#"directions"#, r#"errors"#, r#"payload"#];
     pub const HANDSHAKE_FACTS: &[&str] = &[r#"schema_agreement"#, r#"encoding_agreement"#];
-    pub const FEATURES: &[&str] = &[r#"name-hash"#, r#"handshake"#, r#"envelope"#, r#"framing-datagram"#, r#"framing-datagram2"#, r#"framing-datagram3"#, r#"handshake-comline2"#, r#"stream"#, r#"framing-jsonrpc"#, r#"format-json"#, r#"format-msgpack"#, r#"format-packed"#];
+    pub const FEATURES: &[&str] = &[r#"name-hash"#, r#"handshake"#, r#"envelope"#, r#"framing-datagram"#, r#"framing-datagram2"#, r#"framing-datagram3"#, r#"handshake-comline2"#, r#"stream"#, r#"framing-jsonrpc"#, r#"format-json"#, r#"format-msgpack"#, r#"format-packed"#, r#"sizes-packed"#, r#"sizes-msgpack"#, r#"sizes-json"#];
     /// Every alias, with the wire name it resolves to.
     pub const ALIASES: &[(&str, &str)] = &[(r#"jsonrpc"#, r#"jsonrpc@1"#), (r#"json-rpc"#, r#"jsonrpc@1"#), (r#"jsonrpc-2.0"#, r#"jsonrpc@1"#), (r#"datagram"#, r#"datagram@1"#), (r#"comline.datagram"#, r#"datagram@1"#)];
 }
