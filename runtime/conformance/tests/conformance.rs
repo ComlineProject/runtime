@@ -2,7 +2,9 @@
 // License, v. 2.0. If a copy of the MPL was not distributed with this
 // file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
-//! `vectors_are_current`: `vectors/` holds what `comline-runtime` produces.
+//! `vectors_are_current`: `vectors/` holds what `comline-runtime` produces,
+//! apart from the `sizes-*` features, whose values and bytes the specification
+//! writes and this runtime proves (`sizes_are_proven`, `rust_support_is_proven`).
 //! `rust_support_is_proven`: every claim in `support/rust.json` holds against
 //! the vectors, and `reports/rust.json` records which cases prove it.
 //!
@@ -18,8 +20,8 @@ use comline_runtime::contract::{
     FRAMING_DATAGRAM3, FRAMING_JSONRPC, HANDSHAKE_COMLINE, HANDSHAKE_COMLINE2,
 };
 use comline_runtime_conformance::{
-    fact_shown, reference_cases, render, run, Case, Fact, Facts, Features, Outcome, Output, Payload,
-    Profile, ProvenClaim,
+    fact_shown, reference_cases, render, run, Case, Fact, Facts, Features, Op, Outcome, Output,
+    Payload, Profile, ProvenClaim,
     Report, State, Support, Vectors,
 };
 
@@ -59,6 +61,18 @@ fn features() -> Features {
     read(&spec().join("features.json"))
 }
 
+/// Whether the specification writes `feature`'s vectors and this runtime only
+/// proves them: every case is a `size` case, whose witnesses (values and the
+/// bytes they encode to) come from a model of the encoders, not from here.
+/// `run` is what holds them to the real encoders.
+fn proven_not_produced(feature: &str) -> bool {
+    let path = spec().join("vectors").join(format!("{feature}.json"));
+    path.exists() && {
+        let vectors: Vectors = read(&path);
+        !vectors.cases.is_empty() && vectors.cases.iter().all(|c| c.op() == Op::Size)
+    }
+}
+
 #[test]
 fn vectors_are_current() {
     let features = features();
@@ -66,7 +80,8 @@ fn vectors_are_current() {
     let mut problems = Vec::new();
 
     for feature in &features.features {
-        if !reference.iter().any(|v| v.feature == feature.id) {
+        let produced = reference.iter().any(|v| v.feature == feature.id);
+        if !produced && !proven_not_produced(&feature.id) {
             problems.push(format!("feature `{}` has no vectors", feature.id));
         }
     }
@@ -111,14 +126,17 @@ fn rust_support_is_proven() {
         // Blessing rewrites the vectors alongside, so prove against what
         // they're being rewritten to.
         let path = spec().join("vectors").join(format!("{}.json", feature.id));
-        let vectors: Vectors = if bless() {
-            match reference_cases()
+        let blessed = if bless() {
+            reference_cases()
                 .into_iter()
                 .find(|v| v.feature == feature.id)
-            {
-                Some(vectors) => vectors,
-                None => continue, // `vectors_are_current` reports it
-            }
+        } else {
+            None
+        };
+        let vectors: Vectors = if let Some(vectors) = blessed {
+            vectors
+        } else if bless() && !proven_not_produced(&feature.id) {
+            continue; // `vectors_are_current` reports it
         } else if path.exists() {
             read(&path)
         } else {
@@ -261,6 +279,65 @@ fn profiles_are_proven() {
         }
     }
 
+    assert!(problems.is_empty(), "{}", problems.join("\n"));
+}
+
+/// Every size rule a format's profile states is proven by cases that exist and
+/// pass against `comline-runtime`: the witnesses' bytes are what the real
+/// encoder writes (and `encoded_len` agrees), which is what the specification
+/// leaves to this run.
+#[test]
+fn size_rules_are_proven() {
+    use comline_runtime_conformance::runner::{load_corpus, run_all, InProcess};
+
+    fn proven_by(value: &serde_json::Value, ids: &mut Vec<String>) {
+        match value {
+            serde_json::Value::Object(members) => {
+                for (key, member) in members {
+                    match (key.as_str(), member) {
+                        ("proven_by", serde_json::Value::Array(cases)) => {
+                            ids.extend(cases.iter().filter_map(|c| c.as_str().map(String::from)))
+                        }
+                        _ => proven_by(member, ids),
+                    }
+                }
+            }
+            serde_json::Value::Array(items) => items.iter().for_each(|i| proven_by(i, ids)),
+            _ => {}
+        }
+    }
+
+    let corpus = load_corpus(&spec()).unwrap();
+    let mut problems = Vec::new();
+    for name in [FORMAT_JSON, FORMAT_MSGPACK, FORMAT_PACKED] {
+        let profile: serde_json::Value =
+            read(&spec().join("profiles").join(format!("{name}.json")));
+        let Some(sizes) = profile.get("sizes") else {
+            problems.push(format!("`{name}` states no sizes"));
+            continue;
+        };
+        let feature = sizes["feature"].as_str().unwrap_or_default();
+        let cases = corpus.feature(feature);
+        if cases.is_empty() {
+            problems.push(format!("`{name}`: the feature `{feature}` has no cases"));
+            continue;
+        }
+        let outcomes = run_all(&cases, &mut InProcess).unwrap();
+        let mut ids = Vec::new();
+        proven_by(sizes, &mut ids);
+        for id in ids {
+            match outcomes.get(&id) {
+                Some(Outcome::Pass) => {}
+                Some(other) => problems.push(format!("`{name}`: `{id}`: {other:?}")),
+                None => problems.push(format!("`{name}` names `{id}`, which isn't in `{feature}`")),
+            }
+        }
+        for (id, outcome) in &outcomes {
+            if *outcome != Outcome::Pass {
+                problems.push(format!("{id}: {outcome:?}"));
+            }
+        }
+    }
     assert!(problems.is_empty(), "{}", problems.join("\n"));
 }
 

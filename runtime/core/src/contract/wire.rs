@@ -1,6 +1,6 @@
 use serde::{Deserialize, Serialize};
 
-use crate::contract::{BufMut, RuntimeError};
+use crate::contract::{BufMut, CountBuf, RuntimeError};
 
 /// The message-serialization axis. Generated code is `serde`-only; a concrete
 /// `WireFormat` (MessagePack, JSON, …) is chosen once at setup.
@@ -23,4 +23,20 @@ pub trait WireFormat {
     ) -> Result<(), RuntimeError>;
 
     fn decode<'de, T: Deserialize<'de>>(&self, bytes: &'de [u8]) -> Result<T, RuntimeError>;
+
+    /// The exact number of bytes [`encode`](WireFormat::encode) writes for
+    /// `value`, or the error it fails with (a value over its bounds).
+    ///
+    /// It runs `encode` itself into a [`CountBuf`], which keeps nothing and
+    /// only counts, so it can't differ from what `encode` writes, and needs
+    /// neither `alloc` nor a buffer. A format writing through `std::io::Write`
+    /// (JSON, MessagePack) counts there too: its writer is over the same sink.
+    /// Use it to size a buffer before encoding into it, or to check a value
+    /// against a frame limit; it costs a full encode, so don't call it to
+    /// then encode on the success path.
+    fn encoded_len<T: Serialize + ?Sized>(&self, value: &T) -> Result<usize, RuntimeError> {
+        let mut count = CountBuf::new();
+        self.encode(value, &mut count)?;
+        Ok(count.len())
+    }
 }

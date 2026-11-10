@@ -13,6 +13,9 @@
     "stream": { "state": "supported" },
     "format-json": { "state": "supported" },
     "format-msgpack": { "state": "supported" },
-    "format-packed": { "state": "supported" }
+    "format-packed": { "state": "supported" },
+    "sizes-packed": { "state": "supported" },
+    "sizes-msgpack": { "state": "supported" },
+    "sizes-json": { "state": "supported" }
   }
 }

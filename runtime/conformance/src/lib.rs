@@ -25,10 +25,11 @@ mod seed;
 
 pub use case::{
     hex, Case, Compare, DecodeIn, EncodeIn, Expect, Framed, HandshakeIn, Hex, Input, NameHashIn, Op,
-    PeerRefusalIn, Reply, RequestIn, ResponseIn, StreamPrefixIn, StreamSplit, StreamSplitIn,
+    PeerRefusalIn, Reply, RequestIn, ResponseIn, SizeIn, StreamPrefixIn, StreamSplit,
+    StreamSplitIn, Witness, Witnesses,
 };
 pub use comline2::{NegotiateIn, NegotiateResult, Step};
-pub use engine::{answer, decode_typed, encode_as, run, Answer};
+pub use engine::{answer, decode_typed, encode_as, encoded_len_as, run, Answer};
 pub(crate) use engine::to_json;
 pub use json_equal::json_equal;
 pub use profile::{
@@ -194,6 +195,11 @@ pub enum Type {
     /// values, not bytes).
     BoundedString {
         max: u32,
+    },
+    /// `char[N]`: a string of exactly `len` characters. A `size` case's
+    /// type: it is written as a string, with the same header.
+    FixedString {
+        len: u32,
     },
     Option(Box<Type>),
     /// `T[]`.

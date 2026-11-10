@@ -114,6 +114,14 @@ impl<'de> DeserializeSeed<'de> for Seed<'_> {
             Type::BoundedString { max } => {
                 Value::String(CharsSeed::<String>::new(*max).deserialize(d)?)
             }
+            Type::FixedString { len } => {
+                let s = CharsSeed::<String>::new(*len).deserialize(d)?;
+                // `char[N]` holds exactly N characters.
+                if s.chars().count() as u64 != u64::from(*len) {
+                    return Err(de::Error::invalid_length(s.chars().count(), &"`char[N]`"));
+                }
+                Value::String(s)
+            }
             Type::BoundedArray { of, max } => {
                 Value::Array(ItemsSeed::<_, Vec<Value>>::new(self.of(of), *max).deserialize(d)?)
             }
@@ -415,6 +423,11 @@ fn check_in(value: &Value, ty: &Type, rec: Option<&Type>) -> Result<(), String> 
             None => Err("`self` outside a recursive type".into()),
         },
         (Type::BoundedString { .. }, Value::String(_)) | (Type::Char, Value::Char(_)) => Ok(()),
+        (Type::FixedString { len }, Value::String(s))
+            if s.chars().count() as u64 == u64::from(*len) =>
+        {
+            Ok(())
+        }
         (Type::BoundedArray { of, .. }, Value::Array(items)) => {
             items.iter().try_for_each(|item| check(item, of))
         }
@@ -498,6 +511,7 @@ pub fn within_bounds(value: &Value, ty: &Type) -> Result<(), BoundExceeded> {
                 None => Ok(()),
             },
             (Type::BoundedString { max }, Value::String(s)) => bounds::check_chars(s, *max),
+            (Type::FixedString { len }, Value::String(s)) => bounds::check_chars(s, *len),
             (Type::BoundedArray { of, max }, Value::Array(items)) => {
                 bounds::check_items(items.len(), *max)?;
                 items.iter().try_for_each(|item| walk(item, of, rec))
