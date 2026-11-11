@@ -4,99 +4,66 @@ on:
   push:
   pull_request:
 
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
 env:
   CARGO_TERM_COLOR: always
 
 jobs:
-  build_and_test:
-    name: Rust project - ${{ matrix.toolchain }}
-    runs-on: ubuntu-latest
-    strategy:
-      matrix:
-        toolchain:
-          - stable
-          - beta
-          - nightly
-    env:
-      # The root rust-toolchain.toml pins a toolchain and overrides
-      # `rustup default`; this variable overrides the file in turn.
-      RUSTUP_TOOLCHAIN: ${{ matrix.toolchain }}
-    steps:
-      - uses: actions/checkout@v4
-      - run: rustup toolchain install ${{ matrix.toolchain }} --profile minimal
-      - uses: Swatinem/rust-cache@v2
-      # Cargo.lock is committed and must match the manifests: every build
-      # below, and every other workflow, resolves from it.
-      - run: cargo metadata --locked --format-version 1 > /dev/null
-      - run: cargo build --verbose
-      - run: cargo test --verbose
-      - run: cargo test --verbose -p comline-runtime --features tokio
-
-  # The workspace on the other platforms, on stable only. Separate from the
-  # job above so its check names (required on main) stay as they are.
-  build_and_test_platforms:
-    name: Rust project - stable (${{ matrix.os }})
-    runs-on: ${{ matrix.os }}
-    strategy:
-      fail-fast: false
-      matrix:
-        os:
-          - windows-latest
-          - macos-latest
-          - ubuntu-24.04-arm
-    env:
-      RUSTUP_TOOLCHAIN: stable
-    steps:
-      - uses: actions/checkout@v6
-      - run: rustup toolchain install stable --profile minimal
-      - uses: Swatinem/rust-cache@v2
-      - run: cargo build --verbose --locked
-      - run: cargo test --verbose --locked
-      - run: cargo test --verbose --locked -p comline-runtime --features tokio
+  # The workspace's toolchain matrix (stable, beta, nightly on ubuntu-24.04),
+  # stable on the other platforms, and stable on the ubuntu-26.04 canary
+  # (which may fail without failing the run): the org's reusable workflow.
+  # `--locked` on every build and test also checks Cargo.lock matches the
+  # manifests, which a separate `cargo metadata --locked` step used to.
+  ci:
+    name: ci
+    permissions:
+      contents: read
+    uses: ComlineProject/.github/.github/workflows/rust-ci.yml@6bfbbcc9bccd25b44c06dbf41408885bb29aafe6 # 2026-11-11
+    with:
+      build-args: --locked
+      test-args: --locked
+      features: tokio
+      features-package: comline-runtime
 
   # spec/ is the pinned specification, unchanged, and this runtime's support
-  # claims and report match its specs.
+  # claims and report match its specs. In the tools image, which has cue
+  # (v0.17.1: keep in step with runtime/conformance/spec/cue.mod/module.cue).
   specs:
     name: conformance specs
-    runs-on: ubuntu-latest
-    env:
-      # Keep in step with runtime/conformance/spec/cue.mod/module.cue.
-      CUE_VERSION: v0.17.1
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    container: ghcr.io/comlineproject/ci-tools@sha256:324a7d7e0fc5101cc21d2b1794b29c8c8a67e4eb1f9df7fafb91cfa627748035
     steps:
-      - uses: actions/checkout@v4
-      # The release download fails now and then (GitHub answering 504), so
-      # cue is cached per version, and fetched with retries only on a miss.
-      - name: Cache cue
-        id: cue-cache
-        uses: actions/cache@v4
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
-          path: ~/.local/cue
-          key: cue-${{ env.CUE_VERSION }}-linux-amd64
-      - name: Install cue
-        if: steps.cue-cache.outputs.cache-hit != 'true'
-        # To a file, not piped into tar: a retry would append to a half-read
-        # stream.
-        run: |
-          mkdir -p ~/.local/cue
-          curl -fsSL --retry 5 --retry-all-errors --retry-delay 5 -o cue.tar.gz \
-            "https://github.com/cue-lang/cue/releases/download/$CUE_VERSION/cue_${CUE_VERSION}_linux_amd64.tar.gz"
-          tar -xzf cue.tar.gz -C ~/.local/cue cue
-          rm cue.tar.gz
-      - run: echo "$HOME/.local/cue" >> "$GITHUB_PATH"
+          persist-credentials: false
+      - run: git config --global --add safe.directory "$GITHUB_WORKSPACE"
       - run: runtime/conformance/vendor-spec.sh --check
       - run: runtime/conformance/check.sh
 
   # `comline-runtime` without `std`: the `alloc` tier, and `alloc` plus the
   # JSON-RPC framing, built for wasm32 (no `std` there to lean on) and tested
-  # on the host.
+  # on the host. In the wasm image, which has the wasm32 target.
   wasm32_core:
     name: wasm32 core
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    container: ghcr.io/comlineproject/ci-wasm@sha256:742fbab34886e53d099c7faee9ffa9cd9c53cda085f8139eb112106f9be1e0e5
+    env:
+      # The image's toolchain (the root rust-toolchain.toml's pin, 1.99.1),
+      # without the file's clippy and rustfmt, which this job doesn't use.
+      RUSTUP_TOOLCHAIN: stable
     steps:
-      - uses: actions/checkout@v4
-      # The toolchain is the root rust-toolchain.toml's.
-      - run: rustup target add wasm32-unknown-unknown
-      - uses: Swatinem/rust-cache@v2
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
       - run: cargo build --verbose -p comline-runtime --no-default-features --features alloc,jsonrpc --target wasm32-unknown-unknown
       - run: cargo test --verbose -p comline-runtime --no-default-features --features alloc,jsonrpc
       - run: cargo build --verbose -p comline-runtime --no-default-features --features alloc --target wasm32-unknown-unknown
@@ -110,24 +77,29 @@ jobs:
   # against the wasm32 build, each on the same cases. The Node tests also
   # hold the JS glue to its own rules: a trap poisons the instance (against
   # a `test-hooks` wasm32 build), one crossing per call, and `encodeBound`.
+  # In the tools image, which has cbindgen (0.29.2: keep in step with
+  # runtime/ffi/cbindgen.toml), make and gcc; the wasm32 target is added here.
   ffi:
     name: ffi
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
+    container: ghcr.io/comlineproject/ci-tools@sha256:324a7d7e0fc5101cc21d2b1794b29c8c8a67e4eb1f9df7fafb91cfa627748035
     env:
-      # Keep in step with runtime/ffi/cbindgen.toml.
-      CBINDGEN_VERSION: 0.29.2
+      RUSTUP_TOOLCHAIN: stable
     steps:
-      - uses: actions/checkout@v4
-      # The toolchain is the root rust-toolchain.toml's.
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - run: git config --global --add safe.directory "$GITHUB_WORKSPACE"
       - run: rustup target add wasm32-unknown-unknown
-      - uses: Swatinem/rust-cache@v2
-      - run: cargo install cbindgen --version "$CBINDGEN_VERSION" --locked
+      - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
       - name: comline.h matches the source
         working-directory: runtime/ffi
         run: |
+          cbindgen --version
           cbindgen --config cbindgen.toml --output include/comline.h
           git diff --exit-code -- include/comline.h || {
-            echo "::error file=runtime/ffi/include/comline.h::comline.h is out of date: run cbindgen --config cbindgen.toml --output include/comline.h in runtime/ffi (cbindgen $CBINDGEN_VERSION)"
+            echo "::error file=runtime/ffi/include/comline.h::comline.h is out of date: run cbindgen --config cbindgen.toml --output include/comline.h in runtime/ffi (cbindgen 0.29.2)"
             exit 1
           }
       - name: cdylib and staticlib
@@ -149,7 +121,7 @@ jobs:
         run: cargo run -p comline-runtime-ffi --example export_vectors -- target/ffi-vectors
       - name: C harness (staticlib, cdylib, sanitizers)
         run: make -C runtime/ffi/tests/c check CC=gcc
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         with:
           node-version: 22
       - name: Node harness (wasm32)
@@ -158,17 +130,19 @@ jobs:
   # The `ffi` job on the other platforms (its name, required on main, stays
   # Linux's): the header, the libraries (`.dll`/`.lib` on Windows, `.dylib`
   # on macOS), the Rust replay, the C harness (clang on macOS and Windows;
-  # no sanitizers on Windows) and the Node harness.
+  # no sanitizers on Windows) and the Node harness. Not in a container (the
+  # images are Linux), and the hardening runner is Linux's.
   ffi_platforms:
     name: ffi (${{ matrix.os }})
     runs-on: ${{ matrix.os }}
+    timeout-minutes: 45
     strategy:
       fail-fast: false
       matrix:
         include:
-          - os: windows-latest
+          - os: windows-2025
             cc: clang
-          - os: macos-latest
+          - os: macos-15
             cc: clang
           - os: ubuntu-24.04-arm
             cc: gcc
@@ -178,9 +152,15 @@ jobs:
     env:
       CBINDGEN_VERSION: 0.29.2
     steps:
-      - uses: actions/checkout@v6
+      - uses: step-security/harden-runner@1d88384fd173af6ecb012dfd0264a306b711241a # v2.22.4
+        if: runner.os == 'Linux'
+        with:
+          egress-policy: audit
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
       - run: rustup target add wasm32-unknown-unknown
-      - uses: Swatinem/rust-cache@v2
+      - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
       - run: cargo install cbindgen --version "$CBINDGEN_VERSION" --locked
       - name: comline.h matches the source
         working-directory: runtime/ffi
@@ -198,12 +178,14 @@ jobs:
       - run: cargo test --verbose -p comline-runtime-ffi
       - name: export the vectors for C and Node
         run: cargo run -p comline-runtime-ffi --example export_vectors -- target/ffi-vectors
+      # The one package install that stays: a hosted Windows runner has no CI
+      # image to run in, and installs `make` only when its image lacks it.
       - name: make (Windows)
         if: runner.os == 'Windows'
         run: command -v make || choco install make --no-progress -y
       - name: C harness
         run: make -C runtime/ffi/tests/c check CC=${{ matrix.cc }}
-      - uses: actions/setup-node@v6
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         with:
           node-version: 22
       - name: Node harness (wasm32)
@@ -211,14 +193,20 @@ jobs:
 
   # The C ABI under Miri: the replay and the rule tests, checked for
   # undefined behaviour at the `extern "C"` boundary (aliasing, bounds,
-  # leaks, panics caught at the boundary).
+  # leaks, panics caught at the boundary). On the VM: no CI image has miri.
   ffi_miri:
     name: ffi miri
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
     steps:
-      - uses: actions/checkout@v4
+      - uses: step-security/harden-runner@1d88384fd173af6ecb012dfd0264a306b711241a # v2.22.4
+        with:
+          egress-policy: audit
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
       - run: rustup toolchain install nightly --profile minimal --component miri
-      - uses: Swatinem/rust-cache@v2
+      - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
         with:
           key: miri
       - run: cargo +nightly miri setup

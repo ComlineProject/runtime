@@ -34,6 +34,10 @@ name: Benchmarks
 # annotated on the diff. Nothing is accepted by a label, a setting or a
 # default. See CONTRIBUTING.md.
 #
+# Not the org's reusable bench workflow: valgrind needs the container started
+# with `--security-opt seccomp=unconfined`, and that workflow has no input for
+# container options. The jobs below are its steps, in the same image.
+#
 # Plain `pull_request`, not `pull_request_target`: a fork's pull request runs
 # with a read-only token and no secrets, and the acceptance it can carry is
 # its own diff, which a maintainer reviews before merging.
@@ -53,11 +57,19 @@ on:
 permissions:
   contents: read
 
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
 env:
   CARGO_TERM_COLOR: always
-  # Must match the `iai-callgrind` dev-dependency of every bench target
+  # The CI image's toolchain, whatever the root rust-toolchain.toml (and the
+  # base's, which a pull request's base may still pin differently) says: base
+  # and head are built by the same compiler, and the file's clippy and rustfmt
+  # aren't fetched. The image has iai-callgrind-runner 0.16.1, which must
+  # match the `iai-callgrind` dev-dependency of every bench target
   # (runtime/core/Cargo.toml, runtime/ffi/bench/Cargo.toml).
-  IAI_CALLGRIND_RUNNER_VERSION: 0.16.1
+  RUSTUP_TOOLCHAIN: stable
   # A benchmark fails when its instruction count grows by more than this many
   # percent, unless the ledger accepts it (see the top). Measured when the
   # gate was set up: the same commit, run twice, differs by 0 instructions on
@@ -74,38 +86,39 @@ env:
   # request both are in $RUNNER_TEMP, with paths of the same length (see
   # "Bench the head"). They share
   # iai-callgrind's output directory, where it keeps the base's counts for the
-  # head to compare with.
-  CARGO_TARGET_DIR: ${{ github.workspace }}/target
-  IAI_CALLGRIND_HOME: ${{ github.workspace }}/target-iai
+  # head to compare with. (CARGO_TARGET_DIR and IAI_CALLGRIND_HOME are set by
+  # each job's Settings step: `github.workspace` is the host's path, not the
+  # container's.)
+
 
 jobs:
+  # In the bench image (valgrind 3.24, iai-callgrind-runner 0.16.1, the stable
+  # toolchain, python3). The container's seccomp profile is off, which valgrind
+  # needs. No harden-runner here: it hardens the VM, not a job container.
   instructions:
     name: instruction counts
     if: github.event_name == 'pull_request'
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
+    timeout-minutes: 60
+    container:
+      image: ghcr.io/comlineproject/ci-bench@sha256:0b1226fbc0867f4042a9af87b57311a259f12c5308a62469c4efd24fc0f78382
+      options: --security-opt seccomp=unconfined
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           fetch-depth: 0
+          persist-credentials: false
 
-      - name: Install Valgrind
-        run: sudo apt-get update && sudo apt-get install -y valgrind
+      - name: Settings
+        run: |
+          git config --global --add safe.directory "$GITHUB_WORKSPACE"
+          git config --global --add safe.directory "$RUNNER_TEMP/base"
+          echo "IAI_CALLGRIND_HOME=$GITHUB_WORKSPACE/target-iai" >> "$GITHUB_ENV"
 
       - name: Toolchain
         id: toolchain
-        # `rust-toolchain` picks it; base and head build with the same one.
+        # The image's; base and head build with the same one.
         run: echo "version=$(rustc --version)" >> "$GITHUB_OUTPUT"
-
-      - name: Cache iai-callgrind-runner
-        id: runner-cache
-        uses: actions/cache@v4
-        with:
-          path: ~/.cargo/bin/iai-callgrind-runner
-          key: iai-callgrind-runner-${{ env.IAI_CALLGRIND_RUNNER_VERSION }}-${{ runner.os }}
-
-      - name: Install iai-callgrind-runner
-        if: steps.runner-cache.outputs.cache-hit != 'true'
-        run: cargo install iai-callgrind-runner --version "$IAI_CALLGRIND_RUNNER_VERSION" --locked
 
       - name: Bench the base
         id: base
@@ -199,7 +212,7 @@ jobs:
           fi
           exit "$verdict"
 
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         if: always() && hashFiles('runtime/conformance/reports/rust.bench.json') != ''
         with:
           name: rust.bench.json
@@ -208,36 +221,30 @@ jobs:
   main:
     name: publish instruction counts
     if: github.event_name != 'pull_request'
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
+    timeout-minutes: 60
     permissions:
       contents: write
-    # A newer push to `main` supersedes this one's numbers.
-    concurrency:
-      group: bench-publish-${{ github.ref }}
-      cancel-in-progress: true
+    container:
+      image: ghcr.io/comlineproject/ci-bench@sha256:0b1226fbc0867f4042a9af87b57311a259f12c5308a62469c4efd24fc0f78382
+      options: --security-opt seccomp=unconfined
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           # The publish checks the report is newer than the published one.
           fetch-depth: 0
+          # This job pushes to the reports branch with the checkout's token.
+          persist-credentials: true
 
-      - name: Install Valgrind
-        run: sudo apt-get update && sudo apt-get install -y valgrind
+      - name: Settings
+        run: |
+          git config --global --add safe.directory "$GITHUB_WORKSPACE"
+          echo "IAI_CALLGRIND_HOME=$GITHUB_WORKSPACE/target-iai" >> "$GITHUB_ENV"
+          echo "CARGO_TARGET_DIR=$GITHUB_WORKSPACE/target" >> "$GITHUB_ENV"
 
       - name: Toolchain
         id: toolchain
         run: echo "version=$(rustc --version)" >> "$GITHUB_OUTPUT"
-
-      - name: Cache iai-callgrind-runner
-        id: runner-cache
-        uses: actions/cache@v4
-        with:
-          path: ~/.cargo/bin/iai-callgrind-runner
-          key: iai-callgrind-runner-${{ env.IAI_CALLGRIND_RUNNER_VERSION }}-${{ runner.os }}
-
-      - name: Install iai-callgrind-runner
-        if: steps.runner-cache.outputs.cache-hit != 'true'
-        run: cargo install iai-callgrind-runner --version "$IAI_CALLGRIND_RUNNER_VERSION" --locked
 
       - name: Bench
         run: |
@@ -262,13 +269,13 @@ jobs:
             --markdown "$RUNNER_TEMP/bench.md"
           cat "$RUNNER_TEMP/bench.md" >> "$GITHUB_STEP_SUMMARY"
 
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: rust.bench.json
           path: runtime/conformance/reports/rust.bench.json
 
       - name: Publish to the reports branch
-        uses: ComlineProject/observatory/.github/actions/publish-report@v1
+        uses: ComlineProject/observatory/.github/actions/publish-report@8d21b1fbe68f8b639676153ce1a308eaafdcc6a7 # v1
         with:
           reports: runtime/conformance/reports/rust.bench.json
           readme: .github/reports-branch.md
