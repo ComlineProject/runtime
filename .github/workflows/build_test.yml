@@ -183,11 +183,10 @@ jobs:
       - run: cargo test --verbose -p comline-runtime-ffi
       - name: export the vectors for C and Node
         run: cargo run -p comline-runtime-ffi --example export_vectors -- target/ffi-vectors
-      # The one package install that stays: a hosted Windows runner has no CI
-      # image to run in, and installs `make` only when its image lacks it.
+      # GitHub's Windows image has make (MinGW's); fail plainly if it goes.
       - name: make (Windows)
         if: runner.os == 'Windows'
-        run: command -v make || choco install make --no-progress -y
+        run: command -v make
       - name: C harness
         run: make -C runtime/ffi/tests/c check CC=${{ matrix.cc }}
       - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
