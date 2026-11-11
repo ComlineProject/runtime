@@ -34,11 +34,20 @@ name: Benchmarks
 # annotated on the diff. Nothing is accepted by a label, a setting or a
 # default. See CONTRIBUTING.md.
 #
+# The gate itself is the org's reusable bench workflow (`bench` below), run in
+# the CI bench image. `bench-command: cargo +stable bench` makes base and head
+# build with the image's stable toolchain whatever rust-toolchain.toml says
+# (a pull request's base may still pin another one, and a different compiler
+# moves counts by far more than the limit), and keeps the file's clippy and
+# rustfmt from being fetched. The image's iai-callgrind-runner must match the
+# `iai-callgrind` dev-dependency of every bench target
+# (runtime/core/Cargo.toml, runtime/ffi/bench/Cargo.toml).
+#
 # Plain `pull_request`, not `pull_request_target`: a fork's pull request runs
 # with a read-only token and no secrets, and the acceptance it can carry is
 # its own diff, which a maintainer reviews before merging.
 #
-# Publishing: on every push to `main`, the `main` job benches the new head's
+# Publishing: on every push to `main`, the `publish` job benches the new head's
 # targets alone (nothing to gate) and commits its `rust.bench.json` to the `reports`
 # branch, which the docs fetch from; see the shared publish-report action (ComlineProject/observatory).
 # Only that job can write, and only from `main`: a manual run from another
@@ -53,223 +62,29 @@ on:
 permissions:
   contents: read
 
-env:
-  CARGO_TERM_COLOR: always
-  # Must match the `iai-callgrind` dev-dependency of every bench target
-  # (runtime/core/Cargo.toml, runtime/ffi/bench/Cargo.toml).
-  IAI_CALLGRIND_RUNNER_VERSION: 0.16.1
-  # A benchmark fails when its instruction count grows by more than this many
-  # percent, unless the ledger accepts it (see the top). Measured when the
-  # gate was set up: the same commit, run twice, differs by 0 instructions on
-  # every benchmark, and with one codegen unit
-  # (`[profile.bench]` in Cargo.toml) a change to one function leaves the
-  # others' counts alone. 1% is above that, and catches a few instructions on
-  # the smallest benchmarks.
-  BENCH_LIMIT_PERCENT: 1
-  # The ledger of accepted regressions (see the top).
-  LEDGER: runtime/core/benches/accepted-regressions.toml
-  # Base and head build into separate target directories: in a shared one,
-  # Cargo names a workspace's path packages the same from either checkout, and
-  # the head's older source mtimes make it reuse the base's build. On a pull
-  # request both are in $RUNNER_TEMP, with paths of the same length (see
-  # "Bench the head"). They share
-  # iai-callgrind's output directory, where it keeps the base's counts for the
-  # head to compare with.
-  CARGO_TARGET_DIR: ${{ github.workspace }}/target
-  IAI_CALLGRIND_HOME: ${{ github.workspace }}/target-iai
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 jobs:
-  instructions:
-    name: instruction counts
-    if: github.event_name == 'pull_request'
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-        with:
-          fetch-depth: 0
-
-      - name: Install Valgrind
-        run: sudo apt-get update && sudo apt-get install -y valgrind
-
-      - name: Toolchain
-        id: toolchain
-        # `rust-toolchain` picks it; base and head build with the same one.
-        run: echo "version=$(rustc --version)" >> "$GITHUB_OUTPUT"
-
-      - name: Cache iai-callgrind-runner
-        id: runner-cache
-        uses: actions/cache@v4
-        with:
-          path: ~/.cargo/bin/iai-callgrind-runner
-          key: iai-callgrind-runner-${{ env.IAI_CALLGRIND_RUNNER_VERSION }}-${{ runner.os }}
-
-      - name: Install iai-callgrind-runner
-        if: steps.runner-cache.outputs.cache-hit != 'true'
-        run: cargo install iai-callgrind-runner --version "$IAI_CALLGRIND_RUNNER_VERSION" --locked
-
-      - name: Bench the base
-        id: base
-        env:
-          BASE_SHA: ${{ github.event.pull_request.base.sha }}
-        run: |
-          git worktree add "$RUNNER_TEMP/base" "$BASE_SHA"
-          cd "$RUNNER_TEMP/base"
-          # The base's own targets. A base from before the list had the
-          # runtime's alone, or, earlier still, no benches.
-          if ! python3 .github/scripts/bench-report.py --targets > "$RUNNER_TEMP/base-targets" 2>/dev/null; then
-            if [ -f runtime/core/benches/runtime.rs ]; then
-              echo "comline-runtime runtime" > "$RUNNER_TEMP/base-targets"
-            else
-              : > "$RUNNER_TEMP/base-targets"
-            fi
-          fi
-          if [ ! -s "$RUNNER_TEMP/base-targets" ]; then
-            echo "The base ($BASE_SHA) has no benches; recording head only."
-            echo "compare=false" >> "$GITHUB_OUTPUT"
-            exit 0
-          fi
-          mapfile -t targets < "$RUNNER_TEMP/base-targets"
-          for target in "${targets[@]}"; do
-            read -r package bench <<< "$target"
-            echo "::group::Base: $package --bench $bench"
-            CARGO_TARGET_DIR="$RUNNER_TEMP/base-target" cargo bench -p "$package" --bench "$bench" -- \
-              --save-baseline=base --save-summary=json
-            echo "::endgroup::"
-          done
-          # The base's own summaries, kept apart from the head's: they say
-          # which benchmarks the base had, so one the head drops or renames
-          # is noticed, and give a renamed one its old count.
-          mkdir -p "$RUNNER_TEMP/base-iai"
-          (cd "$IAI_CALLGRIND_HOME" && find . -name summary.json -exec cp --parents {} "$RUNNER_TEMP/base-iai" \;)
-          echo "compare=true" >> "$GITHUB_OUTPUT"
-
-      - name: Bench the head
-        env:
-          COMPARE: ${{ steps.base.outputs.compare }}
-        run: |
-          find "$IAI_CALLGRIND_HOME" -name summary.json -delete 2>/dev/null || true
-          # Beside the base's, and as long a path: a bench binary's path is
-          # in its arguments, and its length moves the heap, which moves some
-          # counts by a few instructions (16 of the ffi target's 102, when
-          # measured with paths 16 bytes apart). Same length, same counts.
-          export CARGO_TARGET_DIR="$RUNNER_TEMP/head-target"
-          # No --callgrind-limits: the gate is the Report step's, which knows
-          # the ledger. So this step fails only when a benchmark can't run.
-          # A target the base ran is compared with its baseline; one the base
-          # doesn't have is recorded only.
-          listed=$(python3 .github/scripts/bench-report.py --targets)
-          mapfile -t targets <<< "$listed"
-          for target in "${targets[@]}"; do
-            read -r package bench <<< "$target"
-            echo "::group::Head: $package --bench $bench"
-            if [ "$COMPARE" = "true" ] && grep -qxF "$target" "$RUNNER_TEMP/base-targets"; then
-              cargo bench -p "$package" --bench "$bench" -- --baseline=base --save-summary=json
-            else
-              echo "The base doesn't have this target; recording head only."
-              cargo bench -p "$package" --bench "$bench" -- --save-summary=json
-            fi
-            echo "::endgroup::"
-          done
-
-      - name: Report and gate
-        env:
-          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
-          PR: ${{ github.event.pull_request.number }}
-          TOOLCHAIN: ${{ steps.toolchain.outputs.version }}
-        run: |
-          # The base's ledger tells this pull request's entries from history;
-          # a base without one has none. The script's exit status is the
-          # verdict, given after the summary is written.
-          set +e
-          python3 .github/scripts/bench-report.py \
-            --home "$IAI_CALLGRIND_HOME" \
-            --commit "$HEAD_SHA" \
-            --toolchain "$TOOLCHAIN" \
-            --limit "$BENCH_LIMIT_PERCENT" \
-            --pr "$PR" \
-            --base-home "$RUNNER_TEMP/base-iai" \
-            --ledger "$LEDGER" \
-            --base-ledger "$RUNNER_TEMP/base/$LEDGER" \
-            --report runtime/conformance/reports/rust.bench.json \
-            --markdown "$RUNNER_TEMP/bench.md"
-          verdict=$?
-          cat "$RUNNER_TEMP/bench.md" >> "$GITHUB_STEP_SUMMARY"
-          if [ "$verdict" != 0 ]; then
-            echo "::error::The instruction-count gate failed; see the job summary."
-          fi
-          exit "$verdict"
-
-      - uses: actions/upload-artifact@v4
-        if: always() && hashFiles('runtime/conformance/reports/rust.bench.json') != ''
-        with:
-          name: rust.bench.json
-          path: runtime/conformance/reports/rust.bench.json
-
-  main:
-    name: publish instruction counts
-    if: github.event_name != 'pull_request'
-    runs-on: ubuntu-latest
+  bench:
+    name: bench
+    # contents: write is for the publish job alone (never on a pull request);
+    # the gate job asks for contents: read.
     permissions:
       contents: write
-    # A newer push to `main` supersedes this one's numbers.
-    concurrency:
-      group: bench-publish-${{ github.ref }}
-      cancel-in-progress: true
-    steps:
-      - uses: actions/checkout@v4
-        with:
-          # The publish checks the report is newer than the published one.
-          fetch-depth: 0
-
-      - name: Install Valgrind
-        run: sudo apt-get update && sudo apt-get install -y valgrind
-
-      - name: Toolchain
-        id: toolchain
-        run: echo "version=$(rustc --version)" >> "$GITHUB_OUTPUT"
-
-      - name: Cache iai-callgrind-runner
-        id: runner-cache
-        uses: actions/cache@v4
-        with:
-          path: ~/.cargo/bin/iai-callgrind-runner
-          key: iai-callgrind-runner-${{ env.IAI_CALLGRIND_RUNNER_VERSION }}-${{ runner.os }}
-
-      - name: Install iai-callgrind-runner
-        if: steps.runner-cache.outputs.cache-hit != 'true'
-        run: cargo install iai-callgrind-runner --version "$IAI_CALLGRIND_RUNNER_VERSION" --locked
-
-      - name: Bench
-        run: |
-          listed=$(python3 .github/scripts/bench-report.py --targets)
-          mapfile -t targets <<< "$listed"
-          for target in "${targets[@]}"; do
-            read -r package bench <<< "$target"
-            echo "::group::$package --bench $bench"
-            cargo bench -p "$package" --bench "$bench" -- --save-summary=json
-            echo "::endgroup::"
-          done
-
-      - name: Report
-        env:
-          TOOLCHAIN: ${{ steps.toolchain.outputs.version }}
-        run: |
-          python3 .github/scripts/bench-report.py \
-            --home "$IAI_CALLGRIND_HOME" \
-            --commit "$GITHUB_SHA" \
-            --toolchain "$TOOLCHAIN" \
-            --report runtime/conformance/reports/rust.bench.json \
-            --markdown "$RUNNER_TEMP/bench.md"
-          cat "$RUNNER_TEMP/bench.md" >> "$GITHUB_STEP_SUMMARY"
-
-      - uses: actions/upload-artifact@v4
-        with:
-          name: rust.bench.json
-          path: runtime/conformance/reports/rust.bench.json
-
-      - name: Publish to the reports branch
-        uses: ComlineProject/observatory/.github/actions/publish-report@v1
-        with:
-          reports: runtime/conformance/reports/rust.bench.json
-          readme: .github/reports-branch.md
-          dry-run: ${{ github.ref != 'refs/heads/main' && 'true' || 'false' }}
+    uses: ComlineProject/.github/.github/workflows/bench.yml@797d473553d7f2fc50895bb2573acb83ac63c7cb # 2026-11-12
+    with:
+      image: ghcr.io/comlineproject/ci-bench@sha256:235555448c3c6027960cd95c0b2974014484e0c4f2808f064eb4cb3df91cebc0
+      bench-command: cargo +stable bench
+      ledger: runtime/core/benches/accepted-regressions.toml
+      report-path: runtime/conformance/reports/rust.bench.json
+      # A benchmark fails when its instruction count grows by more than this
+      # many percent, unless the ledger accepts it (see the top). Measured when
+      # the gate was set up: the same commit, run twice, differs by 0
+      # instructions on every benchmark, and with one codegen unit
+      # (`[profile.bench]` in Cargo.toml) a change to one function leaves the
+      # others' counts alone. 1% is above that, and catches a few instructions
+      # on the smallest benchmarks.
+      limit-percent: '1'
+      publish: true

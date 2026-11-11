@@ -17,6 +17,12 @@ name: Fuzz
 # the `reports` branch, which the docs and the Observatory read, with its
 # `publish-report` action. Only the `publish` job can write, and never on a
 # pull request; other runs do a dry run of the publish.
+#
+# The fuzz jobs, the report and the publish are the org's reusable fuzz
+# workflow (`fuzz` below), in the CI fuzz image. The property tests and the
+# size tests are this repository's own jobs, in the same image; the property
+# tests' verdicts reach the report as a `fuzz-stats-proptest` fragment, so the
+# `fuzz` call waits for that job (the nightly runs it; a pull request doesn't).
 
 on:
   pull_request:
@@ -24,158 +30,82 @@ on:
     - cron: "17 3 * * *"
   workflow_dispatch:
 
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+# Container jobs default to `sh`; the steps are bash (arrays, mapfile, pipefail).
+defaults:
+  run:
+    shell: bash
+
 env:
   CARGO_TERM_COLOR: always
-  # cargo-fuzz needs nightly; this overrides any rust-toolchain file.
-  RUSTUP_TOOLCHAIN: nightly
-  CARGO_FUZZ_VERSION: 0.13.2
 
 jobs:
   # The targets, from runtime/fuzz/Cargo.toml's [[bin]]s: the one list, which
-  # the matrix and the report's `expect` read. Fails when the README's targets
-  # table differs.
+  # the reusable workflow's matrix and the report's `expect` read. Fails when
+  # the README's targets table differs.
   targets:
     name: fuzz targets
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
     outputs:
       list: ${{ steps.targets.outputs.list }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: step-security/harden-runner@1d88384fd173af6ecb012dfd0264a306b711241a # v2.22.4
+        with:
+          egress-policy: audit
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
       - id: targets
         run: echo "list=$(.github/scripts/fuzz-targets.py)" >> "$GITHUB_OUTPUT"
 
   fuzz:
-    name: fuzz (${{ matrix.target }})
-    needs: targets
-    runs-on: ubuntu-latest
+    name: fuzz
+    needs: [targets, properties]
+    # The property tests are skipped on a pull request, which would skip this.
+    if: ${{ !cancelled() && needs.targets.result == 'success' }}
+    # contents: write for the publish job, issues: write for the fuzz jobs;
+    # inside the reusable workflow each is on that job alone.
     permissions:
-      contents: read
+      contents: write
       issues: write
-    strategy:
-      fail-fast: false
-      matrix:
-        target: ${{ fromJSON(needs.targets.outputs.list) }}
-    env:
-      NIGHTLY: ${{ github.event_name != 'pull_request' }}
-      SECONDS_PER_TARGET: ${{ github.event_name == 'pull_request' && 60 || 600 }}
-    steps:
-      - uses: actions/checkout@v4
-      - run: rustup toolchain install nightly --profile minimal
-
-      - name: Cache cargo-fuzz
-        id: cargo-fuzz
-        uses: actions/cache@v4
-        with:
-          path: ~/.cargo/bin/cargo-fuzz
-          key: cargo-fuzz-${{ env.CARGO_FUZZ_VERSION }}-${{ runner.os }}
-      - if: steps.cargo-fuzz.outputs.cache-hit != 'true'
-        run: cargo install cargo-fuzz --locked --version "$CARGO_FUZZ_VERSION"
-
-      - name: Cache the corpus
-        if: env.NIGHTLY == 'true'
-        uses: actions/cache@v4
-        with:
-          path: runtime/fuzz/corpus/${{ matrix.target }}
-          key: fuzz-corpus-${{ matrix.target }}-${{ github.run_id }}
-          restore-keys: fuzz-corpus-${{ matrix.target }}-
-
-      - name: Seed the corpus from the vectors
-        run: sh runtime/fuzz/seed-corpus.sh
-
-      - name: Build
-        id: build
-        run: |
-          cargo fuzz build --fuzz-dir runtime/fuzz ${{ matrix.target }}
-          echo "toolchain=$(rustc --version)" >> "$GITHUB_OUTPUT"
-
-      - name: Fuzz for ${{ env.SECONDS_PER_TARGET }}s
-        id: run
-        shell: bash
-        run: |
-          set -o pipefail
-          start=$(date +%s)
-          trap 'echo "seconds=$(( $(date +%s) - start ))" >> "$GITHUB_OUTPUT"' EXIT
-          # The nightly forks a process per core; fork mode stops at the first
-          # crash, as a single process does.
-          fork=()
-          [ "$NIGHTLY" = true ] && fork=("-fork=$(nproc)")
-          cargo fuzz run --fuzz-dir runtime/fuzz ${{ matrix.target }} -- \
-            -max_total_time=${{ env.SECONDS_PER_TARGET }} "${fork[@]}" \
-            -rss_limit_mb=2048 -malloc_limit_mb=512 -print_final_stats=1 \
-            2>&1 | tee "$RUNNER_TEMP/fuzz.log"
-
-      # Before minimizing, which adds its own files next to the finding.
-      - name: Record the run
-        if: always() && steps.build.outcome == 'success'
-        uses: ComlineProject/observatory/.github/actions/report-fuzz@v1
-        with:
-          mode: target
-          name: ${{ matrix.target }}
-          toolchain: ${{ steps.build.outputs.toolchain }}
-          log: ${{ runner.temp }}/fuzz.log
-          corpus: runtime/fuzz/corpus/${{ matrix.target }}
-          artifacts: runtime/fuzz/artifacts/${{ matrix.target }}
-          wall-seconds: ${{ steps.run.outputs.seconds || 0 }}
-          fragment: ${{ runner.temp }}/stats/${{ matrix.target }}.json
-      - if: always() && steps.build.outcome == 'success'
-        uses: actions/upload-artifact@v4
-        with:
-          name: fuzz-stats-${{ matrix.target }}
-          path: ${{ runner.temp }}/stats
-
-      - name: Minimize the crash
-        if: failure()
-        run: |
-          for crash in runtime/fuzz/artifacts/${{ matrix.target }}/*; do
-            [ -f "$crash" ] || continue
-            cargo fuzz tmin --fuzz-dir runtime/fuzz ${{ matrix.target }} "$crash" -r 2000 || true
-          done
-      - name: Upload the crash
-        if: failure()
-        uses: actions/upload-artifact@v4
-        with:
-          name: fuzz-${{ matrix.target }}
-          path: runtime/fuzz/artifacts/${{ matrix.target }}
-          if-no-files-found: ignore
-
-      - name: Open an issue
-        if: failure() && env.NIGHTLY == 'true'
-        env:
-          GH_TOKEN: ${{ github.token }}
-          TITLE: "Nightly fuzzing failed: ${{ matrix.target }}"
-          RUN: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
-        run: |
-          open=$(gh issue list --repo "$GITHUB_REPOSITORY" --state open --limit 200 \
-            --json title --jq "map(select(.title == env.TITLE)) | length")
-          if [ "$open" != "0" ]; then
-            echo "An issue titled '$TITLE' is already open."
-            exit 0
-          fi
-          {
-            echo "The nightly fuzz run failed: $RUN"
-            echo
-            echo "The crash and its minimized form are the run's \`fuzz-${{ matrix.target }}\` artifact. As hex:"
-            echo
-            for crash in runtime/fuzz/artifacts/${{ matrix.target }}/*; do
-              [ -f "$crash" ] || continue
-              echo "- \`$(basename "$crash")\`: \`$(od -An -v -tx1 "$crash" | tr -d ' \n' | cut -c1-2000)\`"
-            done
-            echo
-            echo "Reproduce with \`cargo +nightly fuzz run --fuzz-dir runtime/fuzz ${{ matrix.target }} <file>\`."
-            echo "A real bug becomes a \`found-*\` vector; see runtime/fuzz/README.md."
-          } > body.md
-          gh issue create --repo "$GITHUB_REPOSITORY" --title "$TITLE" --body-file body.md
+    uses: ComlineProject/.github/.github/workflows/fuzz.yml@797d473553d7f2fc50895bb2573acb83ac63c7cb # 2026-11-12
+    with:
+      image: ghcr.io/comlineproject/ci-fuzz@sha256:d18222e3007d318c73b1df500d997222ff6dca536b4b0e89e6ab7e55fc81326a
+      targets: ${{ needs.targets.outputs.list }}
+      fuzz-dir: runtime/fuzz
+      duration: 600
+      pr-duration: 60
+      crash-format: hex
+      report-path: runtime/conformance/reports/rust.fuzz.json
+      report-subject: rust
+      publish: true
 
   properties:
     name: proptest (100000 cases)
     if: github.event_name != 'pull_request'
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
+    timeout-minutes: 120
     permissions:
       contents: read
       issues: write
+    container: ghcr.io/comlineproject/ci-fuzz@sha256:d18222e3007d318c73b1df500d997222ff6dca536b4b0e89e6ab7e55fc81326a
+    env:
+      # The image's nightly, over the root rust-toolchain.toml.
+      RUSTUP_TOOLCHAIN: nightly
     steps:
-      - uses: actions/checkout@v4
-      - run: rustup toolchain install nightly --profile minimal
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - run: |
+          git config --global --add safe.directory "$GITHUB_WORKSPACE"
+          mkdir -p fuzz-out/stats
       - name: Property tests
         id: properties
         shell: bash
@@ -186,26 +116,26 @@ jobs:
           set -o pipefail
           status=0
           cargo test --release -p comline-runtime-conformance --test properties \
-            2>&1 | tee "$RUNNER_TEMP/proptest.log" || status=1
+            2>&1 | tee fuzz-out/proptest.log || status=1
           cargo test --release -p comline-runtime-ffi --test differential the_abi_agrees_with_the_core \
-            2>&1 | tee -a "$RUNNER_TEMP/proptest.log" || status=1
+            2>&1 | tee -a fuzz-out/proptest.log || status=1
           exit $status
       - name: Record the run
         if: always()
-        uses: ComlineProject/observatory/.github/actions/report-fuzz@v1
+        uses: ComlineProject/observatory/.github/actions/report-fuzz@8d21b1fbe68f8b639676153ce1a308eaafdcc6a7 # v1
         with:
           mode: proptest
-          log: ${{ runner.temp }}/proptest.log
+          log: fuzz-out/proptest.log
           cases: 100000
-          fragment: ${{ runner.temp }}/stats/proptest.json
+          fragment: fuzz-out/stats/proptest.json
       - if: always()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: fuzz-stats-proptest
-          path: ${{ runner.temp }}/stats
+          path: fuzz-out/stats
       - name: Upload the failing seeds
         if: failure()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: proptest-regressions
           path: |
@@ -235,23 +165,27 @@ jobs:
   # on a failure.
   sizes:
     name: sizes (proptest)
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 120
     permissions:
       contents: read
       issues: write
+    container: ghcr.io/comlineproject/ci-fuzz@sha256:d18222e3007d318c73b1df500d997222ff6dca536b4b0e89e6ab7e55fc81326a
     env:
+      RUSTUP_TOOLCHAIN: nightly
       NIGHTLY: ${{ github.event_name != 'pull_request' }}
     steps:
-      - uses: actions/checkout@v4
-      - run: rustup toolchain install nightly --profile minimal
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - run: git config --global --add safe.directory "$GITHUB_WORKSPACE"
       - name: Size tests
         env:
           PROPTEST_CASES: ${{ github.event_name == 'pull_request' && '256' || '20000' }}
         run: cargo test --release --manifest-path runtime/fuzz/Cargo.toml --test sizes
       - name: Upload the failing seeds
         if: failure()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: sizes-proptest-regressions
           path: runtime/fuzz/tests/sizes.proptest-regressions
@@ -271,65 +205,3 @@ jobs:
           fi
           gh issue create --repo "$GITHUB_REPOSITORY" --title "$TITLE" --body \
             "The nightly size tests (runtime/fuzz/tests/sizes.rs, PROPTEST_CASES=20000) failed: $RUN. The minimal failing input is in the job log; the seed is the run's \`sizes-proptest-regressions\` artifact."
-
-  report:
-    name: fuzz report
-    needs: [targets, fuzz, properties]
-    if: ${{ !cancelled() }}
-    runs-on: ubuntu-latest
-    permissions:
-      contents: read
-    steps:
-      - uses: actions/checkout@v4
-        with:
-          # The dry run checks the report is newer than the published one.
-          fetch-depth: 0
-      - uses: actions/download-artifact@v4
-        with:
-          pattern: fuzz-stats-*
-          path: ${{ runner.temp }}/stats
-      - name: Report
-        uses: ComlineProject/observatory/.github/actions/report-fuzz@v1
-        with:
-          mode: combine
-          subject: rust
-          fragments: ${{ runner.temp }}/stats
-          expect: ${{ join(fromJSON(needs.targets.outputs.list), ' ') }}
-          output: runtime/conformance/reports/rust.fuzz.json
-          markdown: ${{ runner.temp }}/fuzz.md
-      - run: cat "$RUNNER_TEMP/fuzz.md" >> "$GITHUB_STEP_SUMMARY"
-      - uses: actions/upload-artifact@v4
-        with:
-          name: rust.fuzz.json
-          path: runtime/conformance/reports/rust.fuzz.json
-      - name: Publish (dry run)
-        if: github.ref != 'refs/heads/main' || github.event_name == 'pull_request'
-        uses: ComlineProject/observatory/.github/actions/publish-report@v1
-        with:
-          reports: runtime/conformance/reports/rust.fuzz.json
-          readme: .github/reports-branch.md
-          dry-run: 'true'
-
-  publish:
-    name: publish fuzz report
-    needs: report
-    if: ${{ !cancelled() && needs.report.result == 'success' && github.ref == 'refs/heads/main' && github.event_name != 'pull_request' }}
-    runs-on: ubuntu-latest
-    permissions:
-      contents: write
-    concurrency:
-      group: fuzz-publish
-      cancel-in-progress: false
-    steps:
-      - uses: actions/checkout@v4
-        with:
-          fetch-depth: 0
-      - uses: actions/download-artifact@v4
-        with:
-          name: rust.fuzz.json
-          path: ${{ runner.temp }}/report
-      - name: Publish to the reports branch
-        uses: ComlineProject/observatory/.github/actions/publish-report@v1
-        with:
-          reports: ${{ runner.temp }}/report/rust.fuzz.json
-          readme: .github/reports-branch.md
