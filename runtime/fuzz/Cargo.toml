@@ -23,6 +23,11 @@ comline-runtime-ffi = { path = "../ffi" }
 serde = { version = "1.0.190", features = ["derive"] }
 # The seed-vs-derive mirrors (`conformance/tests/common`) need it.
 serde-big-array = "0.5"
+serde_json = "1.0.108"
+# The compiler's byte ranges and witnesses, which `sizes_vs_core` holds to the
+# real encoders: the IR alone (no parser), and only here. The runtime library
+# never depends on it.
+comline-core = { git = "https://github.com/ComlineProject/core", rev = "d1b678a983b90453c8c9288ef44a7c00d26711a5", default-features = false }
 
 # The targets: these [[bin]]s are the one list of them. fuzz.yml's matrix and
 # its report's `expect` read it (.github/scripts/fuzz-targets.py), which fails
@@ -83,8 +88,17 @@ test = false
 doc = false
 bench = false
 
+[[bin]]
+name = "sizes_vs_core"
+path = "fuzz_targets/sizes_vs_core.rs"
+test = false
+doc = false
+bench = false
+
 [dev-dependencies]
-serde_json = "1.0.108"
+# The proptest twin of `sizes_vs_core` (`tests/sizes.rs`); `PROPTEST_CASES`
+# raises the count.
+proptest = "1.5"
 
 # Writes the seed corpora from the conformance vectors; see seed-corpus.sh.
 [[example]]

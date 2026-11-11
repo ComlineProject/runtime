@@ -34,6 +34,7 @@
 //! own, in [`ffi`].
 
 pub mod ffi;
+pub mod sizes;
 
 use arbitrary::Unstructured;
 use comline_runtime::contract::{FORMAT_JSON, FORMAT_MSGPACK, FORMAT_PACKED};
