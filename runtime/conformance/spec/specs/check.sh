@@ -2,7 +2,8 @@
 # Generates gen/*.schema.json (and benches/bench.schema.json, which ships with
 # the benches so a vendored copy of them is whole) from the specs, and
 # features.json, catalog/gen/catalog.json and rust/src/catalog.rs from the
-# catalog, and vets every corpus file against them. `--check` fails instead of
+# catalog, and vets every corpus file against them (and, with jq, holds the
+# size rules to their vectors). `--check` fails instead of
 # writing when a generated file is stale.
 set -eu
 cd "$(dirname "$0")"
@@ -91,6 +92,22 @@ for file in ../profiles/*.json; do
     fi
     if [ "$(cue export "json:" "$file" -e name --out text)" != "$(basename "$file" .json)" ]; then
         echo "$file names another encoding" >&2
+        failed=1
+    fi
+done
+
+# A format's size rules are proven by its size vectors: every rule lists cases
+# that exist and show it, every case proves a rule, and every witness is as long
+# as its case says (`specs/sizes.jq`).
+for file in ../profiles/*.json; do
+    feature=$(jq -r '.sizes.feature // empty' "$file")
+    [ -n "$feature" ] || continue
+    if ! problems=$(jq -n -r --slurpfile profile "$file" --slurpfile vectors "../vectors/$feature.json" -f sizes.jq); then
+        echo "$file or ../vectors/$feature.json can't be read as size rules and vectors" >&2
+        failed=1
+    elif [ -n "$problems" ]; then
+        echo "$file's size rules aren't proven by ../vectors/$feature.json:" >&2
+        echo "$problems" >&2
         failed=1
     fi
 done

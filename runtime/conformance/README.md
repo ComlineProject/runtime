@@ -62,6 +62,17 @@ find become `found-*` vectors; the fuzz README says how.
 `profiles_are_proven` checks that every case each profile fact names exists,
 passes against `comline-runtime`, and shows the stated value.
 
+The exception to "computed here" is the `sizes-*` features: their cases (a
+type, its byte range, and values that reach the ends of it with the bytes they
+encode to) are written in the specification, from a model of the encoders, and
+this runtime is what proves them. `run` asks the real encoders to write each
+witness's value as its type, requires exactly the witness's bytes, and
+requires `WireFormat::encoded_len` to give the witness's length;
+`size_rules_are_proven` holds every rule a profile's `sizes` states to cases
+that pass. A witness that disagrees with the encoder is a fault in the
+specification's vectors, fixed there, unless the encoder is what's wrong.
+`tests/properties.rs` checks `encoded_len` against `encode` over random values.
+
 ## Support, and its proof
 
 Rust's claims are in [`support/rust.json`](support/rust.json), held to the

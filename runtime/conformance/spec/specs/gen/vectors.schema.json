@@ -724,6 +724,26 @@
                         "input",
                         "op"
                     ]
+                },
+                {
+                    "type": "object",
+                    "additionalProperties": false,
+                    "properties": {
+                        "id": {
+                            "$ref": "#/$defs/CaseId"
+                        },
+                        "input": {
+                            "$ref": "#/$defs/SizeInput"
+                        },
+                        "op": {
+                            "const": "size"
+                        }
+                    },
+                    "required": [
+                        "id",
+                        "input",
+                        "op"
+                    ]
                 }
             ]
         },
@@ -1489,6 +1509,11 @@
                 "value"
             ]
         },
+        "EncodingName": {
+            "type": "string",
+            "description": "A wire format's or a framing's name, versioned or not, namespaced or not.",
+            "pattern": "^[a-z0-9._-]+(@[0-9]+)?$"
+        },
         "Expect": {
             "description": "By default, exact.",
             "enum": [
@@ -1787,6 +1812,382 @@
             "type": "string",
             "description": "A signed integer as a decimal string.",
             "pattern": "^(0|-?[1-9][0-9]*)$"
+        },
+        "SizeBytes": {
+            "allOf": [
+                {
+                    "type": "number"
+                },
+                {
+                    "type": "integer",
+                    "maximum": 9007199254740991,
+                    "minimum": 0
+                }
+            ]
+        },
+        "SizeInput": {
+            "type": "object",
+            "description": "How many bytes a type takes in a format: at least `min`, at most `max` (`null`:\nno bound), and values written to each, as `witnesses`. A `size` case has no\n`bytes`: each witness has its own. The numbers are at most 2^53, so a JSON\nreader that holds numbers as doubles keeps them exact.\n\n- `witnesses.min` encodes to exactly `min` bytes.\n- `witnesses.max` encodes to exactly `max` bytes. It is left out when `max`\n  is `null`, which no value reaches, and when `upper_bound` is `true`: then\n  `max` is only a bound that no value is known to reach.\n- Every value in `between` encodes to a length from `min` to `max`.\n\nEncoding a witness's `value` as `type` in `format` gives its `bytes`\nexactly (not `compare`d as JSON, so a float's text counts too).",
+            "additionalProperties": false,
+            "properties": {
+                "format": {
+                    "$ref": "#/$defs/EncodingName"
+                },
+                "max": {
+                    "anyOf": [
+                        {
+                            "type": "null"
+                        },
+                        {
+                            "$ref": "#/$defs/SizeBytes"
+                        }
+                    ]
+                },
+                "min": {
+                    "$ref": "#/$defs/SizeBytes"
+                },
+                "type": {
+                    "$ref": "#/$defs/SizeType"
+                },
+                "upper_bound": {
+                    "const": true
+                },
+                "witnesses": {
+                    "type": "object",
+                    "additionalProperties": false,
+                    "properties": {
+                        "between": {
+                            "type": "array",
+                            "items": {
+                                "$ref": "#/$defs/Witness"
+                            }
+                        },
+                        "max": {
+                            "$ref": "#/$defs/Witness"
+                        },
+                        "min": {
+                            "$ref": "#/$defs/Witness"
+                        }
+                    },
+                    "required": [
+                        "min"
+                    ]
+                }
+            },
+            "required": [
+                "format",
+                "max",
+                "min",
+                "type",
+                "witnesses"
+            ]
+        },
+        "SizeType": {
+            "description": "A type a `size` case gives the range of: `#Type`, and `fixed_string` for\n`char[N]`, a string of exactly N characters. The sizes of `string`,\n`bounded_string` and `fixed_string` count characters (Unicode scalar\nvalues), as `char[max N]` does.",
+            "anyOf": [
+                {
+                    "const": "bool"
+                },
+                {
+                    "const": "u8"
+                },
+                {
+                    "const": "u16"
+                },
+                {
+                    "const": "u32"
+                },
+                {
+                    "const": "u64"
+                },
+                {
+                    "const": "u128"
+                },
+                {
+                    "const": "i8"
+                },
+                {
+                    "const": "i16"
+                },
+                {
+                    "const": "i32"
+                },
+                {
+                    "const": "i64"
+                },
+                {
+                    "const": "i128"
+                },
+                {
+                    "const": "f32"
+                },
+                {
+                    "const": "f64"
+                },
+                {
+                    "const": "string"
+                },
+                {
+                    "const": "char"
+                },
+                {
+                    "const": "unit"
+                },
+                {
+                    "const": "self"
+                },
+                {
+                    "type": "object",
+                    "additionalProperties": false,
+                    "properties": {
+                        "bounded_string": {
+                            "type": "object",
+                            "additionalProperties": false,
+                            "properties": {
+                                "max": {
+                                    "allOf": [
+                                        {
+                                            "type": "number"
+                                        },
+                                        {
+                                            "type": "integer",
+                                            "maximum": 4294967295,
+                                            "minimum": 0
+                                        }
+                                    ]
+                                }
+                            },
+                            "required": [
+                                "max"
+                            ]
+                        }
+                    },
+                    "required": [
+                        "bounded_string"
+                    ]
+                },
+                {
+                    "type": "object",
+                    "additionalProperties": false,
+                    "properties": {
+                        "fixed_string": {
+                            "type": "object",
+                            "additionalProperties": false,
+                            "properties": {
+                                "len": {
+                                    "allOf": [
+                                        {
+                                            "type": "number"
+                                        },
+                                        {
+                                            "type": "integer",
+                                            "maximum": 4294967295,
+                                            "minimum": 0
+                                        }
+                                    ]
+                                }
+                            },
+                            "required": [
+                                "len"
+                            ]
+                        }
+                    },
+                    "required": [
+                        "fixed_string"
+                    ]
+                },
+                {
+                    "type": "object",
+                    "additionalProperties": false,
+                    "properties": {
+                        "option": {
+                            "$ref": "#/$defs/SizeType"
+                        }
+                    },
+                    "required": [
+                        "option"
+                    ]
+                },
+                {
+                    "type": "object",
+                    "additionalProperties": false,
+                    "properties": {
+                        "array": {
+                            "$ref": "#/$defs/SizeType"
+                        }
+                    },
+                    "required": [
+                        "array"
+                    ]
+                },
+                {
+                    "type": "object",
+                    "additionalProperties": false,
+                    "properties": {
+                        "fixed": {
+                            "type": "object",
+                            "additionalProperties": false,
+                            "properties": {
+                                "len": {
+                                    "allOf": [
+                                        {
+                                            "type": "number"
+                                        },
+                                        {
+                                            "type": "integer",
+                                            "minimum": 0
+                                        }
+                                    ]
+                                },
+                                "of": {
+                                    "$ref": "#/$defs/SizeType"
+                                }
+                            },
+                            "required": [
+                                "len",
+                                "of"
+                            ]
+                        }
+                    },
+                    "required": [
+                        "fixed"
+                    ]
+                },
+                {
+                    "type": "object",
+                    "additionalProperties": false,
+                    "properties": {
+                        "bounded_array": {
+                            "type": "object",
+                            "additionalProperties": false,
+                            "properties": {
+                                "max": {
+                                    "allOf": [
+                                        {
+                                            "type": "number"
+                                        },
+                                        {
+                                            "type": "integer",
+                                            "maximum": 4294967295,
+                                            "minimum": 0
+                                        }
+                                    ]
+                                },
+                                "of": {
+                                    "$ref": "#/$defs/SizeType"
+                                }
+                            },
+                            "required": [
+                                "max",
+                                "of"
+                            ]
+                        }
+                    },
+                    "required": [
+                        "bounded_array"
+                    ]
+                },
+                {
+                    "type": "object",
+                    "additionalProperties": false,
+                    "properties": {
+                        "recursive": {
+                            "type": "object",
+                            "additionalProperties": false,
+                            "properties": {
+                                "max_depth": {
+                                    "allOf": [
+                                        {
+                                            "type": "number"
+                                        },
+                                        {
+                                            "type": "integer",
+                                            "maximum": 4294967295,
+                                            "minimum": 0
+                                        }
+                                    ]
+                                },
+                                "of": {
+                                    "$ref": "#/$defs/SizeType"
+                                }
+                            },
+                            "required": [
+                                "max_depth",
+                                "of"
+                            ]
+                        }
+                    },
+                    "required": [
+                        "recursive"
+                    ]
+                },
+                {
+                    "type": "object",
+                    "additionalProperties": false,
+                    "properties": {
+                        "struct": {
+                            "type": "object",
+                            "additionalProperties": false,
+                            "properties": {
+                                "fields": {
+                                    "type": "array",
+                                    "items": {
+                                        "type": "array",
+                                        "prefixItems": [
+                                            {
+                                                "type": "string"
+                                            },
+                                            {
+                                                "$ref": "#/$defs/SizeType"
+                                            }
+                                        ],
+                                        "maxItems": 2,
+                                        "minItems": 2
+                                    }
+                                },
+                                "name": {
+                                    "type": "string"
+                                }
+                            },
+                            "required": [
+                                "fields",
+                                "name"
+                            ]
+                        }
+                    },
+                    "required": [
+                        "struct"
+                    ]
+                },
+                {
+                    "type": "object",
+                    "additionalProperties": false,
+                    "properties": {
+                        "enum": {
+                            "type": "object",
+                            "additionalProperties": false,
+                            "properties": {
+                                "name": {
+                                    "type": "string"
+                                },
+                                "variants": {
+                                    "type": "array",
+                                    "items": {
+                                        "type": "string"
+                                    }
+                                }
+                            },
+                            "required": [
+                                "name",
+                                "variants"
+                            ]
+                        }
+                    },
+                    "required": [
+                        "enum"
+                    ]
+                }
+            ]
         },
         "StreamSplitInput": {
             "type": "object",
@@ -2481,6 +2882,22 @@
                         "unit": null
                     }
                 }
+            ]
+        },
+        "Witness": {
+            "type": "object",
+            "additionalProperties": false,
+            "properties": {
+                "bytes": {
+                    "$ref": "#/$defs/Hex"
+                },
+                "value": {
+                    "$ref": "#/$defs/Value"
+                }
+            },
+            "required": [
+                "bytes",
+                "value"
             ]
         }
     },

@@ -88,7 +88,9 @@ struct CaseWire {
     op: Op,
     #[serde(default, skip_serializing_if = "Json::is_null")]
     input: Json,
-    bytes: Hex,
+    /// Every op but `size`, whose witnesses each have their own.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    bytes: Option<Hex>,
     #[serde(default, skip_serializing_if = "Expect::is_exact")]
     expect: Expect,
     #[serde(default, skip_serializing_if = "Compare::is_bytes")]
@@ -101,10 +103,21 @@ impl TryFrom<CaseWire> for Case {
     fn try_from(case: CaseWire) -> Result<Self, String> {
         let input =
             Input::parse(case.op, &case.input).map_err(|e| format!("case `{}`: {e}", case.id))?;
+        let bytes = match (case.op, case.bytes) {
+            (Op::Size, None) if case.expect.is_exact() && case.compare.is_bytes() => Hex::default(),
+            (Op::Size, _) => {
+                return Err(format!(
+                    "case `{}`: a `size` case has no `bytes`, `expect` or `compare`",
+                    case.id
+                ))
+            }
+            (_, Some(bytes)) => bytes,
+            (_, None) => return Err(format!("case `{}`: no `bytes`", case.id)),
+        };
         Ok(Case {
             id: case.id,
             input,
-            bytes: case.bytes,
+            bytes,
             expect: case.expect,
             compare: case.compare,
         })
@@ -113,11 +126,12 @@ impl TryFrom<CaseWire> for Case {
 
 impl From<Case> for CaseWire {
     fn from(case: Case) -> Self {
+        let op = case.input.op();
         CaseWire {
             id: case.id,
-            op: case.input.op(),
+            op,
             input: crate::to_json(&case.input),
-            bytes: case.bytes,
+            bytes: (op != Op::Size).then_some(case.bytes),
             expect: case.expect,
             compare: case.compare,
         }
@@ -184,6 +198,14 @@ pub enum Op {
     /// runtime concludes. Decode only. `comline@2`'s profile facts are
     /// about this.
     Comline2Negotiate,
+    /// `{format, type, min, max, witnesses}`: how many bytes `type` takes in
+    /// `format`, at least `min` and at most `max` (`null`: no bound), and
+    /// values that write to the ends of that, each with its `bytes`. A case
+    /// has no `bytes` of its own: it asks to encode each witness's `value`
+    /// as `type`, which must give the witness's `bytes` exactly (see
+    /// [`SizeIn`]). An implementation is asked those encodes (`encode`
+    /// questions), never a `size`. Encode only.
+    Size,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
@@ -270,6 +292,7 @@ pub enum Input {
     /// `None` for a rejection, which only decodes.
     Comline2Message(Option<Message>),
     Comline2Negotiate(NegotiateIn),
+    Size(SizeIn),
 }
 
 impl Input {
@@ -288,6 +311,7 @@ impl Input {
             Input::StreamSplit(_) => Op::StreamSplit,
             Input::Comline2Message(_) => Op::Comline2Message,
             Input::Comline2Negotiate(_) => Op::Comline2Negotiate,
+            Input::Size(_) => Op::Size,
         }
     }
 
@@ -315,6 +339,7 @@ impl Input {
             Op::StreamSplit => Input::StreamSplit(StreamSplit::Frames(read(input)?)),
             Op::Comline2Message => Input::Comline2Message(read(input)?),
             Op::Comline2Negotiate => Input::Comline2Negotiate(read(input)?),
+            Op::Size => Input::Size(read(input)?),
         };
         if same_shape(input, &crate::to_json(&parsed)) {
             Ok(parsed)
@@ -460,6 +485,95 @@ pub struct EncodeIn {
     #[serde(rename = "type", default, skip_serializing_if = "Option::is_none")]
     pub ty: Option<Type>,
     pub value: Value,
+}
+
+/// A `size` case's input: the range of bytes a type takes in a format, and
+/// the values that show it.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct SizeIn {
+    pub format: String,
+    /// The type, in `decode`'s notation, and `{"fixed_string": {"len": N}}`
+    /// for `char[N]`.
+    #[serde(rename = "type")]
+    pub ty: Type,
+    pub min: u64,
+    /// `None` (`null`) where no bound holds.
+    pub max: Option<u64>,
+    /// `max` is only a bound, which no value is known to reach.
+    #[serde(default, skip_serializing_if = "is_false")]
+    pub upper_bound: bool,
+    pub witnesses: Witnesses,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct Witnesses {
+    /// Takes exactly `min` bytes.
+    pub min: Witness,
+    /// Takes exactly `max` bytes; there is none where `max` is `null` or
+    /// only an upper bound.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub max: Option<Witness>,
+    /// Take from `min` to `max` bytes.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub between: Vec<Witness>,
+}
+
+/// A value of a `size` case's type, and exactly what it encodes to.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct Witness {
+    pub value: Value,
+    pub bytes: Hex,
+}
+
+impl SizeIn {
+    /// Every witness, in the order a case asks for them: `min`, `max`, then
+    /// those `between`.
+    pub fn witnesses(&self) -> impl Iterator<Item = &Witness> {
+        std::iter::once(&self.witnesses.min)
+            .chain(&self.witnesses.max)
+            .chain(&self.witnesses.between)
+    }
+
+    /// What the case says of itself, whatever the format writes: `min`'s
+    /// witness takes exactly `min` bytes and `max`'s exactly `max`, one is
+    /// there only where `max` is a number no bound stands for, every other
+    /// witness is in range, and the range isn't empty.
+    pub fn consistent(&self) -> Result<(), String> {
+        let len = |w: &Witness| w.bytes.0.len() as u64;
+        if self.max.is_some_and(|max| max < self.min) {
+            return Err(format!("`max` {:?} is under `min` {}", self.max, self.min));
+        }
+        if len(&self.witnesses.min) != self.min {
+            return Err(format!(
+                "the `min` witness is {} bytes, `min` says {}",
+                len(&self.witnesses.min),
+                self.min
+            ));
+        }
+        match (&self.witnesses.max, self.max, self.upper_bound) {
+            (Some(w), Some(max), false) if len(w) != max => {
+                return Err(format!("the `max` witness is {} bytes, `max` says {max}", len(w)))
+            }
+            (Some(_), Some(_), false) => {}
+            (None, Some(_), false) => return Err("`max` has no witness".into()),
+            (None, _, _) => {}
+            (Some(_), _, _) => return Err("a `max` witness, where no value reaches `max`".into()),
+        }
+        for w in &self.witnesses.between {
+            if len(w) < self.min || self.max.is_some_and(|max| len(w) > max) {
+                return Err(format!(
+                    "a `between` witness of {} bytes is outside {}..{}",
+                    len(w),
+                    self.min,
+                    self.max.map_or("".into(), |m| m.to_string())
+                ));
+            }
+        }
+        Ok(())
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]

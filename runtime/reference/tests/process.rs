@@ -12,7 +12,8 @@ use std::process::{Child, ChildStdin, ChildStdout, Command, Stdio};
 
 use serde_json::{json, Value as Json};
 
-use comline_runtime_conformance::{json_equal, Case, Compare, Expect, Hex, Op, Vectors};
+use comline_runtime_conformance::runner::questions;
+use comline_runtime_conformance::{json_equal, Case, Compare, Expect, Hex, Input, Op, Vectors};
 
 struct Reference {
     child: Child,
@@ -97,6 +98,20 @@ fn expectations(case: &Case) -> Vec<Expected> {
     let id = |what: &str| format!("{}/{what}", case.id);
     let bytes = serde_json::to_value(&case.bytes).unwrap();
     let mut out = Vec::new();
+    // A `size` case is asked as the encodes of its witnesses, never as itself:
+    // each must give its witness's bytes.
+    if let Input::Size(size) = &case.input {
+        for (n, (question, witness)) in questions(case).iter().zip(size.witnesses()).enumerate() {
+            let id = id(&format!("witness-{n}"));
+            out.push(Expected {
+                request: question.request(json!(id)),
+                reply: json!({ "id": id, "bytes": witness.bytes }),
+                json_bytes: false,
+                refused: false,
+            });
+        }
+        return out;
+    }
     if case.expect == Expect::Reject && case.op() == Op::Encode {
         // A value over its type's bounds: encoding it is refused, and no
         // bytes stand for it.

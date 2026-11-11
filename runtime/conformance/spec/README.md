@@ -27,8 +27,8 @@ will read it.
 - [`features.json`](features.json), generated from the catalog: the wire
   features, with stable ids:
   `name-hash`, `handshake`, `envelope`, `framing-datagram`, `framing-datagram2`,
-  `framing-datagram3`, `handshake-comline2`, `framing-jsonrpc`, `stream`, `format-json`, `format-msgpack` and
-  `format-packed`.
+  `framing-datagram3`, `handshake-comline2`, `framing-jsonrpc`, `stream`, `format-json`, `format-msgpack`,
+  `format-packed`, `sizes-packed`, `sizes-msgpack` and `sizes-json`.
 - `vectors/<feature>.json`: that feature's cases.
 - [`benches/`](benches/README.md): the benchmarks every runtime runs, in the
   same value encoding.
@@ -62,6 +62,7 @@ The ops, and what their `input` holds:
 | `stream_prefix` | `len`, `max` | encode and decode: the 4-byte length prefix of a `len`-byte frame under the limit `max` |
 | `comline2_message` | a `comline@2` message: `type` (`hello`, `answer` or `verdict`) and `message` | encode and decode |
 | `comline2_negotiate` | `step`, and as the step needs `side`, `params`, `local` (this end's hello), `pending`; then `reply` and `result` | decode: `bytes`, the peer's message, run through `step` give exactly `reply` (the message this end sends, or `null`) and `result` (`accepted`, or `refused` with its reason and side) |
+| `size` | `format`, `type`, `min`, `max` (`null` for no bound), `witnesses`, and `upper_bound` when `max` is only a bound | encode: every witness's `value`, as `type`, gives its `bytes`, and a witness's length is as the case says (see [Sizes](#sizes)) |
 | `stream_split` | `max`, `frames`, `rest`, `needed` | encode and decode: a byte stream of `frames`, each behind its prefix, then `rest` |
 
 - **Encode and decode:** encoding the input gives exactly `bytes`, and decoding
@@ -309,6 +310,67 @@ check writes (`reports/<runtime>.json`) in its own repository, in the formats
 define. Rust's are in [`runtime/conformance`](https://github.com/ComlineProject/runtime/blob/main/runtime/conformance).
 
 
+## Sizes
+
+How many bytes each kind of value takes in a format is data too: each official
+format's `sizes` in the [catalog](catalog/readme.md#size-rules) (and in its
+profile, which must say the same), from which a compiler computes the least
+and most bytes a type can take, and every rule is proven by `size` cases in
+`vectors/sizes-<format>.json`.
+
+A `size` case gives a `type`, in the notation of a `decode` case's plus
+`{"fixed_string": {"len": N}}` for `char[N]`, a string of exactly N characters
+(`{"string"...}` of any kind counts characters, not bytes), the range
+`[min, max]` the rules give it in `format`, and values that encode to the
+ends of it, with the bytes each encodes to:
+
+```json
+{
+  "id": "sizes-msgpack/string-max-8",
+  "op": "size",
+  "input": {
+    "format": "msgpack@1",
+    "type": { "bounded_string": { "max": 8 } },
+    "min": 1,
+    "max": 34,
+    "witnesses": {
+      "min": { "value": { "string": "" }, "bytes": "a0" },
+      "max": { "value": { "string": "😀😀😀😀😀😀😀😀" }, "bytes": "d920f09f9880..." },
+      "between": [ { "value": { "string": "a" }, "bytes": "a161" } ]
+    }
+  }
+}
+```
+
+- `witnesses.min` encodes to exactly `min` bytes, and `witnesses.max` to exactly
+  `max`. Where `max` is `null` (no bound), no value reaches it and there is no
+  `max` witness. Where `upper_bound` is `true`, `max` is only a bound, which no
+  value is known to reach, and there is none either. No official format's rule
+  is one today: they are all reached.
+- `between` holds values that encode to lengths from `min` to `max`, at the
+  edges of a header's tiers where the format has them: a MessagePack string of 31
+  and 32 bytes, an array of 15 and 16 items, a varint's 127 and 128.
+- A witness's bytes are exactly what `value` encodes to as `type`, not just JSON
+  that is equal: the length of a float's text counts. Floats appear only where
+  `serde_json`'s older and newer float writers (`ryu`, `zmij`) print the same
+  text; a float in exponent notation, which they spell differently, has no
+  witness.
+- The runtime's `encode` writes the bytes of every witness: that run is the
+  proof of them, not this repository's checks. `specs/check.sh` checks what a
+  file alone can: every rule names `proven_by` cases that exist, are for its
+  format and have its kind of value in their type (a scalar's rule is proven by
+  the case of that scalar alone, with the same bounds), every case proves a
+  rule, and each witness is as long as its case says.
+
+What the vectors don't witness, and the rules say all the same, from the
+definitions of the formats: a varint of 4 or 5 bytes (a count from 2^21: a
+witness would be 2 MiB or more), and MessagePack's 5-byte array header (a count
+from 65536: 65,536 values, more than the spec tooling checks in reasonable
+time). A float's longest JSON text is witnessed (24 bytes for an `f64`, 16 for an
+`f32`), but that no float is longer follows from how `serde_json` writes one
+(at most 24 bytes in either writer, and 16 for an `f32`, where an exhaustive
+check of the decade that could be longer finds none), not from a vector.
+
 ## Encoding profiles
 
 [`profiles/`](profiles) holds one profile per official encoding name
@@ -317,7 +379,7 @@ define. Rust's are in [`runtime/conformance`](https://github.com/ComlineProject/
 `comline@2.json`): facts
 about how it encodes, which the version comparison turns into bumps. A format
 states `struct_fields`, `unknown_field`, `missing_optional`, `enum_variants`,
-`unknown_variant`, `integer_width` and `output`; a framing states `calls`,
+`unknown_variant`, `integer_width` and `output`, and may state `sizes`; a framing states `calls`,
 `directions`, `errors` and `payload`. The catalog gives each fact's values and
 what they mean ([`catalog/facts.cue`](catalog/facts.cue)).
 

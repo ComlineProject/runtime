@@ -52,4 +52,16 @@ features: {
 		title:       "packed wire format"
 		description: "values as packed@1: fixed-width fields back to back, varint lengths, no tags"
 	}
+	"sizes-packed": {
+		title:       "packed sizes"
+		description: "how many bytes each kind of value takes in packed@1, each rule proven by values written to exactly its minimum and maximum"
+	}
+	"sizes-msgpack": {
+		title:       "MessagePack sizes"
+		description: "how many bytes each kind of value takes in msgpack@1, each rule proven by values written to exactly its minimum and maximum"
+	}
+	"sizes-json": {
+		title:       "JSON sizes"
+		description: "how many bytes each kind of value takes in json@1, each rule proven by values written to exactly its minimum and maximum, or by a declared upper bound"
+	}
 }

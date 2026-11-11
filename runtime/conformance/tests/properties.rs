@@ -11,6 +11,9 @@
 //!   exactly those bytes.
 //! - **Decoded values are values of the type:** whatever a format accepts,
 //!   valid or mutated, passes [`check`].
+//! - **Exact sizes:** `encoded_len(v)` is the length of `encode(v)`, for a value
+//!   of any of the types a `size` vector's type notation holds, in every
+//!   format.
 //! - **Seed against derive:** the fixed mirrors of `tests/seed_vs_derive.rs`
 //!   (in `common/mod.rs`) on proptest's mutations and on random bytes.
 //!
@@ -39,7 +42,7 @@
 mod common;
 
 use comline_runtime::contract::{FORMAT_JSON, FORMAT_MSGPACK, FORMAT_PACKED};
-use comline_runtime_conformance::{check, decode_typed, Type, Value};
+use comline_runtime_conformance::{check, decode_typed, encoded_len_as, Type, Value, Wire};
 use proptest::prelude::*;
 use proptest::sample::Index;
 
@@ -303,6 +306,7 @@ fn value_strategy(ty: &Type, c: Carries) -> BoxedStrategy<Value> {
         Type::Char => any::<char>().prop_map(Value::Char).boxed(),
         Type::Unit => Just(Value::Unit(())).boxed(),
         Type::BoundedString { .. }
+        | Type::FixedString { .. }
         | Type::BoundedArray { .. }
         | Type::Recursive { .. }
         | Type::SelfRef => unreachable!("bounds aren't generated"),
@@ -443,6 +447,20 @@ fn encode(format: &str, value: &Value) -> Vec<u8> {
     common::encode(format, &comline_runtime_conformance::Wire(value))
 }
 
+/// `encoded_len` is the length of the bytes `encode` writes.
+fn len_is_the_encoding_length(format: &str, value: &Value) -> Result<(), TestCaseError> {
+    let bytes = encode(format, value);
+    prop_assert_eq!(
+        encoded_len_as(format, &Wire(value)),
+        Some(bytes.len()),
+        "{} wrote {:?} as {:02x?}",
+        format,
+        value,
+        bytes
+    );
+    Ok(())
+}
+
 fn round_trips(format: &str, ty: &Type, value: &Value) -> Result<(), TestCaseError> {
     prop_assert_eq!(check(value, ty), Ok(()));
     let bytes = encode(format, value);
@@ -483,6 +501,21 @@ proptest! {
             "{}",
             String::from_utf8_lossy(&bytes)
         );
+    }
+
+    #[test]
+    fn json_encoded_len_is_the_length((_, value) in typed_value(FORMAT_JSON)) {
+        len_is_the_encoding_length(FORMAT_JSON, &value)?;
+    }
+
+    #[test]
+    fn msgpack_encoded_len_is_the_length((_, value) in typed_value(FORMAT_MSGPACK)) {
+        len_is_the_encoding_length(FORMAT_MSGPACK, &value)?;
+    }
+
+    #[test]
+    fn packed_encoded_len_is_the_length((_, value) in typed_value(FORMAT_PACKED)) {
+        len_is_the_encoding_length(FORMAT_PACKED, &value)?;
     }
 
     #[test]

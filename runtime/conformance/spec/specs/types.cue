@@ -42,3 +42,21 @@ package conformance
 	close({"struct"!: close({name!: string, fields!: [...[string, #Value]]})}) |
 	close({unit_variant!: close({"enum"!: string, index!: uint32, variant!: string})}) |
 	close({unit!: null})
+
+// A type a `size` case gives the range of: `#Type`, and `fixed_string` for
+// `char[N]`, a string of exactly N characters. The sizes of `string`,
+// `bounded_string` and `fixed_string` count characters (Unicode scalar
+// values), as `char[max N]` does.
+#SizeType:
+	"bool" | "u8" | "u16" | "u32" | "u64" | "u128" |
+	"i8" | "i16" | "i32" | "i64" | "i128" |
+	"f32" | "f64" | "string" | "char" | "unit" | "self" |
+	close({bounded_string!: close({max!: uint32})}) |
+	close({fixed_string!: close({len!: uint32})}) |
+	close({option!: #SizeType}) |
+	close({array!: #SizeType}) |
+	close({fixed!: close({of!: #SizeType, len!: uint})}) |
+	close({bounded_array!: close({of!: #SizeType, max!: uint32})}) |
+	close({recursive!: close({max_depth!: uint32, of!: #SizeType})}) |
+	close({"struct"!: close({name!: string, fields!: [...[string, #SizeType]]})}) |
+	close({"enum"!: close({name!: string, variants!: [...string]})})

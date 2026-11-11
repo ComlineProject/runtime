@@ -36,7 +36,10 @@ use std::path::Path;
 use serde::Deserialize;
 use serde_json::{json, Value as Json};
 
-use crate::{answer, fact_shown, hex, json_equal, to_json, Answer, Case, Compare, Expect, Hex, Op};
+use crate::{
+    answer, fact_shown, hex, json_equal, to_json, Answer, Case, Compare, EncodeIn, Expect, Hex,
+    Input, Op, SizeIn,
+};
 use crate::{Outcome, Profile, Vectors};
 
 /// The version of the public spec: the case format (`vectors/*.json`,
@@ -276,6 +279,8 @@ pub fn parse_reply(reply: &Json) -> Result<(Json, Answer), String> {
 /// The questions a case poses, in order. [`judge`] takes their answers in
 /// the same order.
 ///
+/// - A `size` case asks to encode each of its witnesses' values as its
+///   type, `min`'s first, then `max`'s, then those `between`.
 /// - A rejection asks to decode `bytes`; a `stream_prefix` rejection also
 ///   asks to encode its input, which must fail too.
 /// - Otherwise, every op but the decode-only ones (`decode`,
@@ -283,6 +288,22 @@ pub fn parse_reply(reply: &Json) -> Result<(Json, Answer), String> {
 ///   the input, and every
 ///   op but `name_hash` and `encode` asks to decode `bytes`.
 pub fn questions(case: &Case) -> Vec<Question> {
+    // A `size` case asks nothing of its own: it asks each witness's value to
+    // be encoded as its type.
+    if let Input::Size(i) = &case.input {
+        return i
+            .witnesses()
+            .map(|witness| Question {
+                op: Op::Encode,
+                input: to_json(&EncodeIn {
+                    format: i.format.clone(),
+                    ty: Some(i.ty.clone()),
+                    value: witness.value.clone(),
+                }),
+                bytes: None,
+            })
+            .collect();
+    }
     let ask = |bytes: Option<&[u8]>| Question {
         op: case.op(),
         input: to_json(&case.input),
@@ -312,7 +333,9 @@ pub fn questions(case: &Case) -> Vec<Question> {
 /// Judges a case by the answers to its [`questions`], in their order.
 ///
 /// - An encode must give the case's bytes (as JSON when it compares as
-///   JSON); a failure shows both with [`byte_diff`].
+///   JSON); a failure shows both with [`byte_diff`]. A `size` case's encodes
+///   must each give their witness's bytes exactly, and the case must say
+///   what it holds ([`SizeIn::consistent`]).
 /// - A decode must accept and give back the case's input exactly, or, for a
 ///   rejection, refuse.
 /// - A `stream_prefix` rejection's encode must not give bytes.
@@ -332,6 +355,9 @@ pub fn judge(case: &Case, answers: &[Answer]) -> Outcome {
         _ => None,
     }) {
         return Outcome::NotImplemented(what.clone());
+    }
+    if let Input::Size(i) = &case.input {
+        return judge_size(i, answers);
     }
     for (question, answer) in asked.iter().zip(answers) {
         let verdict = match (&question.bytes, answer) {
@@ -365,6 +391,32 @@ pub fn judge(case: &Case, answers: &[Answer]) -> Outcome {
         if let Err(why) = verdict {
             return Outcome::Fail(why);
         }
+    }
+    Outcome::Pass
+}
+
+/// A `size` case: every witness's value encodes to exactly its bytes.
+fn judge_size(input: &SizeIn, answers: &[Answer]) -> Outcome {
+    if let Err(why) = input.consistent() {
+        return Outcome::Fail(why);
+    }
+    for (witness, answer) in input.witnesses().zip(answers) {
+        let want = &witness.bytes.0;
+        let verdict = match answer {
+            Answer::Bytes(got) if got == want => continue,
+            Answer::Bytes(got) => format!(
+                "{:?} encodes wrong:\n{}",
+                witness.value,
+                byte_diff(got, want)
+            ),
+            Answer::Bad(why) => format!("{:?}: answered with an error: {why}", witness.value),
+            other => format!(
+                "{:?}: answered an encode with {}",
+                witness.value,
+                describe(other)
+            ),
+        };
+        return Outcome::Fail(verdict);
     }
     Outcome::Pass
 }

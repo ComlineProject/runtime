@@ -35,7 +35,8 @@ package conformance
 	close({id!: #CaseId, bytes!: #Hex, compare?: #Compare, expect!: "reject", op!: "stream_split", input!: close({max!: uint})}) |
 	*close({id!: #CaseId, bytes!: #Hex, compare?: #Compare, expect?: "exact", op!: "comline2_message", input!: #Comline2Message}) |
 	close({id!: #CaseId, bytes!: #Hex, compare?: #Compare, expect!: "reject", op!: "comline2_message", input?: #Comline2Message}) |
-	close({id!: #CaseId, bytes!: #Hex, compare?: #Compare, expect?: #Expect, op!: "comline2_negotiate", input!: #Comline2Negotiate})
+	close({id!: #CaseId, bytes!: #Hex, compare?: #Compare, expect?: #Expect, op!: "comline2_negotiate", input!: #Comline2Negotiate}) |
+	close({id!: #CaseId, op!: "size", input!: #SizeInput})
 
 // By default, exact.
 #Expect: "exact" | "reject"
@@ -205,3 +206,33 @@ package conformance
 		close({accepted!: #Comline2Negotiated}) |
 		close({refused!: #Comline2Refusal})
 })
+
+// How many bytes a type takes in a format: at least `min`, at most `max` (`null`:
+// no bound), and values written to each, as `witnesses`. A `size` case has no
+// `bytes`: each witness has its own. The numbers are at most 2^53, so a JSON
+// reader that holds numbers as doubles keeps them exact.
+//
+// - `witnesses.min` encodes to exactly `min` bytes.
+// - `witnesses.max` encodes to exactly `max` bytes. It is left out when `max`
+//   is `null`, which no value reaches, and when `upper_bound` is `true`: then
+//   `max` is only a bound that no value is known to reach.
+// - Every value in `between` encodes to a length from `min` to `max`.
+//
+// Encoding a witness's `value` as `type` in `format` gives its `bytes`
+// exactly (not `compare`d as JSON, so a float's text counts too).
+#SizeInput: close({
+	format!:      #EncodingName
+	type!:        #SizeType
+	min!:         #SizeBytes
+	max!:         null | #SizeBytes
+	upper_bound?: true
+	witnesses!: close({
+		min!: #Witness
+		max?: #Witness
+		between?: [...#Witness]
+	})
+})
+
+#SizeBytes: uint & <=9007199254740991
+
+#Witness: close({value!: #Value, bytes!: #Hex})

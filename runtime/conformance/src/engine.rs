@@ -43,6 +43,19 @@ pub(crate) fn encode_with(format: &str, value: &Value) -> Option<Vec<u8>> {
     encode_as(format, &Wire(value))
 }
 
+/// How many bytes `value` encodes to in `format`, by
+/// [`WireFormat::encoded_len`]: `None` for a format this doesn't ship, or a
+/// value the format refuses.
+pub fn encoded_len_as(format: &str, value: &(impl Serialize + ?Sized)) -> Option<usize> {
+    match format {
+        FORMAT_JSON => Json.encoded_len(value),
+        FORMAT_MSGPACK => MsgPack.encoded_len(value),
+        FORMAT_PACKED => Packed.encoded_len(value),
+        _ => return None,
+    }
+    .ok()
+}
+
 /// Runs `$body` with `$f` as the format `$name` names, among those a
 /// request's params are written in here.
 macro_rules! with_params_format {
@@ -339,6 +352,11 @@ pub(crate) fn encode(input: &Input) -> Result<Vec<u8>, Outcome> {
                 .ok_or_else(|| Outcome::NotImplemented(format!("format `{}`", i.format)));
         }
         Input::Decode(_) => return Err(Outcome::Fail("`decode` cases are decode only".into())),
+        Input::Size(_) => {
+            return Err(Outcome::Fail(
+                "a `size` case asks for the encodes of its witnesses, not of itself".into(),
+            ))
+        }
         Input::Comline2Message(Some(message)) => return Ok(message.to_bytes()),
         Input::Comline2Negotiate(_) => {
             return Err(Outcome::Fail("`comline2_negotiate` cases are decode only".into()))
@@ -392,7 +410,7 @@ pub(crate) fn encode(input: &Input) -> Result<Vec<u8>, Outcome> {
 pub(crate) fn decode(input: &Input, bytes: &[u8]) -> Result<Option<serde_json::Value>, Outcome> {
     let json = |v: serde_json::Value| -> Result<Option<serde_json::Value>, Outcome> { Ok(Some(v)) };
     match input {
-        Input::NameHash(_) | Input::Encode(_) => Ok(None),
+        Input::NameHash(_) | Input::Encode(_) | Input::Size(_) => Ok(None),
         Input::Comline2Message(_) => Ok(comline_runtime::handshake::comline2::Message::decode(bytes)
             .ok()
             .map(|m| to_json(&m))),
@@ -648,9 +666,39 @@ pub fn run(case: &Case) -> Outcome {
         .map(|q| answer(q.op, &q.input, q.bytes.as_deref()))
         .collect();
     match judge(case, &answers) {
-        Outcome::Pass => request_bodies_match(case).err().unwrap_or(Outcome::Pass),
+        Outcome::Pass => request_bodies_match(case)
+            .and_then(|()| encoded_len_matches(case))
+            .err()
+            .unwrap_or(Outcome::Pass),
         failed => failed,
     }
+}
+
+/// A `size` case's witnesses are as long as `encoded_len` says, which is what
+/// a caller that sizes a buffer before encoding relies on.
+fn encoded_len_matches(case: &Case) -> Result<(), Outcome> {
+    let Input::Size(i) = &case.input else {
+        return Ok(());
+    };
+    for witness in i.witnesses() {
+        let want = witness.bytes.0.len();
+        match encoded_len_as(&i.format, &Wire(&witness.value)) {
+            Some(len) if len == want => {}
+            Some(len) => {
+                return Err(Outcome::Fail(format!(
+                    "encoded_len of {:?} is {len}, and it encodes to {want} bytes",
+                    witness.value
+                )))
+            }
+            None => {
+                return Err(Outcome::Fail(format!(
+                    "encoded_len of {:?} failed",
+                    witness.value
+                )))
+            }
+        }
+    }
+    Ok(())
 }
 
 /// A request's frame comes out the same however it's written: a case's input

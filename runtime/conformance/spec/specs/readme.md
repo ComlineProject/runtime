@@ -14,7 +14,7 @@ runtime that vendors `benches/` alone has it.
 | `#Support` | `support/<runtime>.json`, in each runtime's repository | [`support.cue`](support.cue) |
 | `#Vectors` | `vectors/*.json` | [`vectors.cue`](vectors.cue) |
 
-Values and types (`#Value`, `#Type`) are in [`types.cue`](types.cue), and what
+Values and types (`#Value`, `#Type`, `#SizeType`) are in [`types.cue`](types.cue), and what
 the others share in [`common.cue`](common.cue). Which facts a profile states,
 and their values, come from [the catalog](../catalog/readme.md), which the
 specs import: the CUE module (`cue.mod/`) is the repository's root, so run
@@ -26,7 +26,10 @@ file: a third party's needn't have one.
 `./check.sh` regenerates `gen/` and `benches/bench.schema.json` from the
 specs, and `../features.json` and `../catalog/gen/catalog.json` from the
 catalog, and vets every file. It also checks that `profiles/` and `vectors/`
-hold exactly what the catalog names. CI runs `./check.sh --check`, which fails
+hold exactly what the catalog names, and, with [`jq`](https://jqlang.github.io/jq/)
+([`sizes.jq`](sizes.jq)), that each format's size rules are proven by its
+size vectors: every rule lists cases that exist and show it, every case proves
+a rule, and every witness is as long as its case says. CI runs `./check.sh --check`, which fails
 instead when a generated file is stale. It needs
 [`cue`](https://cuelang.org) at the version `.github/workflows/check.yml`
 pins.
