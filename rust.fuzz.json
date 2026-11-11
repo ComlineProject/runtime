@@ -1,55 +1,61 @@
 {
   "runtime": "rust",
-  "commit": "3b9cc9dc53a83fb2830d91b267bd5f477f0a1e51",
-  "toolchain": "rustc 1.102.0-nightly (ac8310ba6 2026-11-09)",
-  "date": "2026-11-10T11:22:30Z",
-  "run": "https://github.com/ComlineProject/runtime/actions/runs/42805276541",
+  "commit": "7fd4523751b9c4aa2110d47819d2b288af63e824",
+  "toolchain": "rustc 1.102.0-nightly (9c5648833 2026-11-10)",
+  "date": "2026-11-11T11:08:13Z",
+  "run": "https://github.com/ComlineProject/runtime/actions/runs/43007690800",
   "targets": {
     "decode_no_panic": {
-      "seconds": 608,
-      "executions": 19075183,
-      "corpus": 34884,
+      "seconds": 605,
+      "executions": 23985896,
+      "corpus": 34951,
       "findings": 0
     },
     "ffi_comline2": {
       "seconds": 615,
-      "executions": 24799970,
-      "corpus": 1044,
+      "executions": 18008927,
+      "corpus": 1051,
       "findings": 0
     },
     "ffi_feed": {
-      "seconds": 617,
-      "executions": 1504160,
-      "corpus": 37992,
+      "seconds": 608,
+      "executions": 2078587,
+      "corpus": 38068,
       "findings": 0
     },
     "ffi_vs_core": {
-      "seconds": 617,
-      "executions": 974911,
-      "corpus": 26105,
+      "seconds": 603,
+      "executions": 850459,
+      "corpus": 26140,
       "findings": 0
     },
     "framing_decode": {
-      "seconds": 610,
-      "executions": 18299309,
-      "corpus": 18210,
+      "seconds": 606,
+      "executions": 39098479,
+      "corpus": 18238,
       "findings": 0
     },
     "packed_canonical": {
-      "seconds": 604,
-      "executions": 15374497,
-      "corpus": 3440,
+      "seconds": 605,
+      "executions": 20220941,
+      "corpus": 3481,
       "findings": 0
     },
     "seed_vs_derive": {
-      "seconds": 614,
-      "executions": 37148423,
-      "corpus": 39588,
+      "seconds": 602,
+      "executions": 27483432,
+      "corpus": 39641,
+      "findings": 0
+    },
+    "sizes_vs_core": {
+      "seconds": 631,
+      "executions": 95515,
+      "corpus": 420,
       "findings": 0
     },
     "stream_split": {
       "seconds": 617,
-      "executions": 194178821,
+      "executions": 347709265,
       "corpus": 42,
       "findings": 0
     }
@@ -58,10 +64,13 @@
     "cases": 100000,
     "properties": {
       "json_decodes_only_values": "pass",
+      "json_encoded_len_is_the_length": "pass",
       "json_round_trips": "pass",
       "json_writes_only_json": "pass",
       "msgpack_decodes_only_values": "pass",
+      "msgpack_encoded_len_is_the_length": "pass",
       "msgpack_round_trips": "pass",
+      "packed_encoded_len_is_the_length": "pass",
       "packed_is_canonical": "pass",
       "packed_round_trips": "pass",
       "seed_agrees_with_derive": "pass",
