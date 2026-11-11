@@ -21,7 +21,8 @@ use comline_core::schema::ir::size;
 use comline_runtime::contract::{FORMAT_JSON, FORMAT_MSGPACK, FORMAT_PACKED};
 use comline_runtime_conformance::{encode_as, encoded_len_as, Value, Wire};
 use comline_runtime_fuzz::sizes::{
-    check_input, check_type, Body, Declared, Field, Gen, Reach, Scalar, Schema, Style, Ty, FORMATS,
+    check_input, check_type, Body, Declared, Field, Gen, Reach, Scalar, Scale, Schema, Style, Ty,
+    FORMATS,
 };
 use proptest::prelude::*;
 
@@ -34,7 +35,7 @@ fn alone(ty: Ty) -> Schema {
 fn hold(schema: &Schema, ty: &Ty, values: &[(&str, Value)]) -> Reach {
     let values: Vec<(&str, &Value)> = values.iter().map(|(w, v)| (*w, v)).collect();
     let mut reach = Reach::default();
-    check_type(schema, ty, Some(true), &values, &mut reach).unwrap_or_else(|e| panic!("{e}"));
+    check_type(schema, ty, Some(true), &values, Scale::Big, &mut reach).unwrap_or_else(|e| panic!("{e}"));
     reach
 }
 
@@ -72,7 +73,7 @@ proptest! {
         ] {
             let ty = Ty::Scalar(ty);
             let mut reach = Reach::default();
-            check_type(&alone(ty.clone()), &ty, Some(true), &[("a value", &value)], &mut reach)
+            check_type(&alone(ty.clone()), &ty, Some(true), &[("a value", &value)], Scale::Big, &mut reach)
                 .map_err(|e| TestCaseError::fail(e.to_string()))?;
         }
     }
@@ -84,7 +85,7 @@ proptest! {
         for (ty, value) in [(Scalar::F64, Value::F64(x)), (Scalar::F32, Value::F32(y))] {
             let ty = Ty::Scalar(ty);
             let mut reach = Reach::default();
-            check_type(&alone(ty.clone()), &ty, Some(true), &[("a float", &value)], &mut reach)
+            check_type(&alone(ty.clone()), &ty, Some(true), &[("a float", &value)], Scale::Big, &mut reach)
                 .map_err(|e| TestCaseError::fail(e.to_string()))?;
         }
     }
@@ -105,7 +106,7 @@ proptest! {
             (Ty::Scalar(Scalar::Char), Value::Char(c)),
         ] {
             let mut reach = Reach::default();
-            check_type(&alone(ty.clone()), &ty, Some(true), &[("a string", &value)], &mut reach)
+            check_type(&alone(ty.clone()), &ty, Some(true), &[("a string", &value)], Scale::Big, &mut reach)
                 .map_err(|e| TestCaseError::fail(e.to_string()))?;
         }
     }
@@ -319,7 +320,7 @@ fn the_generator_reaches_the_large_tiers() {
         (0u8..=255).any(|seed| {
             let data = [seed; 64];
             let mut u = arbitrary::Unstructured::new(&data);
-            matches!(Gen::new(&schema, &mut u, Style::Largest).value(&ty), Ok(Some(v)) if count(&v) >= at_least)
+            matches!(Gen::new(&schema, &mut u, Style::Largest, Scale::Big).value(&ty), Ok(Some(v)) if count(&v) >= at_least)
         })
     };
     let items = |v: &Value| match v {

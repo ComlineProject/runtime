@@ -43,6 +43,7 @@
 use std::borrow::Cow;
 
 use arbitrary::Unstructured;
+use serde::Deserialize as _;
 use comline_core::schema::ir::frozen::types::{PrimitiveType, TypeRef};
 use comline_core::schema::ir::size::{self, Decl, Lookup, Member, Range, Resolved};
 use comline_runtime::contract::{FORMAT_JSON, FORMAT_MSGPACK, FORMAT_PACKED};
@@ -54,21 +55,60 @@ pub const FORMATS: [&str; 3] = [FORMAT_PACKED, FORMAT_MSGPACK, FORMAT_JSON];
 pub const MAX_DECLS: usize = 6;
 /// `@max_depth`, at most.
 pub const MAX_RECURSION: u64 = 4;
+/// How much a check may build, in values and witnesses. Most inputs are
+/// [`Scale::Small`]: building a witness (a `serde_json::Value` a node, which
+/// costs hundreds of bytes) is what a run spends its time on. One in sixteen
+/// is [`Scale::Big`], which reaches the tiers that need a lot of items or
+/// characters: a MessagePack array of 65536 items (a five-byte header), a
+/// string of 2^21 characters (a four-byte varint).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Scale {
+    Small,
+    Big,
+}
+
+impl Scale {
+    /// Past it, arrays and strings are cut short.
+    fn soft_items(self) -> u64 {
+        match self {
+            Scale::Small => 1 << 13,
+            Scale::Big => 1 << 19,
+        }
+    }
+
+    fn soft_chars(self) -> u64 {
+        match self {
+            Scale::Small => 1 << 15,
+            Scale::Big => 1 << 22,
+        }
+    }
+
+    /// Past it, the value is dropped.
+    fn hard_items(self) -> u64 {
+        match self {
+            Scale::Small => 1 << 17,
+            Scale::Big => 1 << 20,
+        }
+    }
+
+    fn hard_chars(self) -> u64 {
+        match self {
+            Scale::Small => 1 << 18,
+            Scale::Big => 1 << 23,
+        }
+    }
+}
+
 /// What a witness may take to build (a node or a character each), when the
-/// type's biggest value is mostly nodes: a node is a `serde_json::Value`,
-/// which costs hundreds of bytes.
+/// type's biggest value is mostly nodes and the scale is big.
 pub const WITNESS_BUDGET: usize = 1 << 18;
 /// What it may take when the biggest value is made of characters, which cost
 /// a byte or four: this reaches a string of 2^21 characters, a four-byte
 /// length.
 pub const WITNESS_BUDGET_CHARS: usize = 1 << 23;
+/// What it may take at the small scale.
+pub const WITNESS_BUDGET_SMALL: usize = 1 << 12;
 
-/// Where a value stops being generated. Past the soft limits arrays and
-/// strings are cut short; past the hard ones the value is dropped.
-const SOFT_ITEMS: u64 = 1 << 19;
-const SOFT_CHARS: u64 = 1 << 22;
-const HARD_ITEMS: u64 = 1 << 20;
-const HARD_CHARS: u64 = 1 << 23;
 /// A length up to this is picked as it is; past it, one time in eight.
 const HEAVY: u64 = 1 << 17;
 
@@ -309,13 +349,21 @@ fn read_ty(u: &mut Unstructured, decls: usize, me: usize, guarded: bool, depth: 
                 0 => None,
                 _ => Some(read_bound(u)),
             };
-            Ty::Array(Box::new(of), max)
+            match (of, max) {
+                // An array of `char` is a string: that is how the IR has it.
+                (Ty::Scalar(Scalar::Char), None) => Ty::Scalar(Scalar::String),
+                (Ty::Scalar(Scalar::Char), Some(max)) => Ty::CharMax(max),
+                (of, max) => Ty::Array(Box::new(of), max),
+            }
         }
         9 | 10 => {
             let of = read_ty(u, decls, me, guarded, depth - 1);
             let big = matches!(of, Ty::Scalar(_));
             let n = if big { pick(u, &FIXED_BIG) } else { pick(u, &FIXED_SMALL) };
-            Ty::Fixed(Box::new(of), n)
+            match of {
+                Ty::Scalar(Scalar::Char) => Ty::CharN(n),
+                of => Ty::Fixed(Box::new(of), n),
+            }
         }
         _ if names.is_empty() => scalar(u),
         _ => Ty::Named(pick(u, &names)),
@@ -557,7 +605,10 @@ impl Schema {
     /// What core may spend building a witness of `ty`: enough for its
     /// largest value, up to [`WITNESS_BUDGET_CHARS`] when that is mostly
     /// characters and [`WITNESS_BUDGET`] when it is nodes.
-    pub fn witness_budget(&self, ty: &Ty) -> usize {
+    pub fn witness_budget(&self, ty: &Ty, scale: Scale) -> usize {
+        if scale == Scale::Small {
+            return WITNESS_BUDGET_SMALL;
+        }
         let (nodes, chars) = self.weight(ty, &mut vec![], &mut 4096);
         if nodes > WITNESS_BUDGET as u64 {
             return WITNESS_BUDGET;
@@ -590,14 +641,15 @@ pub struct Gen<'s, 'u, 'd> {
     schema: &'s Schema,
     u: &'u mut Unstructured<'d>,
     style: Style,
+    scale: Scale,
     items: u64,
     chars: u64,
     stack: Vec<usize>,
 }
 
 impl<'s, 'u, 'd> Gen<'s, 'u, 'd> {
-    pub fn new(schema: &'s Schema, u: &'u mut Unstructured<'d>, style: Style) -> Self {
-        Gen { schema, u, style, items: 0, chars: 0, stack: vec![] }
+    pub fn new(schema: &'s Schema, u: &'u mut Unstructured<'d>, style: Style, scale: Scale) -> Self {
+        Gen { schema, u, style, scale, items: 0, chars: 0, stack: vec![] }
     }
 
     fn byte(&mut self) -> u8 {
@@ -613,7 +665,7 @@ impl<'s, 'u, 'd> Gen<'s, 'u, 'd> {
 
     fn spend_item(&mut self) -> Result<(), Overrun> {
         self.items += 1;
-        if self.items > HARD_ITEMS { Err(Overrun) } else { Ok(()) }
+        if self.items > self.scale.hard_items() { Err(Overrun) } else { Ok(()) }
     }
 
     /// A count or length in `lo..=hi`.
@@ -769,10 +821,10 @@ impl<'s, 'u, 'd> Gen<'s, 'u, 'd> {
 
     /// `lo` to `hi` characters, from a few of them repeated.
     fn string(&mut self, lo: u64, hi: u64) -> Result<String, Overrun> {
-        let soft = SOFT_CHARS.saturating_sub(self.chars);
+        let soft = self.scale.soft_chars().saturating_sub(self.chars);
         let n = self.length(lo, hi.min(soft.max(lo)));
         self.chars = self.chars.saturating_add(n);
-        if self.chars > HARD_CHARS {
+        if self.chars > self.scale.hard_chars() {
             return Err(Overrun);
         }
         let alphabet: Vec<char> = (0..1 + self.byte() % 3).map(|_| self.char()).collect();
@@ -808,13 +860,13 @@ impl<'s, 'u, 'd> Gen<'s, 'u, 'd> {
             },
             Ty::CharMax(max) => Value::String(self.string(0, *max)?),
             Ty::CharN(n) => {
-                if *n > HARD_CHARS {
+                if *n > self.scale.hard_chars() {
                     return Err(Overrun);
                 }
                 Value::String(self.string(*n, *n)?)
             }
             Ty::Array(of, max) => {
-                let soft = SOFT_ITEMS.saturating_sub(self.items);
+                let soft = self.scale.soft_items().saturating_sub(self.items);
                 let hi = max.unwrap_or(u64::MAX).min(soft);
                 let n = self.length(0, hi);
                 let mut items = Vec::with_capacity(n.min(1 << 16) as usize);
@@ -828,7 +880,7 @@ impl<'s, 'u, 'd> Gen<'s, 'u, 'd> {
                 Value::Array(items)
             }
             Ty::Fixed(of, n) => {
-                if *n > HARD_ITEMS {
+                if *n > self.scale.hard_items() {
                     return Err(Overrun);
                 }
                 let mut items = Vec::with_capacity((*n).min(1 << 16) as usize);
@@ -891,7 +943,7 @@ impl<'s, 'u, 'd> Gen<'s, 'u, 'd> {
                                 let present = match self.style {
                                     Style::Smallest => false,
                                     // Present, until the value is large enough.
-                                    Style::Largest => self.items < SOFT_ITEMS / 4,
+                                    Style::Largest => self.items < self.scale.soft_items() / 4,
                                     Style::Random => self.byte() % 2 == 0,
                                 };
                                 let inner = if present { self.value(&f.ty) } else { Ok(None) };
@@ -1010,6 +1062,7 @@ pub fn check_type(
     ty: &Ty,
     inhabited: Option<bool>,
     values: &[(&str, &Value)],
+    scale: Scale,
     reach: &mut Reach,
 ) -> Result<(), Disagreement> {
     let tyref = ty.to_ref(schema);
@@ -1030,7 +1083,7 @@ pub fn check_type(
             schema.conforms(ty, value).map_err(|why| Disagreement(format!("the generator made {what}, not a {ty:?}: {why}")))?;
             hold(format, &range, value, what, reach)?;
         }
-        let budget = schema.witness_budget(ty);
+        let budget = schema.witness_budget(ty, scale);
         let Some(w) = size::witnesses(&tyref, rules, schema, (), budget) else {
             continue;
         };
@@ -1065,20 +1118,20 @@ pub fn check_type(
 
 /// A witness as the conformance crate's [`Value`].
 fn witness(value: &serde_json::Value) -> Result<Value, String> {
-    serde_json::from_value(value.clone()).map_err(|e| format!("{e}: {}", shown(&value.to_string())))
+    Value::deserialize(value).map_err(|e| format!("{e}: {}", shown(&value.to_string())))
 }
 
 /// Everything `sizes_vs_core` asserts about `schema`: its root and each
 /// declaration have core's range and witnesses held to the encoders, and
 /// three values of the root (the simplest, a random one and one at the
 /// bounds, from the rest of `u`) held to the range.
-pub fn check_schema(schema: &Schema, u: &mut Unstructured) -> Result<Reach, Disagreement> {
+pub fn check_schema(schema: &Schema, u: &mut Unstructured, scale: Scale) -> Result<Reach, Disagreement> {
     let mut reach = Reach::default();
     let mut tys = vec![schema.root.clone()];
     tys.extend((0..schema.decls.len()).map(Ty::Named));
     for (at, ty) in tys.iter().enumerate() {
         let mut values = vec![];
-        let simplest = Gen::new(schema, u, Style::Smallest).value(ty);
+        let simplest = Gen::new(schema, u, Style::Smallest, scale).value(ty);
         let inhabited = match &simplest {
             Ok(v) => Some(v.is_some()),
             // Too big to build here: unknown.
@@ -1090,7 +1143,7 @@ pub fn check_schema(schema: &Schema, u: &mut Unstructured) -> Result<Reach, Disa
         // The root also gets values of its own; a declaration, its witnesses.
         if at == 0 && inhabited == Some(true) {
             for (what, style) in [("a random value", Style::Random), ("a value at the bounds", Style::Largest)] {
-                match Gen::new(schema, u, style).value(ty) {
+                match Gen::new(schema, u, style, scale).value(ty) {
                     Ok(Some(v)) => values.push((what, v)),
                     // Too big to build here, or none (past @max_depth).
                     _ => {}
@@ -1098,15 +1151,17 @@ pub fn check_schema(schema: &Schema, u: &mut Unstructured) -> Result<Reach, Disa
             }
         }
         let shown_values: Vec<(&str, &Value)> = values.iter().map(|(w, v)| (*w, v)).collect();
-        check_type(schema, ty, inhabited, &shown_values, &mut reach)
+        check_type(schema, ty, inhabited, &shown_values, scale, &mut reach)
             .map_err(|e| Disagreement(format!("{e}\n  the type: {ty:?}\n  the schema: {schema:?}")))?;
     }
     Ok(reach)
 }
 
-/// The whole check on one input: a schema from its front, values from the rest.
+/// The whole check on one input: its scale from the first byte, a schema
+/// from what follows, values from the rest.
 pub fn check_input(data: &[u8]) -> Result<Reach, Disagreement> {
     let mut u = Unstructured::new(data);
+    let scale = if byte(&mut u) % 16 == 0 { Scale::Big } else { Scale::Small };
     let schema = read_schema(&mut u);
-    check_schema(&schema, &mut u)
+    check_schema(&schema, &mut u, scale)
 }
