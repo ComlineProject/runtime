@@ -336,7 +336,7 @@ fn read_ty(u: &mut Unstructured, decls: usize, me: usize, guarded: bool, depth: 
     let names: Vec<usize> = (0..decls).filter(|at| *at < me || guarded).collect();
     let tag = byte(u) % 16;
     let scalar = |u: &mut Unstructured| Ty::Scalar(pick(u, &SCALARS));
-    if depth == 0 && tag > 9 {
+    if depth == 0 && (7..=10).contains(&tag) {
         return scalar(u);
     }
     match tag {
