@@ -1,0 +1,28 @@
+name: Lint
+
+# actionlint on the workflows, and the Renovate config checked with
+# `--strict`: the org's reusable lint workflow.
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+
+# The reusable workflow has a group of its own, `lint-<pr or ref>`, and group
+# names are case-insensitive: this one is named differently so they don't
+# clash.
+concurrency:
+  group: lint-caller-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+jobs:
+  lint:
+    name: lint
+    permissions:
+      contents: read
+    uses: ComlineProject/.github/.github/workflows/lint.yml@797d473553d7f2fc50895bb2573acb83ac63c7cb # 2026-11-12
+    with:
+      renovate-config: renovate.json

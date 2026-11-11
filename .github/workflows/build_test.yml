@@ -29,7 +29,7 @@ jobs:
     name: ci
     permissions:
       contents: read
-    uses: ComlineProject/.github/.github/workflows/rust-ci.yml@6bfbbcc9bccd25b44c06dbf41408885bb29aafe6 # 2026-11-11
+    uses: ComlineProject/.github/.github/workflows/rust-ci.yml@797d473553d7f2fc50895bb2573acb83ac63c7cb # 2026-11-12
     with:
       build-args: --locked
       test-args: --locked
@@ -43,7 +43,7 @@ jobs:
     name: conformance specs
     runs-on: ubuntu-24.04
     timeout-minutes: 15
-    container: ghcr.io/comlineproject/ci-tools@sha256:324a7d7e0fc5101cc21d2b1794b29c8c8a67e4eb1f9df7fafb91cfa627748035
+    container: ghcr.io/comlineproject/ci-tools@sha256:bf98b8798137193a49d1e1952a5b5f87e3d59a31729028c001bcd7883a22f71b
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -59,7 +59,7 @@ jobs:
     name: wasm32 core
     runs-on: ubuntu-24.04
     timeout-minutes: 30
-    container: ghcr.io/comlineproject/ci-wasm@sha256:742fbab34886e53d099c7faee9ffa9cd9c53cda085f8139eb112106f9be1e0e5
+    container: ghcr.io/comlineproject/ci-wasm@sha256:badd6af13cee6c459c9284de8ef0ef4a1667ed7e35582f87d1afb08f3c30fd8f
     env:
       # The image's toolchain (the root rust-toolchain.toml's pin, 1.99.1),
       # without the file's clippy and rustfmt, which this job doesn't use.
@@ -88,7 +88,7 @@ jobs:
     name: ffi
     runs-on: ubuntu-24.04
     timeout-minutes: 45
-    container: ghcr.io/comlineproject/ci-tools@sha256:324a7d7e0fc5101cc21d2b1794b29c8c8a67e4eb1f9df7fafb91cfa627748035
+    container: ghcr.io/comlineproject/ci-tools@sha256:bf98b8798137193a49d1e1952a5b5f87e3d59a31729028c001bcd7883a22f71b
     env:
       RUSTUP_TOOLCHAIN: stable
     steps:
@@ -135,8 +135,8 @@ jobs:
   # The `ffi` job on the other platforms (its name, required on main, stays
   # Linux's): the header, the libraries (`.dll`/`.lib` on Windows, `.dylib`
   # on macOS), the Rust replay, the C harness (clang on macOS and Windows;
-  # no sanitizers on Windows) and the Node harness. Not in a container (the
-  # images are Linux), and the hardening runner is Linux's.
+  # no sanitizers on Windows) and the Node harness. Not in a container: the
+  # images are Linux.
   ffi_platforms:
     name: ffi (${{ matrix.os }})
     runs-on: ${{ matrix.os }}
@@ -158,7 +158,6 @@ jobs:
       CBINDGEN_VERSION: 0.29.2
     steps:
       - uses: step-security/harden-runner@1d88384fd173af6ecb012dfd0264a306b711241a # v2.22.4
-        if: runner.os == 'Linux'
         with:
           egress-policy: audit
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
