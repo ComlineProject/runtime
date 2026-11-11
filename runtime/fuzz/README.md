@@ -44,6 +44,7 @@ cargo +nightly fuzz run --fuzz-dir runtime/fuzz decode_no_panic -- \
 | `ffi_feed` | a config, then operations (see below) | the C ABI on its own rules: no panic crosses and no handle is poisoned, every status is one the function documents, every span lies inside the frame and the frame inside that `feed`'s input, `NEED_MORE` and `BUFFER_TOO_SMALL` report sizes a retry succeeds with, refusals spend no request id, and nothing allocates after `comline_connection_new` |
 | `ffi_vs_core` | `ffi_feed`'s | `ffi_feed`'s checks, and each call made again through `State`, the connection framings and `HandshakeFrame` directly, which must give the same status, bytes, request id, `*consumed` and event (spans at the same offsets) |
 | `ffi_comline2` | options, then frames | a `comline@2` connection under any side and parameters, fed any frames: no panic crosses and no handle is poisoned, every status is one the function documents, `COMLINE_EVENT_SEND` means `start` has a message, and a finished or refused handshake's readers answer |
+| `sizes_vs_core` | a type graph, then values | `comline-core`'s byte range for the type in `packed@1`, `msgpack@1` and `json@1` holds every value's real encoded length (and `encoded_len` agrees), and core's least and most witnesses encode to exactly `min` and `max`; see below |
 
 **What `framing_decode` checks.**
 - The binary frames are canonical, so what decodes re-encodes to exactly the
@@ -55,6 +56,54 @@ cargo +nightly fuzz run --fuzz-dir runtime/fuzz decode_no_panic -- \
   response or reply is re-encoded and decoded again, and must decode the same.
   JSON-RPC requests are only decoded, since encoding needs a `'static` method
   name.
+
+**What `sizes_vs_core` checks.** The compiler's size rules
+([ComlineProject/core#242](https://github.com/ComlineProject/core/pull/242),
+the specification's `sizes`), held to the encoders that write the bytes. The
+input is its own grammar, [`src/sizes.rs`](src/sizes.rs): a bounded type graph
+of up to six declarations, then values.
+- **The types** are what the compiler freezes (`TypeRef`s, with a `Lookup`
+  over the declarations), so core sizes them as it sizes a package's:
+  every primitive including the 128-bit integers and `char`; `char[max N]`,
+  `char[N]`, `T[]`, `T[max N]` and `T[N]` with bounds at the tiers where a
+  header grows (15/16, 31/32, 127/128, 255/256, 16383/16384, 65535/65536,
+  2^21) and past what any header says; structs of up to 20 fields, some
+  `optional`; unit enums of up to 200 variants, with names up to 300 bytes;
+  aliases; and recursion under `@max_depth` 1 to 4, or none, through an
+  `optional` field or an array, as a schema with a value of every type has it.
+- **The values** are built by `Gen`, in three styles: the simplest (which
+  exists exactly when core sizes the type), a random one, and one at the
+  bounds: full-length strings of the worst characters (four-byte UTF-8,
+  control characters JSON writes as `\u00XX`), the longest counts, the widest
+  numbers (`i128::MIN`, floats with the longest text), present options, the
+  last and the longest-named variant. Each is checked to be of the type, then
+  encoded with the real format through the conformance crate's `Wire`: its
+  length lies in `[min, max]`, and `encoded_len` says the same.
+- **The witnesses** are core's least and most values of each type, the root's
+  and each declaration's. The least must encode to exactly `min` bytes and the
+  most to exactly `max` (unless the range is marked an upper bound), which is
+  what makes a range tight, not only sound. How much a witness may take to
+  build is bounded, but by what it holds: one of mostly characters may be
+  `2^23`, which reaches a string of 2^21 characters (a four-byte varint); one
+  of nodes, `2^18`, which reaches a MessagePack array of 65536 items (a
+  five-byte header).
+- **The tiers the vectors can't store** (a value of megabytes) are the
+  deterministic tests of [`tests/sizes.rs`](tests/sizes.rs), which is also the
+  proptest twin of the target: random graphs over the same bytes, every
+  scalar over its range, a MessagePack array of 65536 items, strings and
+  arrays whose length is a three- and a four-byte varint, an enum of 200
+  variants, recursion to its limit, and the longest `f32` and `f64` in JSON
+  (a scan finds none longer than core's maximum, and reaches it). Run it in
+  release: `cargo test --release --manifest-path runtime/fuzz/Cargo.toml --test sizes`.
+  `PROPTEST_CASES` raises its count.
+
+A disagreement is one of three things, and which decides what changes: the
+sizer (core), a rule in the specification's catalog, or an encoder. A sizer
+bug is fixed in core, a rule's in the specification, and an encoder's here,
+each with the minimized input as a vector or a unit test.
+
+This crate depends on `comline-core` by git rev, with default features off
+(the IR alone, no parser); the runtime library never does.
 
 **What the C ABI targets run.** A `comline_config`, any value allowed (the
 supported framings, other names, any handshake, mode, ordering, limit and
@@ -98,6 +147,10 @@ refuses a count past the bytes left even for such an element, and the vector
   exchange under every framing, mode, handshake and ordering, so the fuzzer
   starts past the handshake.
 
+`sizes_vs_core` has none: its input is a type graph and values in its own
+grammar, which no vector is written in, and the vectors' sizes are what
+`tests/sizes.rs` and the conformance crate already run.
+
 The corpora are generated, so they aren't committed (`.gitignore`), and neither
 are `artifacts/`.
 
@@ -117,6 +170,10 @@ are `artifacts/`.
   A failure uploads the crash and opens an issue titled after the target,
   unless one with that title is already open. It doesn't block anyone's pull
   request.
+
+- **Both:** the `sizes` job runs `tests/sizes.rs`, the proptest twin of
+  `sizes_vs_core` and the tiers too large for a vector: on a pull request at
+  proptest's default count, nightly with `PROPTEST_CASES=20000`.
 
 Every run writes [`rust.fuzz.json`](#the-report) as an artifact and to its
 summary. The nightly run, or a manual one from `main`, also commits it to the

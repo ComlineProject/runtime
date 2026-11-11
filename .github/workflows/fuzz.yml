@@ -228,6 +228,50 @@ jobs:
           gh issue create --repo "$GITHUB_REPOSITORY" --title "$TITLE" --body \
             "The nightly proptest run (PROPTEST_CASES=100000) failed: $RUN. The minimal failing input is in the job log; the seed is the run's \`proptest-regressions\` artifact."
 
+  # `sizes_vs_core`'s proptest twin, and the tiers too large for a vector
+  # (runtime/fuzz/tests/sizes.rs): core's byte ranges held to the real
+  # encoders. In release: the large values are megabytes. A pull request runs
+  # proptest's default count; the nightly run 20000 cases, and opens an issue
+  # on a failure.
+  sizes:
+    name: sizes (proptest)
+    runs-on: ubuntu-latest
+    timeout-minutes: 120
+    permissions:
+      contents: read
+      issues: write
+    env:
+      NIGHTLY: ${{ github.event_name != 'pull_request' }}
+    steps:
+      - uses: actions/checkout@v4
+      - run: rustup toolchain install nightly --profile minimal
+      - name: Size tests
+        env:
+          PROPTEST_CASES: ${{ github.event_name == 'pull_request' && '256' || '20000' }}
+        run: cargo test --release --manifest-path runtime/fuzz/Cargo.toml --test sizes
+      - name: Upload the failing seeds
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: sizes-proptest-regressions
+          path: runtime/fuzz/tests/sizes.proptest-regressions
+          if-no-files-found: ignore
+      - name: Open an issue
+        if: failure() && env.NIGHTLY == 'true'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TITLE: "Nightly size tests failed"
+          RUN: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+        run: |
+          open=$(gh issue list --repo "$GITHUB_REPOSITORY" --state open --limit 200 \
+            --json title --jq "map(select(.title == env.TITLE)) | length")
+          if [ "$open" != "0" ]; then
+            echo "An issue titled '$TITLE' is already open."
+            exit 0
+          fi
+          gh issue create --repo "$GITHUB_REPOSITORY" --title "$TITLE" --body \
+            "The nightly size tests (runtime/fuzz/tests/sizes.rs, PROPTEST_CASES=20000) failed: $RUN. The minimal failing input is in the job log; the seed is the run's \`sizes-proptest-regressions\` artifact."
+
   report:
     name: fuzz report
     needs: [targets, fuzz, properties]
