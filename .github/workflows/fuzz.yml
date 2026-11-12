@@ -75,7 +75,7 @@ jobs:
     permissions:
       contents: write
       issues: write
-    uses: ComlineProject/.github/.github/workflows/fuzz.yml@797d473553d7f2fc50895bb2573acb83ac63c7cb # 2026-11-12
+    uses: ComlineProject/.github/.github/workflows/fuzz.yml@807dd25bcbf848275f5f2bc5dcdd15070dcc321b # 2026-11-12
     with:
       image: ghcr.io/comlineproject/ci-fuzz@sha256:d18222e3007d318c73b1df500d997222ff6dca536b4b0e89e6ab7e55fc81326a
       targets: ${{ needs.targets.outputs.list }}
@@ -122,7 +122,7 @@ jobs:
           exit $status
       - name: Record the run
         if: always()
-        uses: ComlineProject/observatory/.github/actions/report-fuzz@8d21b1fbe68f8b639676153ce1a308eaafdcc6a7 # v1
+        uses: ComlineProject/observatory/.github/actions/report-fuzz@6544a11bdfb9e4def0a64d6cff1cf8c3df464951 # v1
         with:
           mode: proptest
           log: fuzz-out/proptest.log
