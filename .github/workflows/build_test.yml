@@ -29,7 +29,7 @@ jobs:
     name: ci
     permissions:
       contents: read
-    uses: ComlineProject/.github/.github/workflows/rust-ci.yml@797d473553d7f2fc50895bb2573acb83ac63c7cb # 2026-11-12
+    uses: ComlineProject/.github/.github/workflows/rust-ci.yml@807dd25bcbf848275f5f2bc5dcdd15070dcc321b # 2026-11-12
     with:
       build-args: --locked
       test-args: --locked
