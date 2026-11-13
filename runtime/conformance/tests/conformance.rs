@@ -20,7 +20,7 @@ use comline_runtime::contract::{
     FRAMING_DATAGRAM3, FRAMING_JSONRPC, HANDSHAKE_COMLINE, HANDSHAKE_COMLINE2,
 };
 use comline_runtime_conformance::{
-    fact_shown, reference_cases, render, run, Case, Fact, Facts, Features, Op, Outcome, Output,
+    case_framing, fact_shown, reference_cases, render, run, Case, Fact, Facts, Features, Op, Outcome, Output,
     Payload, Profile, ProvenClaim,
     Report, State, Support, Vectors,
 };
@@ -274,6 +274,12 @@ fn profiles_are_proven() {
             if proving.len() == proven_by.len() {
                 if let Err(e) = fact_shown(fact, &proving) {
                     problems.push(format!("`{name}`: `{label}`: {e}"));
+                }
+                // A framing's `protocol` is shown by cases of that framing.
+                if matches!(fact, Fact::Protocol(_)) {
+                    for c in proving.iter().filter(|c| case_framing(c) != Some(name)) {
+                        problems.push(format!("`{name}`: `{label}`'s case `{}` isn't for it", c.id));
+                    }
                 }
             }
         }

@@ -376,6 +376,7 @@
       "state": "supported",
       "proven_by": [
         "framing-datagram3/request",
+        "framing-datagram3/request-two-byte-protocol",
         "framing-datagram3/request-two-byte-numbers",
         "framing-datagram3/request-large-ids",
         "framing-datagram3/request-params-msgpack",

@@ -1,0 +1,358 @@
+{
+    "$schema": "https://json-schema.org/draft/2020-12/schema",
+    "$defs": {
+        "CaseId": {
+            "type": "string",
+            "description": "A vector case's id: `<feature>/<name>`.",
+            "pattern": "^[a-z0-9.@_-]+/[a-z0-9.@_-]+$"
+        },
+        "CompilerBuilds": {
+            "type": "object",
+            "additionalProperties": false,
+            "properties": {
+                "builds": {
+                    "const": true
+                },
+                "diagnostics": {
+                    "type": "array",
+                    "description": "The warnings, and no others.",
+                    "items": {
+                        "$ref": "#/$defs/CompilerWarning"
+                    }
+                },
+                "protocols": {
+                    "type": "array",
+                    "description": "Every protocol of the package built, and no others.",
+                    "items": {
+                        "$ref": "#/$defs/CompilerProtocol"
+                    }
+                }
+            },
+            "required": [
+                "builds",
+                "diagnostics",
+                "protocols"
+            ]
+        },
+        "CompilerCase": {
+            "type": "object",
+            "additionalProperties": false,
+            "properties": {
+                "build": {
+                    "description": "The package to build: one of `packages`.",
+                    "$ref": "#/$defs/CompilerPackageName"
+                },
+                "description": {
+                    "type": "string",
+                    "description": "One line.",
+                    "pattern": "^[^\n]+$"
+                },
+                "expect": {
+                    "$ref": "#/$defs/CompilerExpect"
+                },
+                "id": {
+                    "$ref": "#/$defs/CaseId"
+                },
+                "packages": {
+                    "type": "array",
+                    "description": "The case's packages: one to build, and the ones it depends on, directly\nor not. Each is a directory named after it, side by side.",
+                    "items": {
+                        "$ref": "#/$defs/CompilerPackage"
+                    },
+                    "prefixItems": [
+                        {
+                            "$ref": "#/$defs/CompilerPackage"
+                        }
+                    ],
+                    "minItems": 1
+                }
+            },
+            "required": [
+                "build",
+                "description",
+                "expect",
+                "id",
+                "packages"
+            ]
+        },
+        "CompilerError": {
+            "enum": [
+                {
+                    "code": "unverified::missing-marker",
+                    "severity": "error"
+                },
+                {
+                    "code": "unverified::missing-reason",
+                    "severity": "error"
+                },
+                {
+                    "code": "unverified::unknown-guarantee",
+                    "severity": "error"
+                },
+                {
+                    "code": "unverified::duplicate-guarantee",
+                    "severity": "error"
+                },
+                {
+                    "code": "unverified::missing-guarantee",
+                    "severity": "error"
+                },
+                {
+                    "code": "unverified::wrong-scope",
+                    "severity": "error"
+                },
+                {
+                    "code": "bounds::unbounded",
+                    "severity": "error"
+                },
+                {
+                    "code": "bounds::unbounded-depth",
+                    "severity": "error"
+                },
+                {
+                    "code": "settings::forbidden",
+                    "severity": "error"
+                }
+            ]
+        },
+        "CompilerExpect": {
+            "description": "What building the package gives. A build that succeeds says what each of\nits protocols gives up, and its warnings; one that fails, its errors, as\ncodes where they have one and else as text.",
+            "anyOf": [
+                {
+                    "$ref": "#/$defs/CompilerBuilds"
+                },
+                {
+                    "$ref": "#/$defs/CompilerFails"
+                }
+            ]
+        },
+        "CompilerFails": {
+            "type": "object",
+            "additionalProperties": false,
+            "properties": {
+                "builds": {
+                    "const": false
+                },
+                "diagnostics": {
+                    "type": "array",
+                    "description": "The errors, and no others, of those that have a code.",
+                    "items": {
+                        "$ref": "#/$defs/CompilerError"
+                    }
+                },
+                "error_contains": {
+                    "type": "array",
+                    "description": "For an error without a code: text its message contains. Provisional,\nuntil such errors get codes.",
+                    "items": {
+                        "type": "string"
+                    },
+                    "prefixItems": [
+                        {
+                            "type": "string"
+                        }
+                    ],
+                    "minItems": 1
+                }
+            },
+            "required": [
+                "builds",
+                "diagnostics"
+            ]
+        },
+        "CompilerGuarantee": {
+            "description": "A guarantee's id in the catalog.",
+            "enum": [
+                "schema_agreement",
+                "encoding_agreement",
+                "encoding_conformance",
+                "version_honesty",
+                "bounded_size"
+            ]
+        },
+        "CompilerPackage": {
+            "type": "object",
+            "additionalProperties": false,
+            "properties": {
+                "config": {
+                    "type": "string",
+                    "description": "`config.idp`, whole."
+                },
+                "dependencies": {
+                    "type": "array",
+                    "description": "The packages this one depends on by path (`../<name>`), as `config`\ndeclares them. Restated here so a runner can lay the packages out, and\na check can hold them to `config`, without reading `config.idp`.",
+                    "items": {
+                        "type": "object",
+                        "additionalProperties": false,
+                        "properties": {
+                            "accept_unverified": {
+                                "type": "object",
+                                "description": "What `config` accepts of the dependency's unverified protocols: a\nprotocol's name and the guarantees it gives up, which have to be\nexactly its set.",
+                                "additionalProperties": {
+                                    "type": "array",
+                                    "items": {
+                                        "$ref": "#/$defs/CompilerGuarantee"
+                                    }
+                                }
+                            },
+                            "name": {
+                                "$ref": "#/$defs/CompilerPackageName"
+                            }
+                        },
+                        "required": [
+                            "name"
+                        ]
+                    }
+                },
+                "name": {
+                    "$ref": "#/$defs/CompilerPackageName"
+                },
+                "schemas": {
+                    "type": "array",
+                    "description": "The schema files, `src/<namespace>.ids`.",
+                    "items": {
+                        "type": "object",
+                        "additionalProperties": false,
+                        "properties": {
+                            "path": {
+                                "type": "string",
+                                "pattern": "^src/([a-z][a-z0-9_]*/)*[a-z][a-z0-9_]*\\.ids$"
+                            },
+                            "text": {
+                                "type": "string"
+                            }
+                        },
+                        "required": [
+                            "path",
+                            "text"
+                        ]
+                    }
+                }
+            },
+            "required": [
+                "config",
+                "dependencies",
+                "name",
+                "schemas"
+            ]
+        },
+        "CompilerPackageName": {
+            "type": "string",
+            "description": "A package's name is its congregation's, its directory's and the name\nits dependants use it by in `use`.",
+            "pattern": "^[a-z][a-z0-9_]*$"
+        },
+        "CompilerProtocol": {
+            "type": "object",
+            "additionalProperties": false,
+            "properties": {
+                "acknowledged": {
+                    "type": "array",
+                    "description": "Who acknowledged some of what it gives up, and the reason shown for it,\nwhere the case asserts it: guarantees it doesn't list aren't asserted.",
+                    "items": {
+                        "type": "object",
+                        "additionalProperties": false,
+                        "properties": {
+                            "guarantee": {
+                                "$ref": "#/$defs/CompilerGuarantee"
+                            },
+                            "reason": {
+                                "type": "string"
+                            },
+                            "scope": {
+                                "description": "Where the acknowledgement was written: on the protocol, or in\n`config.idp` for the package.",
+                                "$ref": "#/$defs/Scope",
+                                "enum": [
+                                    "package",
+                                    "protocol"
+                                ]
+                            }
+                        },
+                        "required": [
+                            "guarantee",
+                            "scope"
+                        ]
+                    }
+                },
+                "given_up": {
+                    "type": "array",
+                    "description": "The guarantees it gives up, as a set: what is frozen with it.",
+                    "items": {
+                        "$ref": "#/$defs/CompilerGuarantee"
+                    }
+                },
+                "name": {
+                    "type": "string",
+                    "pattern": "^[A-Z][A-Za-z0-9]*$"
+                }
+            },
+            "required": [
+                "given_up",
+                "name"
+            ]
+        },
+        "CompilerWarning": {
+            "enum": [
+                {
+                    "code": "unverified::not-given-up",
+                    "severity": "warning"
+                },
+                {
+                    "code": "unverified::nothing-given-up",
+                    "severity": "warning"
+                },
+                {
+                    "code": "unverified::schema-agreement",
+                    "severity": "warning"
+                },
+                {
+                    "code": "unverified::encoding-agreement",
+                    "severity": "warning"
+                },
+                {
+                    "code": "unverified::encoding-conformance",
+                    "severity": "warning"
+                },
+                {
+                    "code": "unverified::bounded-size",
+                    "severity": "warning"
+                },
+                {
+                    "code": "unverified::version-honesty",
+                    "severity": "warning"
+                }
+            ]
+        },
+        "Scope": {
+            "enum": [
+                "package",
+                "protocol",
+                "function",
+                "argument",
+                "field",
+                "type"
+            ]
+        }
+    },
+    "type": "object",
+    "description": "`compiler/cases/<group>.json`: compiler conformance cases. Each is a schema\ngraph as data, with the outcome any compiler must reproduce for it: the\nway runtimes reproduce the vectors' bytes. `compiler/readme.md` says what\na case holds and how a compiler runs one.",
+    "additionalProperties": false,
+    "properties": {
+        "$schema": {
+            "type": "string"
+        },
+        "cases": {
+            "type": "array",
+            "items": {
+                "$ref": "#/$defs/CompilerCase"
+            }
+        },
+        "group": {
+            "type": "string",
+            "description": "The file's name: every case's id is `<group>/<name>`.",
+            "pattern": "^[a-z0-9-]+$"
+        }
+    },
+    "required": [
+        "cases",
+        "group"
+    ]
+}

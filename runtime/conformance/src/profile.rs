@@ -79,6 +79,7 @@ impl Facts {
                 of(Fact::Directions, &f.directions),
                 of(Fact::Errors, &f.errors),
                 of(Fact::Payload, &f.payload),
+                of(Fact::Protocol, &f.protocol),
             ],
             Facts::Handshake(f) => [
                 f.encoding_agreement
@@ -147,6 +148,7 @@ pub struct FramingFacts {
     pub directions: Stated<Directions>,
     pub errors: Stated<Errors>,
     pub payload: Stated<Payload>,
+    pub protocol: Stated<Protocol>,
 }
 
 /// A handshake may leave a fact out, which reads as `false`: not established.
@@ -205,6 +207,7 @@ fact_values! {
     Errors = fact::ERRORS { ByOrdinal = "by_ordinal", ByName = "by_name" }
     Output = fact::OUTPUT { Bytes = "bytes", Json = "json" }
     Payload = fact::PAYLOAD { Opaque = "opaque", Json = "json" }
+    Protocol = fact::PROTOCOL { Named = "named", Unnamed = "unnamed" }
 }
 
 impl Payload {
@@ -250,6 +253,7 @@ pub enum Fact {
     Errors(Errors),
     Output(Output),
     Payload(Payload),
+    Protocol(Protocol),
     SchemaAgreement(bool),
     EncodingAgreement(bool),
 }
@@ -269,6 +273,7 @@ impl Fact {
             Fact::Errors(_) => Errors::FACT,
             Fact::Output(_) => Output::FACT,
             Fact::Payload(_) => Payload::FACT,
+            Fact::Protocol(_) => Protocol::FACT,
             Fact::SchemaAgreement(_) => fact::SCHEMA_AGREEMENT,
             Fact::EncodingAgreement(_) => fact::ENCODING_AGREEMENT,
         }
@@ -288,6 +293,7 @@ impl Fact {
             Fact::Errors(v) => v.as_str(),
             Fact::Output(v) => v.as_str(),
             Fact::Payload(v) => v.as_str(),
+            Fact::Protocol(v) => v.as_str(),
             Fact::SchemaAgreement(true) | Fact::EncodingAgreement(true) => "true",
             Fact::SchemaAgreement(false) | Fact::EncodingAgreement(false) => "false",
         }
@@ -353,6 +359,7 @@ fn decoding_fact_shown(fact: Fact, first: &Case, cases: &[&Case]) -> bool {
         Fact::Output(output) => output_shown(output, cases),
         Fact::Payload(Payload::Opaque) => cases.iter().any(|c| carries_non_json(c)),
         Fact::Payload(Payload::Json) => embedding_shown(cases),
+        Fact::Protocol(protocol) => protocol_shown(protocol, cases),
         Fact::SchemaAgreement(_) | Fact::EncodingAgreement(_) => {
             unreachable!("handshake facts aren't shown by decoding")
         }
@@ -399,6 +406,50 @@ fn directions_shown(directions: Directions, cases: &[&Case]) -> bool {
         Directions::One => {
             read_as_other(Expect::Accept, Op::Request) || read_as_other(Expect::Accept, Op::Response)
         }
+    }
+}
+
+/// `protocol` is shown by exact requests. For `named`, each one's `protocol`
+/// is 128 or more, so its varint takes two bytes or more, and isn't its
+/// `call_id`, so its bytes can't hold it as the function's number; and its
+/// bytes hold that number's varint (LEB128) at a byte boundary. A request that
+/// holds the protocol is one that names it. For `unnamed`, each one's input has
+/// no `protocol`, and decoding its bytes gives that input back, so the frame
+/// carries none. Which framing a case is for is the profile's to check
+/// ([`case_framing`]).
+fn protocol_shown(protocol: Protocol, cases: &[&Case]) -> bool {
+    !cases.is_empty()
+        && cases.iter().all(|case| match &case.input {
+            Input::Request(Framed::Full(i)) if case.expect == Expect::Exact => match protocol {
+                Protocol::Named => i.protocol.is_some_and(|number| {
+                    let varint = leb128(number);
+                    number >= 128
+                        && number != i.call_id
+                        && case.bytes.0.windows(varint.len()).any(|w| w == varint)
+                }),
+                Protocol::Unnamed => i.protocol.is_none(),
+            },
+            _ => false,
+        })
+}
+
+/// A number's LEB128 bytes.
+fn leb128(mut number: u16) -> Vec<u8> {
+    let mut bytes = Vec::new();
+    while number >= 0x80 {
+        bytes.push((number & 0x7f) as u8 | 0x80);
+        number >>= 7;
+    }
+    bytes.push(number as u8);
+    bytes
+}
+
+/// The framing a request or response case is for.
+pub fn case_framing(case: &Case) -> Option<&str> {
+    match &case.input {
+        Input::Request(Framed::Full(i)) => Some(&i.framing),
+        Input::Response(Framed::Full(i)) => Some(&i.framing),
+        _ => None,
     }
 }
 
@@ -542,6 +593,7 @@ mod tests {
             (Errors::FACT, values(Errors::ALL, Errors::as_str)),
             (Output::FACT, values(Output::ALL, Output::as_str)),
             (Payload::FACT, values(Payload::ALL, Payload::as_str)),
+            (Protocol::FACT, values(Protocol::ALL, Protocol::as_str)),
             (fact::SCHEMA_AGREEMENT, vec!["true", "false"]),
             (fact::ENCODING_AGREEMENT, vec!["true", "false"]),
         ];
@@ -580,9 +632,13 @@ mod tests {
         let by_name = json!({ "value": "by_name", "proven_by": ["a/c"] });
         let opaque = json!({ "value": "opaque", "proven_by": ["a/d"] });
         let both = json!({ "value": "both", "proven_by": ["a/e"] });
+        let named = json!({ "value": "named", "proven_by": ["a/f"] });
         let read = profile(
             "framing",
-            json!({ "calls": by_id, "directions": both, "errors": by_name, "payload": opaque }),
+            json!({
+                "calls": by_id, "directions": both, "errors": by_name, "payload": opaque,
+                "protocol": named,
+            }),
         )
         .unwrap();
         assert_eq!(read.kind(), ProfileKind::Framing);
@@ -594,12 +650,26 @@ mod tests {
             ("errors", "by_name")
         );
         assert_eq!(stated[3].0, Fact::Payload(Payload::Opaque));
+        assert_eq!(stated[4].0, Fact::Protocol(Protocol::Named));
 
         // A fact missing, an unknown fact, an unknown value.
-        assert!(profile("framing", json!({ "calls": by_id, "errors": by_name, "payload": opaque })).is_err());
-        let more = json!({ "calls": by_id, "directions": both, "errors": by_name, "payload": opaque, "more": by_name });
+        let without_directions = json!({
+            "calls": by_id, "errors": by_name, "payload": opaque, "protocol": named,
+        });
+        assert!(profile("framing", without_directions).is_err());
+        let without_protocol = json!({
+            "calls": by_id, "directions": both, "errors": by_name, "payload": opaque,
+        });
+        assert!(profile("framing", without_protocol).is_err());
+        let more = json!({
+            "calls": by_id, "directions": both, "errors": by_name, "payload": opaque,
+            "protocol": named, "more": by_name,
+        });
         assert!(profile("framing", more).is_err());
-        let wrong = json!({ "calls": { "value": "by_ordinal" }, "directions": both, "errors": by_name, "payload": opaque });
+        let wrong = json!({
+            "calls": { "value": "by_ordinal" }, "directions": both, "errors": by_name,
+            "payload": opaque, "protocol": named,
+        });
         assert!(profile("framing", wrong).is_err());
     }
 
@@ -692,6 +762,56 @@ mod tests {
         let reads_as_response = read(Op::Response, b"q", Expect::Accept);
         assert!(shown(Directions::One, &[&sent, &reads_as_response]));
         assert!(!shown(Directions::Both, &[&sent, &reads_as_response]));
+    }
+
+    #[test]
+    fn protocol_is_shown_by_requests_that_hold_it_or_give_none() {
+        let case = |protocol: Option<u16>, call_id: u16, bytes: &[u8], expect| {
+            let mut input = json!({
+                "framing": "f", "call_id": call_id, "method": "m", "request_id": "1",
+                "format": "json@1", "params": { "unit": null },
+            });
+            if let Some(protocol) = protocol {
+                input["protocol"] = json!(protocol);
+            }
+            Case {
+                id: "a/b".into(),
+                input: Input::parse(Op::Request, &input).unwrap(),
+                bytes: crate::Hex(bytes.to_vec()),
+                expect,
+                compare: crate::Compare::Bytes,
+            }
+        };
+        let shown = |fact, case: &Case| fact_shown(Fact::Protocol(fact), &[case]).is_ok();
+
+        // 300 is the varint `ac 02`.
+        let named = case(Some(300), 1, &[0, 0xac, 0x02, 1], Expect::Exact);
+        assert!(shown(Protocol::Named, &named));
+        assert!(!shown(Protocol::Unnamed, &named));
+        // Not in the frame, or not at a byte boundary of it.
+        let elsewhere = case(Some(300), 1, &[0, 0xac, 1, 2], Expect::Exact);
+        assert!(!shown(Protocol::Named, &elsewhere));
+        let cut_short = case(Some(300), 1, &[0, 0xac], Expect::Exact);
+        assert!(!shown(Protocol::Named, &cut_short));
+        // A byte can hold a number under 128 by chance, and a protocol that
+        // is the call's number can be mistaken for it.
+        let by_chance = case(Some(5), 1, &[0, 5, 1], Expect::Exact);
+        assert!(!shown(Protocol::Named, &by_chance));
+        let as_the_call = case(Some(300), 300, &[0, 0xac, 0x02], Expect::Exact);
+        assert!(!shown(Protocol::Named, &as_the_call));
+        // A request that gives none names none; a rejection shows nothing.
+        let unnamed = case(None, 1, &[0, 1], Expect::Exact);
+        assert!(shown(Protocol::Unnamed, &unnamed));
+        assert!(!shown(Protocol::Named, &unnamed));
+        let refused = case(Some(300), 1, &[0, 0xac, 0x02], Expect::Reject);
+        assert!(!shown(Protocol::Named, &refused));
+        let none_refused = case(None, 1, &[0, 1], Expect::Reject);
+        assert!(!shown(Protocol::Unnamed, &none_refused));
+        assert!(fact_shown(Fact::Protocol(Protocol::Named), &[]).is_err());
+        assert_eq!(leb128(0), [0]);
+        assert_eq!(leb128(127), [0x7f]);
+        assert_eq!(leb128(128), [0x80, 0x01]);
+        assert_eq!(leb128(u16::MAX), [0xff, 0xff, 0x03]);
     }
 
     #[test]

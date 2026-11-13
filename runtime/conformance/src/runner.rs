@@ -37,10 +37,10 @@ use serde::Deserialize;
 use serde_json::{json, Value as Json};
 
 use crate::{
-    answer, fact_shown, hex, json_equal, to_json, Answer, Case, Compare, EncodeIn, Expect, Hex,
+    answer, case_framing, fact_shown, hex, json_equal, to_json, Answer, Case, Compare, EncodeIn, Expect, Hex,
     Input, Op, SizeIn,
 };
-use crate::{Outcome, Profile, Vectors};
+use crate::{Fact, Outcome, Profile, Vectors};
 
 /// The version of the public spec: the case format (`vectors/*.json`,
 /// `profiles/*.json`) and the ops protocol, as the vendored specification's
@@ -211,6 +211,12 @@ pub fn prove<'a>(
                             return Err(format!("case `{id}` not implemented: {what}"))
                         }
                         None => return Err(format!("case `{id}` wasn't run")),
+                    }
+                }
+                if matches!(fact, Fact::Protocol(_)) {
+                    let elsewhere = |c: &&&Case| case_framing(c) != Some(&profile.name);
+                    if let Some(c) = proving.iter().find(elsewhere) {
+                        return Err(format!("case `{}` isn't for `{}`", c.id, profile.name));
                     }
                 }
                 fact_shown(fact, &proving)

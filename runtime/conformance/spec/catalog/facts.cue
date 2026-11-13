@@ -106,6 +106,16 @@ facts: {
 			json:   "JSON text, written into the frame"
 		}
 	}
+	protocol: {
+		applies_to:  "framing"
+		title:       "protocol"
+		description: "Whether a request's frame names the protocol it calls into."
+		since:       "0.11"
+		values: {
+			named:   "it does, by number or wire id, so several protocols can share one transport"
+			unnamed: "it doesn't: a call names only its function"
+		}
+	}
 	schema_agreement: {
 		applies_to:  "handshake"
 		title:       "schema agreement"
