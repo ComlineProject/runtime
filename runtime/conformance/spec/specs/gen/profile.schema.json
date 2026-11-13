@@ -307,13 +307,33 @@
                                 "proven_by",
                                 "value"
                             ]
+                        },
+                        "protocol": {
+                            "type": "object",
+                            "additionalProperties": false,
+                            "properties": {
+                                "proven_by": {
+                                    "$ref": "#/$defs/ProvenBy"
+                                },
+                                "value": {
+                                    "enum": [
+                                        "named",
+                                        "unnamed"
+                                    ]
+                                }
+                            },
+                            "required": [
+                                "proven_by",
+                                "value"
+                            ]
                         }
                     },
                     "required": [
                         "calls",
                         "directions",
                         "errors",
-                        "payload"
+                        "payload",
+                        "protocol"
                     ]
                 },
                 "kind": {

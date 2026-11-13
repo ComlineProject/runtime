@@ -6,7 +6,7 @@ proven, the formats of these files, and the catalog of names they share. A runti
 tool implements against this repository, and pins it like any other
 dependency. Comline's own runtimes do the same.
 
-Version: **0.10** ([`VERSION`](VERSION)). While Comline is in its early days
+Version: **0.11** ([`VERSION`](VERSION)). While Comline is in its early days
 (0.x), a minor version may change anything, and the change is named in the
 pull request that makes it and in [the changes](#changes) below.
 
@@ -32,6 +32,9 @@ will read it.
 - `vectors/<feature>.json`: that feature's cases.
 - [`benches/`](benches/README.md): the benchmarks every runtime runs, in the
   same value encoding.
+- [`compiler/`](compiler/readme.md): compiler conformance cases, schema
+  graphs with the guarantees they give up and the diagnostics a build must
+  report, for a compiler or any tool that judges a package.
 - [`specs/`](specs/readme.md): the format of each of these files, in CUE, and
   the JSON Schemas generated from it, which each file names in `$schema`.
 
@@ -213,7 +216,11 @@ What an implementation answers, and how its answers are judged:
   response; a response's input holds only the ordinal, so `by_ordinal` and
   `by_name` rest on the case passing. Its `payload` is shown by requests: an
   exact one with non-JSON params for `opaque`, and for `json`, an exact one with
-  JSON params and a refusal of that same frame with non-JSON in their place. A
+  JSON params and a refusal of that same frame with non-JSON in their place. Its
+  `protocol` is shown by exact `request` cases: for `named`, ones whose `protocol`
+  is 128 or more, isn't their `call_id`, and whose bytes hold that number as a
+  varint; for `unnamed`, ones whose input has no `protocol`, which decoding their
+  bytes gives back without one. A
   format's `output` is shown by exact `encode` cases: all JSON for `json`, and
   at least one not for `bytes`. Its other facts are shown by `decode` cases of the
   `Point` and `Color` shapes the official profiles use. A handshake's facts
@@ -222,6 +229,24 @@ What an implementation answers, and how its answers are judged:
 
 ### Changes
 
+- **0.11:** a framing states `protocol`: `named`, when a request's frame names the
+  protocol it calls into, by number or wire id, so several protocols can share one
+  transport, or `unnamed`, when it doesn't and a call names only its function. A
+  profile without it is refused. `datagram@2` and `datagram@3` are `named`;
+  `datagram@1` and `jsonrpc@1` are `unnamed`. JSON-RPC's `qualified` method names
+  (`chat.Chat/send`, which `request-qualified-method` shows) are a parameter of
+  the framing, not part of its profile: a request holds a method, and writing the
+  protocol into it is the caller's choice, so the framing doesn't name one.
+  Reused cases:
+  `framing-datagram2/request-two-byte-protocol` for `datagram@2`,
+  `framing-datagram/request` and `request-large-id` for `datagram@1`, and
+  `framing-jsonrpc/request` and `request-large-id` for `jsonrpc@1`. New case, on
+  `datagram@3`: `request-two-byte-protocol` (protocol 300, call 1, so the protocol's two
+  varint bytes are in the frame and no function number can be mistaken for
+  them); its bytes are `datagram@2`'s case of the same name with the call id
+  as `datagram@3` writes it, a varint (`01`), not `datagram@2`'s two bytes (`0100`). A runtime must reproduce it. No frame's
+  bytes change, and no other case. `specs/protocol.jq` holds each framing's
+  `protocol` to its cases, in `specs/check.sh`.
 - **0.10:** a framing states `directions`: `both`, when a frame says whether it's
   a request or a response so calls can go both ways on one transport, or `one`,
   when it doesn't. A profile without it is refused. New cases, on `datagram@2`,
@@ -421,6 +446,9 @@ Whether a one-way call gets a reply frame is behaviour, not bytes, so no
 profile states it until live cross-runtime calls can prove it (see below).
 
 ## Implementing the spec
+
+A compiler or another tool that judges packages vendors `compiler/cases/`
+instead, and runs it as [`compiler/readme.md`](compiler/readme.md) says.
 
 Vendor `features.json`, `vectors/` and `profiles/` at a pinned commit of this
 repository, and `specs/gen/` too if you want their `$schema` to resolve; a

@@ -5,7 +5,7 @@ use crate::{
     SeqSize, Sizes, Status, StringSize, StructSize, Value, Width,
 };
 
-pub const SPEC_VERSION: &str = r#"0.10"#;
+pub const SPEC_VERSION: &str = r#"0.11"#;
 
 /// Every guarantee, in the catalog's order.
 pub const GUARANTEES: &[Guarantee] = &[
@@ -183,6 +183,17 @@ pub const FACTS: &[Fact] = &[
         status: Status::Stable,
         replaced_by: None,
         since: Some(r#"0.7"#),
+    },
+    Fact {
+        id: r#"protocol"#,
+        applies_to: Kind::Framing,
+        title: r#"protocol"#,
+        description: r#"Whether a request's frame names the protocol it calls into."#,
+        values: &[Value { id: r#"named"#, meaning: r#"it does, by number or wire id, so several protocols can share one transport"# }, Value { id: r#"unnamed"#, meaning: r#"it doesn't: a call names only its function"# }],
+        establishes: None,
+        status: Status::Stable,
+        replaced_by: None,
+        since: Some(r#"0.11"#),
     },
     Fact {
         id: r#"schema_agreement"#,
@@ -601,6 +612,7 @@ pub mod fact {
     pub const DIRECTIONS: &str = r#"directions"#;
     pub const ERRORS: &str = r#"errors"#;
     pub const PAYLOAD: &str = r#"payload"#;
+    pub const PROTOCOL: &str = r#"protocol"#;
     pub const SCHEMA_AGREEMENT: &str = r#"schema_agreement"#;
     pub const ENCODING_AGREEMENT: &str = r#"encoding_agreement"#;
 }
@@ -648,7 +660,7 @@ pub mod sets {
     pub const OFFICIAL: &[&str] = &[r#"packed@1"#, r#"json@1"#, r#"msgpack@1"#, r#"jsonrpc@1"#, r#"datagram@1"#, r#"datagram@2"#, r#"datagram@3"#, r#"comline@1"#, r#"comline@2"#, r#"none"#];
     pub const PROFILED: &[&str] = &[r#"packed@1"#, r#"json@1"#, r#"msgpack@1"#, r#"jsonrpc@1"#, r#"datagram@1"#, r#"datagram@2"#, r#"datagram@3"#, r#"comline@1"#, r#"comline@2"#];
     pub const FORMAT_FACTS: &[&str] = &[r#"struct_fields"#, r#"unknown_field"#, r#"missing_optional"#, r#"enum_variants"#, r#"unknown_variant"#, r#"integer_width"#, r#"output"#];
-    pub const FRAMING_FACTS: &[&str] = &[r#"calls"#, r#"directions"#, r#"errors"#, r#"payload"#];
+    pub const FRAMING_FACTS: &[&str] = &[r#"calls"#, r#"directions"#, r#"errors"#, r#"payload"#, r#"protocol"#];
     pub const HANDSHAKE_FACTS: &[&str] = &[r#"schema_agreement"#, r#"encoding_agreement"#];
     pub const FEATURES: &[&str] = &[r#"name-hash"#, r#"handshake"#, r#"envelope"#, r#"framing-datagram"#, r#"framing-datagram2"#, r#"framing-datagram3"#, r#"handshake-comline2"#, r#"stream"#, r#"framing-jsonrpc"#, r#"format-json"#, r#"format-msgpack"#, r#"format-packed"#, r#"sizes-packed"#, r#"sizes-msgpack"#, r#"sizes-json"#];
     /// Every alias, with the wire name it resolves to.

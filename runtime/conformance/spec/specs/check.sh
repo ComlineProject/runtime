@@ -2,8 +2,9 @@
 # Generates gen/*.schema.json (and benches/bench.schema.json, which ships with
 # the benches so a vendored copy of them is whole) from the specs, and
 # features.json, catalog/gen/catalog.json and rust/src/catalog.rs from the
-# catalog, and vets every corpus file against them (and, with jq, holds the
-# size rules to their vectors). `--check` fails instead of
+# catalog, and compiler/cases/*.json from compiler/src, and vets every corpus
+# file against them (and, with jq, holds the size rules to their vectors and the
+# compiler cases to what their schema can't say). `--check` fails instead of
 # writing when a generated file is stale.
 set -eu
 cd "$(dirname "$0")"
@@ -36,6 +37,7 @@ vet() { # <definition> <file>...
 }
 
 generate Bench ../benches/bench.schema.json
+generate CompilerCases gen/compiler.schema.json
 generate Features gen/features.schema.json
 generate Profile gen/profile.schema.json
 generate Report gen/report.schema.json
@@ -73,6 +75,21 @@ else
     rust_catalog > ../rust/src/catalog.rs
 fi
 
+# The compiler cases, written compactly in compiler/src, as the JSON runners
+# read (compiler/readme.md): one file per group.
+groups=$(cue eval ../compiler/src -e 'strings.Join([for g, _ in groups {g}], "\n")' --out text)
+for group in $groups; do
+    if $check; then
+        if ! cue export ../compiler/src -e "out.\"$group\"" | cmp -s - "../compiler/cases/$group.json"; then
+            echo "../compiler/cases/$group.json is out of date: run specs/check.sh" >&2
+            failed=1
+        fi
+    else
+        mkdir -p ../compiler/cases
+        cue export ../compiler/src -e "out.\"$group\"" -o "../compiler/cases/$group.json" -f
+    fi
+done
+
 # profiles/ and vectors/ hold exactly what the catalog names.
 same_names() { # <what> <catalog set> <files' names>
     if [ "$(printf '%s\n' "$2" | sort)" != "$(printf '%s\n' "$3" | sort)" ]; then
@@ -85,6 +102,8 @@ names_in() { # <directory>
 }
 same_names profiles "$(cue export ../catalog -e 'strings.Join(sets.profiled, "\n")' --out text)" "$(names_in ../profiles)"
 same_names vectors "$(cue export ../catalog -e 'strings.Join(sets.features, "\n")' --out text)" "$(names_in ../vectors)"
+# compiler/cases/ holds exactly the groups compiler/src declares.
+same_names "compiler cases" "$groups" "$(names_in ../compiler/cases)"
 for file in ../profiles/*.json; do
     if ! cue vet -c -d '#OfficialProfile' ../catalog "json:" "$file"; then
         echo "$file isn't the profile the catalog gives its encoding" >&2
@@ -112,11 +131,39 @@ for file in ../profiles/*.json; do
     fi
 done
 
+# A framing's `protocol` is shown by its cases: `named` by requests whose bytes
+# hold the protocol's number, `unnamed` by requests that give none
+# (`specs/protocol.jq`).
+for file in ../profiles/*.json; do
+    [ "$(jq -r '.kind' "$file")" = framing ] || continue
+    if ! problems=$(jq -s -r --slurpfile profile "$file" -f protocol.jq ../vectors/framing-*.json); then
+        echo "$file or the framing vectors can't be read as a protocol fact and vectors" >&2
+        failed=1
+    elif [ -n "$problems" ]; then
+        echo "$file's protocol isn't proven by its vectors:" >&2
+        echo "$problems" >&2
+        failed=1
+    fi
+done
+
 # Not the schema the benches ship with.
 vet Bench $(ls ../benches/*.json | grep -v '/bench\.schema\.json$')
 vet Features ../features.json
 vet Profile ../profiles/*.json
 vet Vectors ../vectors/*.json
+vet CompilerCases ../compiler/cases/*.json
+
+# What the compiler cases' schema can't say (`specs/compiler.jq`).
+for file in ../compiler/cases/*.json; do
+    if ! problems=$(jq -r -f compiler.jq "$file"); then
+        echo "$file can't be read as compiler cases" >&2
+        failed=1
+    elif [ -n "$problems" ]; then
+        echo "$file has problems:" >&2
+        echo "$problems" >&2
+        failed=1
+    fi
+done
 
 # `reports/` and `support/` live in each runtime's repository, which vets them
 # against its vendored copy of these specs.
@@ -138,6 +185,7 @@ through() { # <schema path> <file>...
 through ../benches/bench.schema.json ../benches/connection.json ../benches/framings.json ../benches/handshake.json
 through gen/features.schema.json ../features.json
 through gen/profile.schema.json ../profiles/*.json
+through gen/compiler.schema.json ../compiler/cases/*.json
 through gen/vectors.schema.json ../vectors/envelope.json ../vectors/framing-*.json ../vectors/handshake*.json \
     ../vectors/name-hash.json ../vectors/stream.json
 

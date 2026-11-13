@@ -33,8 +33,8 @@ pub use engine::{answer, decode_typed, encode_as, encoded_len_as, run, Answer};
 pub(crate) use engine::to_json;
 pub use json_equal::json_equal;
 pub use profile::{
-    fact_shown, Calls, EnumVariants, Errors, Fact, Facts, FormatFacts, FramingFacts,
-    HandshakeFacts, IntegerWidth, MissingOptional, Output, Payload, Profile, ProfileKind, Stated,
+    case_framing, fact_shown, Calls, EnumVariants, Errors, Fact, Facts, FormatFacts, FramingFacts,
+    HandshakeFacts, IntegerWidth, MissingOptional, Output, Payload, Profile, Protocol, ProfileKind, Stated,
     StructFields,
     UnknownField, UnknownVariant,
 };

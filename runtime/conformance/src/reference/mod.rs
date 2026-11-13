@@ -342,6 +342,19 @@ pub fn reference_cases() -> Vec<Vectors> {
                 request(p("request"), FRAMING_DATAGRAM3, 3, "greet", 42, &params),
                 0,
             ),
+            // The protocol is 300, two varint bytes, and the call 1, one: no
+            // function number can be mistaken for the protocol's bytes.
+            d3(
+                request(
+                    p("request-two-byte-protocol"),
+                    FRAMING_DATAGRAM3,
+                    1,
+                    "ping",
+                    5,
+                    &Value::Array(vec![]),
+                ),
+                300,
+            ),
             // 300 is two varint bytes, 65535 three.
             d3(
                 request(
