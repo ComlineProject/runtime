@@ -90,7 +90,7 @@ async fn bump_over<T: AsyncTransport>(
     client: AsyncConnection<T, MsgPack>,
     mut server: AsyncConnection<T, MsgPack>,
 ) -> u32 {
-    server.provide(ECHO, Echo);
+    server.provide(ECHO, Echo).unwrap();
     let handle = client.handle();
     let client = tokio::spawn(client.run());
     let server = tokio::spawn(server.run());

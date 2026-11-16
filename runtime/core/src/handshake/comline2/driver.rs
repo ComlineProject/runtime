@@ -73,6 +73,10 @@ impl Handshake for Comline2Handshake {
         HANDSHAKE_COMLINE2
     }
 
+    fn agreed(&self) -> Option<&Negotiated> {
+        self.negotiated()
+    }
+
     fn initiate<T: Transport>(
         &mut self,
         transport: &mut T,
@@ -160,6 +164,10 @@ async fn recv_async<T: AsyncTransport>(transport: &mut T) -> Result<Vec<u8>, Run
 impl AsyncHandshake for Comline2Handshake {
     fn name(&self) -> &str {
         HANDSHAKE_COMLINE2
+    }
+
+    fn agreed(&self) -> Option<&Negotiated> {
+        self.negotiated()
     }
 
     async fn initiate<T: AsyncTransport>(

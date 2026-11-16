@@ -22,6 +22,15 @@
 //! - `exchange = offer | symmetric`: the initiator offers and the responder
 //!   answers, or both declare and both judge.
 //!
+//! **A Hello for a subset.** A [`Hello`] lists the protocols its end provides
+//! and the ones it calls, not necessarily every protocol of the package: a
+//! connection carries exactly what its Hello lists. The peer refuses the rest
+//! (`unknown_protocol`), calls to them fail locally with
+//! [`RuntimeError::Unavailable`](crate::contract::RuntimeError::Unavailable), and a connection that ran this handshake
+//! refuses to `provide` a protocol it didn't accept ([`Negotiated::accepts`]).
+//! [`Hello::build`] puts a Hello together from a [`HelloHeader`] and the
+//! [`ProtocolEntry`]s of what the end provides and calls.
+//!
 //! The messages and their layout are in [`Message`]; the sans-IO steps are
 //! on [`Comline2`], and [`Comline2Handshake`] runs them over a
 //! [`Transport`](crate::transport::Transport) (and, with `async`, an `AsyncTransport`).
@@ -34,7 +43,10 @@ mod message;
 mod negotiate;
 
 pub use driver::Comline2Handshake;
-pub use facts::{Encoding, EncodingKind, Hash128, Hello, PackageVersion, Protocol, Release};
+pub use facts::{
+    Encoding, EncodingKind, Hash128, Hello, HelloHeader, PackageVersion, Protocol, ProtocolEntry,
+    Release,
+};
 pub use message::{Answer, Answered, Message, Refusal, RefusedProtocol, Status, Verdict};
 pub use negotiate::{Comline2, Negotiated, ProtocolOutcome, ProtocolState, Step};
 

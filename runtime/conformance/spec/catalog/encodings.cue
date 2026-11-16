@@ -266,7 +266,7 @@ encodings: {
 	}
 	"datagram@1": {
 		kind:        "framing"
-		title:       "datagram"
+		title:       "datagram@1"
 		description: "Comline's own binary framing of requests and responses."
 		aliases: ["datagram", "comline.datagram"]
 		frozen_as: "datagram"

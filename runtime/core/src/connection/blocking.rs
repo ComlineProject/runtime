@@ -8,6 +8,7 @@ use crate::contract::{
     Call, ConnectionFraming, ConnectionId, Datagram2Framing, Dispatch, Envelope, Frame, Kind,
     Outcome, Peer, ProtocolNumber, Reply, Request, RequestCall, RuntimeError, WireFormat,
 };
+use crate::handshake::comline2::Negotiated;
 use crate::handshake::{ComlineHandshake, Facts, Handshake};
 use crate::transport::Transport;
 
@@ -30,6 +31,9 @@ use crate::connection::state::{Event, State};
 pub struct Connection<T, W, F = Datagram2Framing> {
     link: Link<T, W, F>,
     providers: Providers<T, W, F>,
+    /// What the connection's handshake agreed, when it negotiated protocol by
+    /// protocol (`comline@2`): what [`provide`](Self::provide) checks against.
+    agreed: Option<Negotiated>,
 }
 
 /// The parts of a [`Connection`] a handler borrows mutably while the
@@ -173,6 +177,7 @@ impl<T: Transport, W: WireFormat, F: ConnectionFraming> Connection<T, W, F> {
                 body: Vec::new(),
             },
             providers: Providers { table: Vec::new() },
+            agreed: None,
         }
     }
 
@@ -186,7 +191,10 @@ impl<T: Transport, W: WireFormat, F: ConnectionFraming> Connection<T, W, F> {
     ) -> Result<Self, RuntimeError> {
         let local = Facts::new(ir_hash, format.name(), framing.name());
         handshake.initiate(&mut transport, &local)?;
-        Ok(Self::with_framing_unverified(transport, format, framing))
+        let agreed = handshake.agreed().cloned();
+        let mut conn = Self::with_framing_unverified(transport, format, framing);
+        conn.agreed = agreed;
+        Ok(conn)
     }
 
     /// Answer with `handshake` ([`Handshake::respond`]).
@@ -199,17 +207,40 @@ impl<T: Transport, W: WireFormat, F: ConnectionFraming> Connection<T, W, F> {
     ) -> Result<Self, RuntimeError> {
         let local = Facts::new(ir_hash, format.name(), framing.name());
         handshake.respond(&mut transport, &local)?;
-        Ok(Self::with_framing_unverified(transport, format, framing))
+        let agreed = handshake.agreed().cloned();
+        let mut conn = Self::with_framing_unverified(transport, format, framing);
+        conn.agreed = agreed;
+        Ok(conn)
     }
 
     /// Provide `protocol` on this connection: the peer's requests to it go to
     /// `dispatcher`. Replaces one already registered for it.
-    pub fn provide<D: Dispatch + 'static>(&mut self, protocol: ProtocolNumber, dispatcher: D) {
+    ///
+    /// On a connection whose handshake ran `comline@2`, a protocol the
+    /// handshake didn't accept is refused with [`RuntimeError::Unavailable`],
+    /// and nothing is registered: one this end's Hello didn't list (a Hello
+    /// for a subset leaves protocols out), or one the peer refused
+    /// ([`Negotiated::check_provide`]). A connection with no such handshake
+    /// (`comline@1`, `none`, or [`new_unverified`](Connection::new_unverified))
+    /// has nothing to check against and takes any protocol.
+    ///
+    /// Direction isn't checked here: a Hello entry says nothing about who
+    /// implements a protocol, so the generated code checks that a side
+    /// provides only what it provides.
+    pub fn provide<D: Dispatch + 'static>(
+        &mut self,
+        protocol: ProtocolNumber,
+        dispatcher: D,
+    ) -> Result<(), RuntimeError> {
+        if let Some(agreed) = &self.agreed {
+            agreed.check_provide(protocol)?;
+        }
         let index = usize::from(protocol);
         if self.providers.table.len() <= index {
             self.providers.table.resize_with(index + 1, || None);
         }
         self.providers.table[index] = Some(Box::new(dispatcher));
+        Ok(())
     }
 
     /// Handle the peer's next frame. `Ok(true)`: one was handled;

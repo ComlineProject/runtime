@@ -60,6 +60,36 @@ impl Negotiated {
         }
     }
 
+    /// Whether the handshake accepted `protocol` on this connection: this
+    /// end's Hello listed it and neither end refused it. A protocol this
+    /// end's result doesn't hold (its Hello didn't list it, as a Hello for a
+    /// subset leaves protocols out) is not accepted, nor is one it holds as
+    /// refused. Those are the protocols whose calls fail locally
+    /// ([`check_call`](Self::check_call)) and that a connection won't
+    /// [`provide`](Self::check_provide).
+    pub fn accepts(&self, protocol: u16) -> bool {
+        self.protocols
+            .binary_search_by_key(&protocol, |p| p.number)
+            .is_ok_and(|i| matches!(self.protocols[i].state, ProtocolState::Accepted { .. }))
+    }
+
+    /// Whether this end may provide `protocol`: `Ok` when the handshake
+    /// [accepted](Self::accepts) it, or [`RuntimeError::Unavailable`] when its
+    /// Hello didn't list it or the peer refused it. A connection's `provide`
+    /// calls this on what its handshake agreed, so a handler can't be attached
+    /// to a protocol the connection doesn't carry.
+    ///
+    /// It doesn't know direction: a Hello entry says nothing about who
+    /// implements the protocol, so that a side provides only what it provides
+    /// is for the generated code, which knows `@provider`.
+    pub fn check_provide(&self, protocol: u16) -> Result<(), RuntimeError> {
+        if self.accepts(protocol) {
+            Ok(())
+        } else {
+            Err(RuntimeError::Unavailable)
+        }
+    }
+
     /// Takes in the protocols the peer's verdict refused.
     fn apply(&mut self, refused: &[RefusedProtocol]) {
         for r in refused {

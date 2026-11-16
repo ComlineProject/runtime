@@ -185,7 +185,7 @@ fn a_connection_reports_an_oversized_request() {
     let (dialled, mut raw) = sockets();
     raw.write_all(&[0xff; 4]).unwrap();
     let mut conn = Connection::new_unverified(Tcp::new(dialled), MsgPack);
-    conn.provide(ECHO, EchoDispatcher);
+    conn.provide(ECHO, EchoDispatcher).unwrap();
     assert_eq!(conn.serve_one(), Err(RuntimeError::FrameTooLarge));
 }
 
@@ -193,7 +193,7 @@ fn a_connection_reports_an_oversized_request() {
 fn serve_connection(accepted: TcpStream) -> thread::JoinHandle<Result<(), RuntimeError>> {
     thread::spawn(move || {
         let mut conn = Connection::new_unverified(Tcp::new(accepted), MsgPack);
-        conn.provide(ECHO, EchoDispatcher);
+        conn.provide(ECHO, EchoDispatcher).unwrap();
         conn.serve()
     })
 }
@@ -321,7 +321,7 @@ mod tokio_tcp {
         let (dialled, accepted) = tokio_sockets().await;
         let client = AsyncConnection::new_unverified(rt_tokio::Tcp::new(dialled), MsgPack);
         let mut server = AsyncConnection::new_unverified(rt_tokio::Tcp::new(accepted), MsgPack);
-        server.provide(ECHO, AsyncEcho);
+        server.provide(ECHO, AsyncEcho).unwrap();
         (client, server)
     }
 

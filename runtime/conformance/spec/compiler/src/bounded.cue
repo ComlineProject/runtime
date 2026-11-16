@@ -153,7 +153,7 @@ groups: bounded: {
 			schemas: {
 				models: _models
 				api: """
-					use models::Blob
+					use package::models::Blob
 
 					protocol Orders {
 					    function send(b: Blob);
@@ -171,7 +171,7 @@ groups: bounded: {
 			schemas: {
 				models: _models
 				api: """
-					use models::Blob
+					use package::models::Blob
 
 					@unverified = "orders carry the upload"
 					protocol Orders {
@@ -205,7 +205,7 @@ groups: bounded: {
 				}
 				"""
 			api: """
-				use models::Blob
+				use package::models::Blob
 
 				protocol Orders {
 				    function send(b: Blob);
@@ -218,5 +218,53 @@ groups: bounded: {
 			protocols: Orders: given_up: []
 			warnings: []
 		}
+	}
+
+	// A position no protocol reaches is a type another package can use, and
+	// has to be bounded. Only a marked protocol that reaches the type gives
+	// it up (`other-schema-marked`), and a type nothing reaches has none.
+	"unreached-unmarked": {
+		about: "a struct no protocol reaches, with a string without a maximum, is an error: it is a type another package can use"
+		packages: app: schemas: models: """
+			struct Blob {
+			    data: string
+			}
+			"""
+		build: "app"
+		expect: {builds: false, errors: ["bounds::unbounded"]}
+	}
+	"unreached-list-unmarked": {
+		about: "a struct no protocol reaches, with a list without a maximum, is an error too"
+		packages: app: schemas: models: """
+			struct Blob {
+			    data: u8[]
+			}
+			"""
+		build: "app"
+		expect: {builds: false, errors: ["bounds::unbounded"]}
+	}
+	"unreached-allowed-still-unmarked": {
+		about: "allowing @unverified in the package doesn't cover a type no protocol reaches: nothing marked it"
+		packages: app: {
+			config: [_allow]
+			schemas: models: """
+				struct Blob {
+				    data: string
+				}
+				"""
+		}
+		build: "app"
+		expect: {builds: false, errors: ["bounds::unbounded"]}
+	}
+	"unreached-bounded": {
+		about: "a struct no protocol reaches, bounded, gives nothing up and builds"
+		packages: app: schemas: models: """
+			struct Blob {
+			    data: char[max 64]
+			    tags: u8[max 16]
+			}
+			"""
+		build: "app"
+		expect: {builds: true, protocols: {}}
 	}
 }
