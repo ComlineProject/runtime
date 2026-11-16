@@ -129,7 +129,7 @@ fn calls_go_both_ways_named_by_protocol() {
         thread::spawn(move || {
             let mut conn: JsonRpcConnection =
                 Connection::accept_with(acceptor, Json, JsonRpcFraming, &mut ComlineHandshake, IR_HASH).unwrap();
-            conn.provide(CHAT, chat);
+            conn.provide(CHAT, chat).unwrap();
             // A call of its own, then a notification, then serve.
             let shown: bool = decode_ok(
                 conn.call(EVENTS, Call::new(0, EVENTS_CALLS[0]), &TextParams { text: "pushed".into() })
@@ -144,7 +144,7 @@ fn calls_go_both_ways_named_by_protocol() {
     let mut client: JsonRpcConnection =
         Connection::connect_with(dialler, Json, JsonRpcFraming, &mut ComlineHandshake, IR_HASH).unwrap();
     let events = EventsDispatcher::default();
-    client.provide(EVENTS, events.clone());
+    client.provide(EVENTS, events.clone()).unwrap();
     // The push and the ping first: a blocking side's calls can't cross.
     assert!(client.serve_one().unwrap() && client.serve_one().unwrap());
 
@@ -173,7 +173,7 @@ fn a_notification_gets_no_reply() {
     let (mut raw, conn_side) = duplex();
     let server = thread::spawn(move || {
         let mut conn: JsonRpcConnection = Connection::with_framing_unverified(conn_side, Json, JsonRpcFraming);
-        conn.provide(CHAT, ChatDispatcher::default());
+        conn.provide(CHAT, ChatDispatcher::default()).unwrap();
         conn.notify(EVENTS, Call::new(1, EVENTS_CALLS[1]), &()).unwrap();
         conn.serve().unwrap();
     });
@@ -222,7 +222,7 @@ async fn the_async_driver_finds_protocols_by_method_and_skips_notifications() {
 
     let (mut raw, conn_side) = async_duplex();
     let mut conn = AsyncConnection::with_framing_unverified(conn_side, Json, JsonRpcFraming);
-    conn.provide(CHAT, Count);
+    conn.provide(CHAT, Count).unwrap();
     tokio::spawn(conn.run());
 
     raw.send(br#"{"jsonrpc":"2.0","method":"app.Chat/count","params":null}"#.to_vec()).await.unwrap();

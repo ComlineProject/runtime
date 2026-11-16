@@ -149,12 +149,12 @@ fn pair(
     let (dialler, acceptor) = duplex();
     let server = thread::spawn(move || {
         let mut conn = Connection::accept(acceptor, MsgPack, IR_HASH).unwrap();
-        conn.provide(CHAT, ChatDispatcher);
+        conn.provide(CHAT, ChatDispatcher).unwrap();
         serve(&mut conn);
     });
     let mut client = Connection::connect(dialler, MsgPack, IR_HASH).unwrap();
     let events = EventsDispatcher::default();
-    client.provide(EVENTS, events.clone());
+    client.provide(EVENTS, events.clone()).unwrap();
     (client, events, server)
 }
 

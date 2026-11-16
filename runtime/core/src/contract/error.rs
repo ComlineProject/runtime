@@ -86,6 +86,10 @@ pub enum RuntimeError {
     /// written. The caller knows which call it made, so the error doesn't
     /// repeat it: that keeps this type 4 bytes, which the decode paths
     /// need.
+    ///
+    /// It is also what a connection's `provide` returns for a protocol the
+    /// handshake didn't accept: one this end's Hello didn't list, or one the
+    /// peer refused. The same protocols whose calls fail locally.
     Unavailable,
     /// The peer says it couldn't read a request of this side's, and not which:
     /// a JSON-RPC error with a `null` id, as the specification has for a

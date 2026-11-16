@@ -180,7 +180,7 @@ fn a_connection_checks_against_its_transports_configured_limit() {
     let (a, b) = duplex();
     let server = thread::spawn(move || {
         let mut conn = Connection::new_unverified(b.with_max_frame(LOW), MsgPack);
-        conn.provide(ECHO, EchoDispatcher);
+        conn.provide(ECHO, EchoDispatcher).unwrap();
         conn.serve()
     });
     let mut conn = Connection::new_unverified(a.with_max_frame(LOW), MsgPack);
@@ -252,7 +252,7 @@ mod tokio_tcp {
         let mut server = AsyncConnection::new_unverified(b, MsgPack);
         client.set_max_frame(limit);
         server.set_max_frame(limit);
-        server.provide(ECHO, AsyncEcho);
+        server.provide(ECHO, AsyncEcho).unwrap();
         let caller = client.handle();
         let client = tokio::spawn(client.run());
         let server = tokio::spawn(server.run());

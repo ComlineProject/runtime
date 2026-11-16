@@ -20,6 +20,7 @@ use crate::contract::stream::DEFAULT_MAX_FRAME;
 use crate::contract::{
     ConnectionFraming, ConnectionId, Datagram2Framing, ProtocolNumber, RuntimeError, WireFormat,
 };
+use crate::handshake::comline2::Negotiated;
 use crate::handshake::{AsyncHandshake, ComlineHandshake, Facts};
 use crate::transport::AsyncTransport;
 
@@ -31,7 +32,7 @@ use driver::{Calls, Command, Driver, Providers, Shared};
 ///
 /// ```ignore
 /// let mut conn = AsyncConnection::accept(transport, Json, CONNECTION_IR_HASH).await?;
-/// ChatAsyncDispatcher(ChatImpl).provide_on(&mut conn);
+/// ChatAsyncDispatcher(ChatImpl).provide_on(&mut conn)?;
 /// let events = conn.handle();
 /// tokio::spawn(conn.run());
 /// EventsAsyncSender::new(&events).message("pushed").await?;
@@ -42,6 +43,9 @@ pub struct AsyncConnection<T, W, F = Datagram2Framing> {
     commands: mpsc::UnboundedReceiver<Command>,
     providers: Providers<W, F>,
     limit: usize,
+    /// What the connection's handshake agreed, when it negotiated protocol by
+    /// protocol (`comline@2`): what [`provide`](Self::provide) checks against.
+    agreed: Option<Negotiated>,
 }
 
 impl<T, W> AsyncConnection<T, W, Datagram2Framing>
@@ -113,6 +117,7 @@ where
             commands,
             providers: Vec::new(),
             limit: 1,
+            agreed: None,
         }
     }
 
@@ -139,7 +144,10 @@ where
     ) -> Result<Self, RuntimeError> {
         let local = Facts::new(ir_hash, format.name(), framing.name());
         handshake.initiate(&mut transport, &local).await?;
-        Ok(Self::with_framing_unverified(transport, format, framing))
+        let agreed = handshake.agreed().cloned();
+        let mut conn = Self::with_framing_unverified(transport, format, framing);
+        conn.agreed = agreed;
+        Ok(conn)
     }
 
     /// Answer with `handshake` ([`AsyncHandshake::respond`]).
@@ -152,17 +160,40 @@ where
     ) -> Result<Self, RuntimeError> {
         let local = Facts::new(ir_hash, format.name(), framing.name());
         handshake.respond(&mut transport, &local).await?;
-        Ok(Self::with_framing_unverified(transport, format, framing))
+        let agreed = handshake.agreed().cloned();
+        let mut conn = Self::with_framing_unverified(transport, format, framing);
+        conn.agreed = agreed;
+        Ok(conn)
     }
 
     /// Provide `protocol` on this connection: the peer's requests to it go to
     /// `dispatcher`. Replaces one already registered for it.
-    pub fn provide<D: AsyncDispatch>(&mut self, protocol: ProtocolNumber, dispatcher: D) {
+    ///
+    /// On a connection whose handshake ran `comline@2`, a protocol the
+    /// handshake didn't accept is refused with [`RuntimeError::Unavailable`],
+    /// and nothing is registered: one this end's Hello didn't list (a Hello
+    /// for a subset leaves protocols out), or one the peer refused
+    /// ([`Negotiated::check_provide`]). A connection with no such handshake
+    /// (`comline@1`, `none`, or [`new_unverified`](AsyncConnection::new_unverified))
+    /// has nothing to check against and takes any protocol.
+    ///
+    /// Direction isn't checked here: a Hello entry says nothing about who
+    /// implements a protocol, so the generated code checks that a side
+    /// provides only what it provides.
+    pub fn provide<D: AsyncDispatch>(
+        &mut self,
+        protocol: ProtocolNumber,
+        dispatcher: D,
+    ) -> Result<(), RuntimeError> {
+        if let Some(agreed) = &self.agreed {
+            agreed.check_provide(protocol)?;
+        }
         let index = usize::from(protocol);
         if self.providers.len() <= index {
             self.providers.resize_with(index + 1, || None);
         }
         self.providers[index] = Some(Arc::new(dispatcher));
+        Ok(())
     }
 
     /// Let up to `limit` of the peer's requests run at once, for protocols

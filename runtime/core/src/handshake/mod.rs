@@ -93,6 +93,17 @@ pub trait Handshake {
         transport: &mut T,
         local: &Facts<'_>,
     ) -> Result<(), RuntimeError>;
+
+    /// What the handshake agreed protocol by protocol, once it has run and
+    /// succeeded: only `comline@2` negotiates that way, so the default is
+    /// `None`. A connection opened with this handshake
+    /// ([`Connection::connect_with`](crate::connection::Connection::connect_with),
+    /// `accept_with`) keeps it, and its `provide` refuses a protocol the
+    /// handshake didn't accept. With `None` there is nothing to check
+    /// against, and `provide` takes any protocol.
+    fn agreed(&self) -> Option<&comline2::Negotiated> {
+        None
+    }
 }
 
 // ── async ──────────────────────────────────────────────────────────────────
@@ -140,6 +151,17 @@ pub trait AsyncHandshake {
         transport: &mut T,
         local: &Facts<'_>,
     ) -> impl Future<Output = Result<(), RuntimeError>> + Send;
+
+    /// What the handshake agreed protocol by protocol, once it has run and
+    /// succeeded: only `comline@2` negotiates that way, so the default is
+    /// `None`. A connection opened with this handshake
+    /// ([`AsyncConnection::connect_with`](crate::connection::AsyncConnection::connect_with),
+    /// `accept_with`) keeps it, and its `provide` refuses a protocol the
+    /// handshake didn't accept. With `None` there is nothing to check
+    /// against, and `provide` takes any protocol.
+    fn agreed(&self) -> Option<&comline2::Negotiated> {
+        None
+    }
 }
 
 #[cfg(test)]

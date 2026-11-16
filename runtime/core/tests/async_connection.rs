@@ -154,9 +154,9 @@ async fn pair(chat: ChatDispatcher) -> (Conn, Conn, EventsDispatcher) {
         AsyncConnection::accept(acceptor, MsgPack, IR_HASH),
     );
     let (mut client, mut server) = (client.unwrap(), server.unwrap());
-    server.provide(CHAT, chat);
+    server.provide(CHAT, chat).unwrap();
     let events = EventsDispatcher::default();
-    client.provide(EVENTS, events.clone());
+    client.provide(EVENTS, events.clone()).unwrap();
     (client, server, events)
 }
 
@@ -273,7 +273,7 @@ async fn a_timed_out_call_s_late_reply_is_dropped() {
     // Only now does the other side start serving: the first call's reply
     // arrives first, and is skipped.
     let mut server = AsyncConnection::new_unverified(acceptor, MsgPack);
-    server.provide(CHAT, ChatDispatcher::default());
+    server.provide(CHAT, ChatDispatcher::default()).unwrap();
     tokio::spawn(server.run());
     let count: u64 = decode_ok(&caller.call(CHAT, Call::new(1, "count"), &()).await.unwrap()).unwrap();
     assert_eq!(count, 0);
@@ -358,14 +358,14 @@ async fn an_async_end_talks_to_a_blocking_one_over_tcp() {
     let blocking = std::thread::spawn(move || {
         let (stream, _) = listener.accept().unwrap();
         let mut conn = Connection::accept(Tcp::new(stream), MsgPack, IR_HASH).unwrap();
-        conn.provide(CHAT, BlockingChat);
+        conn.provide(CHAT, BlockingChat).unwrap();
         conn.serve().unwrap();
     });
 
     let transport = rt_tokio::Tcp::connect(addr).await.unwrap();
     let mut client = AsyncConnection::connect(transport, MsgPack, IR_HASH).await.unwrap();
     let events = EventsDispatcher::default();
-    client.provide(EVENTS, events.clone());
+    client.provide(EVENTS, events.clone()).unwrap();
     let caller = client.handle();
     let run = tokio::spawn(client.run());
 

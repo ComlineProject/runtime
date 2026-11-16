@@ -141,7 +141,94 @@ pub struct Hello {
     pub protocols: Vec<Protocol>,
 }
 
+/// What a [`Hello`] holds whichever protocols it lists: the exchange, the
+/// package's id and version, and the connection's encodings. A generator
+/// emits it once for the package, beside one [`ProtocolEntry`] per protocol,
+/// and [`Hello::build`] puts them together at runtime, so an end lists only
+/// the protocols it provides and calls. Every field is a constant a generator
+/// can write out, hence the borrows.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct HelloHeader<'a> {
+    pub exchange: Exchange,
+    /// `id` in `config.idp`.
+    pub package_id: Hash128,
+    /// The package version's release.
+    pub version: Release,
+    /// The package version's pre-release (`dev.2`), empty for a release.
+    pub pre: &'a str,
+    /// The encodings the connection uses, in any order: [`Hello::build`]
+    /// puts them in the wire's.
+    pub encodings: &'a [Encoding],
+}
+
+/// One protocol's entry for a [`Hello`]: [`Protocol`], borrowing its function
+/// numbers so a generator can write each one out as a constant. It carries no
+/// direction: an end lists a protocol it provides and one it calls the same
+/// way, and which is which is for the generated code, which knows
+/// `@provider`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct ProtocolEntry<'a> {
+    pub number: u16,
+    /// The release the protocol last broke at.
+    pub line: Release,
+    pub shape_hash: Hash128,
+    /// The functions' wire numbers, in any order.
+    pub functions: &'a [u16],
+}
+
+impl ProtocolEntry<'_> {
+    fn to_protocol(self) -> Protocol {
+        Protocol {
+            number: self.number,
+            line: self.line,
+            shape_hash: self.shape_hash,
+            functions: self.functions.to_vec(),
+        }
+    }
+}
+
 impl Hello {
+    /// The Hello of one end that provides `provided` and calls `called`: the
+    /// header's package and encodings, and exactly those protocols' entries,
+    /// in [`canonical`](Self::canonical) order.
+    ///
+    /// - **Union.** The two sets are listed together, as the wire has one
+    ///   list. A protocol in both, or an entry given twice, is listed once
+    ///   (the first entry given for a number).
+    /// - **Called.** A generator passes every protocol of the other side
+    ///   unless the application narrowed what it calls: the peer refuses the
+    ///   ones it doesn't have (`unknown_protocol`), and calls to them fail
+    ///   locally.
+    /// - **Everything.** With every protocol of the package's connection among
+    ///   the two, the result is the Hello a generator used to embed whole,
+    ///   byte for byte.
+    ///
+    /// The `exchange` is the header's, and [`Comline2::new`](super::Comline2::new)
+    /// sets it from its parameters anyway.
+    pub fn build(
+        header: &HelloHeader<'_>,
+        provided: &[ProtocolEntry<'_>],
+        called: &[ProtocolEntry<'_>],
+    ) -> Self {
+        let mut protocols: Vec<Protocol> = Vec::with_capacity(provided.len() + called.len());
+        for entry in provided.iter().chain(called) {
+            if !protocols.iter().any(|p| p.number == entry.number) {
+                protocols.push(entry.to_protocol());
+            }
+        }
+        Hello {
+            exchange: header.exchange,
+            package_id: header.package_id,
+            version: PackageVersion {
+                release: header.version,
+                pre: String::from(header.pre),
+            },
+            encodings: header.encodings.to_vec(),
+            protocols,
+        }
+        .canonical()
+    }
+
     /// Sorts encodings, protocols and functions into the order the wire
     /// requires.
     pub fn canonical(mut self) -> Self {
