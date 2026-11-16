@@ -5,7 +5,7 @@ use crate::{
     SeqSize, Sizes, Status, StringSize, StructSize, Value, Width,
 };
 
-pub const SPEC_VERSION: &str = r#"0.11"#;
+pub const SPEC_VERSION: &str = r#"0.12"#;
 
 /// Every guarantee, in the catalog's order.
 pub const GUARANTEES: &[Guarantee] = &[
@@ -377,7 +377,7 @@ pub const ENCODINGS: &[Encoding] = &[
     Encoding {
         id: r#"datagram@1"#,
         kind: Kind::Framing,
-        title: r#"datagram"#,
+        title: r#"datagram@1"#,
         description: r#"Comline's own binary framing of requests and responses."#,
         aliases: &[r#"datagram"#, r#"comline.datagram"#],
         frozen_as: Some(r#"datagram"#),

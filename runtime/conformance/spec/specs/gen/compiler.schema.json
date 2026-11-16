@@ -112,6 +112,26 @@
                 {
                     "code": "settings::forbidden",
                     "severity": "error"
+                },
+                {
+                    "code": "import::bare-own-schema-path",
+                    "severity": "error"
+                },
+                {
+                    "code": "import::unresolved",
+                    "severity": "error"
+                },
+                {
+                    "code": "reference::not-in-scope",
+                    "severity": "error"
+                },
+                {
+                    "code": "reference::qualifier-not-in-scope",
+                    "severity": "error"
+                },
+                {
+                    "code": "reference::defined-twice",
+                    "severity": "error"
                 }
             ]
         },

@@ -6,7 +6,7 @@ proven, the formats of these files, and the catalog of names they share. A runti
 tool implements against this repository, and pins it like any other
 dependency. Comline's own runtimes do the same.
 
-Version: **0.11** ([`VERSION`](VERSION)). While Comline is in its early days
+Version: **0.12** ([`VERSION`](VERSION)). While Comline is in its early days
 (0.x), a minor version may change anything, and the change is named in the
 pull request that makes it and in [the changes](#changes) below.
 
@@ -229,6 +229,38 @@ What an implementation answers, and how its answers are judged:
 
 ### Changes
 
+- **0.12:** `comline@2` cases for a Hello that lists a subset of the package's
+  protocols (named connections, specification#13): an end provides some of the
+  package's protocols and calls some of the other side's, and its Hello lists
+  exactly those. No existing case changes. New cases, all in
+  `handshake-comline2`:
+  - `hello-subset`: the `hello` case's bytes with protocol 0's entry gone and
+    the count one. `hello` is the default, a Hello that lists every protocol on
+    the package's connection: its bytes are what they were.
+  - `offer-subset-offered`: the offer lists protocol 0 alone, and the responder,
+    which also has protocol 1, answers only what was offered. Under
+    `scope = protocol` its result has protocol 1 refused on its own
+    (`unknown_protocol`): calls to it fail locally.
+  - `offer-subset-local`: the responder lists protocol 1 alone and the offer
+    both, so protocol 0 is refused (`unknown_protocol`) in the answer and the
+    responder's result has no protocol 0.
+  - `conclude-subset`: the initiator offered protocol 0 alone and the answer
+    takes it. `conclude-answer-beyond-offer`: an answer that also names
+    protocol 1, which the offer didn't list, is `malformed`.
+  - `symmetric-subset-local`: an end listing protocol 0 alone, against a peer
+    that lists both: its verdict refuses protocol 1, and its result has no
+    protocol 1.
+  - `finish-refused-unlisted`: the peer's verdict refuses protocol 1, which this
+    end never listed, and what this end agreed doesn't change.
+
+  A protocol a result doesn't hold, and one it holds as refused, are the ones
+  whose calls fail locally (`Unavailable`) and that `provide` refuses on a
+  connection that ran a Hello. That behaviour is the runtime's, not a message or
+  a negotiation step, so no case states it: the ops have nothing to ask a
+  runtime about a call or about providing (runtime#124 holds it in the
+  runtime's own tests, and
+  [specification#13](https://github.com/ComlineProject/specification/issues/13)
+  the question of whether the corpus should).
 - **0.11:** a framing states `protocol`: `named`, when a request's frame names the
   protocol it calls into, by number or wire id, so several protocols can share one
   transport, or `unnamed`, when it doesn't and a call names only its function. A

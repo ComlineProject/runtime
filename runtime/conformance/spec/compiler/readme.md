@@ -133,16 +133,47 @@ cases with `dependencies`, which are in `acceptance` and `chain`.
 | `marker` | the gate (`annotations.unverified.allowed`); a marker required where a protocol gives something up (its own `@handshake`, the package's default); its reason; a marker where nothing is given up |
 | `keyed` | `@unverified = { <guarantee> = "<reason>" }`: the exact set, an unknown id, a missing one, one listed that isn't given up, one listed twice |
 | `package` | `unverified` in `config.idp`: the keyed and plain forms covering what a protocol takes from the package's settings; a protocol with its own `@handshake` not covered; `unverified::wrong-scope` for `bounded_size`; a guarantee no protocol gives up through it; the gate; a marker adding `bounded_size` |
-| `bounded` | `bounded_size`: a string or list without a maximum, a type that contains itself without `@max_depth`, a type from another schema of the package that holds one, each unmarked (an error) and marked (given up), and the bounded variants |
+| `bounded` | `bounded_size`: a string or list without a maximum, a type that contains itself without `@max_depth`, a type from another schema of the package that holds one, each unmarked (an error) and marked (given up), a type no protocol reaches (it has to be bounded: an error where it holds a string or list without a maximum, even where the package allows `@unverified`), and the bounded variants |
 | `acceptance` | a dependency's unverified protocols accepted under it in `config.idp`: not at all, exactly, for less, for more; the reasons the consumer is shown; the dependency judged by its own package |
+| `imports` | where a `use` path starts: a package's own schemas only through `package::`, `parent::` or `self::` (a bare path to one is `import::bare-own-schema-path`, in each form of a `use`), a dependency's and `std`'s paths as they were, a path matching nothing (`import::unresolved`), a schema named like a dependency, and the names a dependency can't have |
+| `references` | how a type is named once imported, the Rust model: a whole-namespace `use` brings in only its name (`types::User`, and a bare `User` is `reference::not-in-scope`); a `use` of an item, `{...}` or `*` brings in the names it lists (and `types::User` after it is `reference::qualifier-not-in-scope`); a full path (`package::`, `parent::`, `self::`, `std::`, a dependency's) in a type position with no `use`; a path going down from a name in scope, a dependency's name included; a name defined twice (`reference::defined-twice`) and an alias resolving it; each spelling reaching the same type, and a package written before the rule unchanged |
 | `chain` | three packages, `c` depending on `b` depending on `a`: a type holding `a`'s unbounded value, used in `c`; and the acceptance resolving `b` asks for `a`'s protocols too |
 
-A case's `description` says what it shows. Each rule has a passing and a
-failing variant.
+A case's `description` says what it shows, and for a refused reference the
+fix its diagnostic carries (a case holds a compiler to the code and severity,
+not to the fix). The `reference` codes, in
+[the proposal](https://github.com/ComlineProject/docs/blob/main/docs/docs/proposals/use-paths-and-groups/relative-use.md#qualified-references):
+
+| Code | When | Fix |
+| --- | --- | --- |
+| `reference::not-in-scope` | a bare name no `use` or declaration of the file brought in: `User` after only `use package::types` | add `use package::types::User`, or write `types::User` |
+| `reference::qualifier-not-in-scope` | a qualified reference whose first segment is not a name in scope or a root: `types::User` after `use package::types::User` | write `User` (or add the `use` that brings the qualifier in) |
+| `reference::defined-twice` | a name defined twice in a file: a `use`d item and a local declaration of the same name, or two `use`s bringing in the same name | rename one, or import with an alias (`use package::b::User as BUser`) |
+
+Both `not-in-scope` codes also cover a name or a qualifier nothing declares
+(`Nowhere`, `nope::types::User`); a fix that adds a `use` is offered only
+where something declares it. Every error is reported, not only the first, so
+a case that has two causes lists both codes. A config error (the
+reserved dependency names) stops the build before the schemas are checked, as
+in Rust, so no schema error is reported with it. A `use` that fails to resolve
+(`import::unresolved`) still brings its name into scope, so it never cascades
+into a `reference::not-in-scope` for the name. In a type position `parent::`
+and `self::` mean what they mean in a `use`.
+
+Each rule has a passing and a failing variant.
+
+The `references` group is ahead of core: its outcomes are those of the
+[decision](https://github.com/ComlineProject/docs/blob/main/docs/docs/proposals/use-paths-and-groups/relative-use.md#qualified-references),
+which [core#290](https://github.com/ComlineProject/core/issues/290)
+implements, and core's runner fails them until then.
 
 ### To come
 
 Cases for rules core doesn't implement yet, which go in when it does:
+a `group` on a dependency's entry and the same package regrouped, and a kind of case for
+formatting imports (
+[specification#11](https://github.com/ComlineProject/specification/issues/11),
+after core#284),
 acknowledgements at the inner scopes (function, argument, field and type),
 an outer scope covering an inner one, `strict`, pinning an acceptance to a
 chain of packages and its invalidation, and failing closed.

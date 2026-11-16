@@ -162,6 +162,14 @@ fn base(exchange: Exchange) -> Hello {
     }
 }
 
+/// `base` listing only the protocols numbered `keep`: an end that provides
+/// and calls some of the package's protocols, not all.
+fn subset(exchange: Exchange, keep: &[u16]) -> Hello {
+    let mut h = base(exchange);
+    h.protocols.retain(|p| keep.contains(&p.number));
+    h
+}
+
 fn message_case(id: &str, message: Message) -> Case {
     Case {
         id: format!("handshake-comline2/{id}"),
@@ -190,11 +198,24 @@ fn negotiate_case(
     params: Params,
     peer: Vec<u8>,
 ) -> Case {
+    negotiate_case_for(id, step, side, params, base(params.exchange), peer)
+}
+
+/// A negotiation case for a local end that lists `local`: the hello it was
+/// built with, not necessarily every protocol of the package.
+fn negotiate_case_for(
+    id: &str,
+    step: Step,
+    side: Option<Side>,
+    params: Params,
+    local: Hello,
+    peer: Vec<u8>,
+) -> Case {
     let input = NegotiateIn {
         step,
         side,
         params: Some(params),
-        local: Some(Comline2::new(params, base(params.exchange)).hello),
+        local: Some(Comline2::new(params, local).hello),
         pending: None,
         reply: None,
         result: NegotiateResult::Refused(Refusal { reason: Reason::Malformed, side: Side::Initiator, protocol: None }),
@@ -249,6 +270,10 @@ pub fn cases() -> Vec<Case> {
         protocol(65535, (0, 0, 1), 0x03, &[5]),
     ];
     cases.push(message_case("hello-symmetric-wide", Message::Hello(wide)));
+    // A Hello for a subset (specification#13): protocol 1 alone. It is the
+    // `hello` case's bytes with protocol 0's entry gone, and its protocol count
+    // one.
+    cases.push(message_case("hello-subset", Message::Hello(subset(Exchange::Offer, &[1]))));
     let mut empty = base(Exchange::Offer);
     empty.encodings.clear();
     empty.protocols.clear();
@@ -370,6 +395,22 @@ pub fn cases() -> Vec<Case> {
         answer("offer-same-version-differs-warn", warn, peer(&same_version_differs)),
         answer("offer-unknown-protocol", package, peer(&|h| h.protocols.push(protocol(7, (0, 3, 0), 0xc0, &[0])))),
         answer("offer-only-unknown-protocols", offer, peer(&|h| h.protocols = vec![protocol(7, (0, 3, 0), 0xc0, &[0])])),
+        // A Hello for a subset (specification#13). The offer lists protocol 0
+        // alone: protocol 1, which only this end has, is refused on its own
+        // (`unknown_protocol`) and every call to it fails locally; the answer
+        // names only what the offer listed.
+        answer("offer-subset-offered", offer, hello_bytes(subset(Exchange::Offer, &[0]))),
+        // This end lists protocol 1 alone, the offer both: protocol 0, which
+        // only the offerer has, is refused in the answer and is not in this
+        // end's result.
+        negotiate_case_for(
+            "offer-subset-local",
+            Step::AnswerOffer,
+            None,
+            offer,
+            subset(Exchange::Offer, &[1]),
+            hello_bytes(base(Exchange::Offer)),
+        ),
         answer("offer-package-mismatch", offer, peer(&|h| h.package_id = hash(0xee))),
         answer("offer-encoding-mismatch", offer, peer(&|h| h.encodings[0].param_hash = hash(0x12))),
         answer("offer-exchange-mismatch", offer, peer(&|h| h.exchange = Exchange::Symmetric)),
@@ -400,6 +441,23 @@ pub fn cases() -> Vec<Case> {
         conclude("conclude-same-version-differs-warn", warn, accepted(PackageVersion::release(0, 3, 0), differs)),
         conclude("conclude-protocol-refused", offer, accepted(PackageVersion::release(0, 4, 0), Status::Refused { reason: Reason::LineMismatch })),
         conclude("conclude-refused", offer, Answer::Refuse(Refusal { reason: Reason::EncodingMismatch, side: Side::Responder, protocol: None })),
+        // A Hello for a subset (specification#13): this end offered protocol 0
+        // alone, and the answer takes it.
+        negotiate_case_for(
+            "conclude-subset",
+            Step::ConcludeAnswer,
+            None,
+            offer,
+            subset(Exchange::Offer, &[0]),
+            Message::Answer(Answer::Accept {
+                version: PackageVersion::release(0, 3, 0),
+                protocols: vec![Answered { number: 0, status: Status::Accepted { shape_differs: false, missing: vec![] } }],
+            })
+            .to_bytes(),
+        ),
+        // ... and an answer that also names protocol 1, which this end never
+        // listed, is not one to a Hello like this: `malformed`.
+        negotiate_case_for("conclude-answer-beyond-offer", Step::ConcludeAnswer, None, offer, subset(Exchange::Offer, &[0]), Message::Answer(accepted(PackageVersion::release(0, 3, 0), Status::Accepted { shape_differs: false, missing: vec![] })).to_bytes()),
         negotiate_case("conclude-malformed", Step::ConcludeAnswer, None, offer, b"CO\x02".to_vec()),
         negotiate_case("conclude-exchange-mismatch", Step::ConcludeAnswer, None, offer, hello_bytes(base(Exchange::Symmetric))),
     ]);
@@ -424,6 +482,17 @@ pub fn cases() -> Vec<Case> {
         judge("symmetric-responder-newer-consumer-refuse", Side::Responder, Params { newer_consumer: NewerConsumer::Refuse, ..symmetric }, sym_peer(&newer)),
         judge("symmetric-line-mismatch", Side::Responder, symmetric, sym_peer(&line_moved)),
         judge("symmetric-unknown-protocol", Side::Initiator, symmetric, sym_peer(&|h| { h.protocols.pop(); })),
+        // A Hello for a subset (specification#13): this end lists protocol 0
+        // alone and the peer both. The verdict refuses protocol 1, which only
+        // the peer has, and this end's result has no protocol 1.
+        negotiate_case_for(
+            "symmetric-subset-local",
+            Step::JudgeHello,
+            Some(Side::Initiator),
+            symmetric,
+            subset(Exchange::Symmetric, &[0]),
+            sym_peer(&|_| {}),
+        ),
         judge("symmetric-same-version-differs-warn", Side::Responder, Params { same_version_differs: SameVersionDiffers::Warn, ..symmetric }, sym_peer(&same_version_differs)),
         judge("symmetric-exchange-mismatch", Side::Responder, symmetric, peer(&|_| {})),
         judge("symmetric-peer-refused", Side::Initiator, symmetric, Message::Answer(Answer::Refuse(Refusal { reason: Reason::ExchangeMismatch, side: Side::Responder, protocol: None })).to_bytes()),
@@ -445,6 +514,18 @@ pub fn cases() -> Vec<Case> {
             Side::Responder,
             pending.clone(),
             Message::Verdict(Verdict::Accept { refused: vec![RefusedProtocol { number: 0, reason: Reason::NewerConsumer }] }),
+        ),
+        // The peer's verdict refuses protocol 1, which this end never listed
+        // (specification#13): what this end agreed doesn't change.
+        finish_case(
+            "finish-refused-unlisted",
+            Side::Initiator,
+            Negotiated {
+                peer_version: PackageVersion::release(0, 3, 0),
+                protocols: vec![ProtocolOutcome { number: 0, state: ProtocolState::Accepted { peer_lacks: vec![] } }],
+                warnings: vec![],
+            },
+            Message::Verdict(Verdict::Accept { refused: vec![RefusedProtocol { number: 1, reason: Reason::UnknownProtocol }] }),
         ),
         finish_case(
             "finish-refused",
