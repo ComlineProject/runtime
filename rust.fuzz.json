@@ -2,60 +2,60 @@
   "runtime": "rust",
   "commit": "e7362217e95f8d22bbce181746562054974e659a",
   "toolchain": "rustc 1.102.0-nightly (ac8310ba6 2026-11-09)",
-  "date": "2026-11-21T11:13:32Z",
-  "run": "https://github.com/ComlineProject/runtime/actions/runs/44896916666",
+  "date": "2026-11-22T11:36:42Z",
+  "run": "https://github.com/ComlineProject/runtime/actions/runs/45017050704",
   "targets": {
     "decode_no_panic": {
       "seconds": 606,
-      "executions": 28274547,
-      "corpus": 35398,
+      "executions": 27444851,
+      "corpus": 35440,
       "findings": 0
     },
     "ffi_comline2": {
       "seconds": 616,
-      "executions": 12933521,
+      "executions": 13143191,
       "corpus": 1125,
       "findings": 0
     },
     "ffi_feed": {
-      "seconds": 603,
-      "executions": 1568103,
-      "corpus": 38526,
+      "seconds": 613,
+      "executions": 936644,
+      "corpus": 38541,
       "findings": 0
     },
     "ffi_vs_core": {
-      "seconds": 613,
-      "executions": 1207544,
-      "corpus": 26391,
+      "seconds": 618,
+      "executions": 961229,
+      "corpus": 26407,
       "findings": 0
     },
     "framing_decode": {
-      "seconds": 612,
-      "executions": 18251710,
-      "corpus": 18339,
+      "seconds": 611,
+      "executions": 19490866,
+      "corpus": 18346,
       "findings": 0
     },
     "packed_canonical": {
       "seconds": 604,
-      "executions": 21147562,
-      "corpus": 3872,
+      "executions": 20345387,
+      "corpus": 3906,
       "findings": 0
     },
     "seed_vs_derive": {
-      "seconds": 616,
-      "executions": 34849597,
-      "corpus": 39770,
+      "seconds": 615,
+      "executions": 31056638,
+      "corpus": 39783,
       "findings": 0
     },
     "sizes_vs_core": {
-      "seconds": 622,
-      "executions": 34534,
-      "corpus": 1068,
-      "findings": 5
+      "seconds": 616,
+      "executions": 58637,
+      "corpus": 1089,
+      "findings": 4
     },
     "stream_split": {
-      "seconds": 600,
-      "executions": 267688379,
+      "seconds": 602,
+      "executions": 175989187,
       "corpus": 47,
       "findings": 0
     }
