@@ -2,60 +2,60 @@
   "runtime": "rust",
   "commit": "e7362217e95f8d22bbce181746562054974e659a",
   "toolchain": "rustc 1.102.0-nightly (ac8310ba6 2026-11-09)",
-  "date": "2026-11-22T11:36:42Z",
-  "run": "https://github.com/ComlineProject/runtime/actions/runs/45017050704",
+  "date": "2026-11-23T12:50:16Z",
+  "run": "https://github.com/ComlineProject/runtime/actions/runs/45175910254",
   "targets": {
     "decode_no_panic": {
-      "seconds": 606,
-      "executions": 27444851,
-      "corpus": 35440,
+      "seconds": 611,
+      "executions": 17064007,
+      "corpus": 35468,
       "findings": 0
     },
     "ffi_comline2": {
-      "seconds": 616,
-      "executions": 13143191,
-      "corpus": 1125,
+      "seconds": 615,
+      "executions": 17699336,
+      "corpus": 1128,
       "findings": 0
     },
     "ffi_feed": {
-      "seconds": 613,
-      "executions": 936644,
-      "corpus": 38541,
+      "seconds": 605,
+      "executions": 1168623,
+      "corpus": 38558,
       "findings": 0
     },
     "ffi_vs_core": {
-      "seconds": 618,
-      "executions": 961229,
-      "corpus": 26407,
+      "seconds": 614,
+      "executions": 1185373,
+      "corpus": 26429,
       "findings": 0
     },
     "framing_decode": {
-      "seconds": 611,
-      "executions": 19490866,
-      "corpus": 18346,
+      "seconds": 607,
+      "executions": 28935128,
+      "corpus": 18349,
       "findings": 0
     },
     "packed_canonical": {
-      "seconds": 604,
-      "executions": 20345387,
-      "corpus": 3906,
+      "seconds": 603,
+      "executions": 26225220,
+      "corpus": 3942,
       "findings": 0
     },
     "seed_vs_derive": {
-      "seconds": 615,
-      "executions": 31056638,
-      "corpus": 39783,
+      "seconds": 603,
+      "executions": 26846957,
+      "corpus": 39795,
       "findings": 0
     },
     "sizes_vs_core": {
-      "seconds": 616,
-      "executions": 58637,
-      "corpus": 1089,
-      "findings": 4
+      "seconds": 603,
+      "executions": 46627,
+      "corpus": 1110,
+      "findings": 7
     },
     "stream_split": {
-      "seconds": 602,
-      "executions": 175989187,
+      "seconds": 601,
+      "executions": 229092638,
       "corpus": 47,
       "findings": 0
     }
